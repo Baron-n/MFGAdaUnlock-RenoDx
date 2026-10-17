@@ -8,6 +8,7 @@ from build_thin_geometry_variants import load_generated_records, fingerprint_elf
 from inspect_generated_cubins import arrays
 
 IDENTITIES = {
+    'release-1.4.4': b'Release 1.4.4 - DLSS-G 310.9.16 Hotfix',
     'release-1.4.3': b'Release 1.4.3 - Continuous Border Stability',
     'control': b'Release 1.4.2 - Local Stability & CPU Overhead',
     'border-axis-candidate': b'1.4.2-base - Border Axis Candidate',
@@ -54,12 +55,13 @@ def make_manifest(addon, root, variant, validation=None):
         for file in sorted((root / subdir).rglob('*')):
             if file.is_file() and file.suffix in ['.hpp','.cpp','.py','.ps1','.txt'] and 'generated.hpp' not in file.name:
                 source_inputs[file.relative_to(root).as_posix()] = sha(file.read_bytes())
-    manifest = dict(baseline_version='1.4.2', baseline_commit='3a2c021d5882ffd62e2872d84ed752398be58f58',
-        release_version='1.4.3' if variant == 'release-1.4.3' else ('1.4.2' if variant == 'control' else '1.4.2-base'),
+    manifest = dict(baseline_version='1.4.3' if variant == 'release-1.4.4' else '1.4.2',
+        baseline_commit='e09ed477e81825cf1ec788e86b8289a0994cb525' if variant == 'release-1.4.4' else '3a2c021d5882ffd62e2872d84ed752398be58f58',
+        release_version='1.4.4' if variant == 'release-1.4.4' else '1.4.3' if variant == 'release-1.4.3' else ('1.4.2' if variant == 'control' else '1.4.2-base'),
         variant=variant, addon_sha256=sha(binary), source_commit=commit, source_modified=bool(status.strip()),
         source_inputs=source_inputs, geometry='Local Stable', inpaint='V2 Compatibility',
         confidence_history=False, temporal_launch_hooks=False,
-        provider_validation='unchanged exact 310.9.0/310.9.1 profiles; actual activation requires runtime diagnostics',
+        provider_validation='exact 310.9.0/310.9.1/310.9.16 profiles; 310.9.16 offline checked; in-game validation pending',
         generated_headers={header.name:sha(header.read_bytes()),blackwell.name:sha(blackwell.read_bytes())},
         thin_geometry_payload_inputs=payloads, blackwell_payload_inputs=blackwell_payloads,
         in_game_validation='initial maintainer feedback positive; comparative benchmarks pending'

@@ -15,6 +15,12 @@ A [ReShade](https://reshade.me/) addon that enables **DLSS multi-frame generatio
 RTX 50-series only — and corrects the frame interpolation so the extra frames
 carry new motion instead of repeats.
 
+**Release 1.4.4 hotfix:** adds DLSS-G **310.9.16** and Streamline **2.14.16**
+compatibility while retaining the previous .1 versions. The new blend-kernel
+layout has its own exact fingerprint and register mapping. Offline checks
+passed; in-game validation on the new runtime remains pending. See the
+[validation record](docs/runtime-310.9.16-validation.md).
+
 The default for a new installation is **Native**, which preserves the game's
 existing HUD/UI tags and is recommended for most games. **Automatic Guard + UI
 Composition (HDR compatibility)** remains available for known HDR-related
@@ -74,7 +80,7 @@ compatibility. The repository history and current code attribute these additions
   confidence guard for silhouette disocclusion, foreground/background bleeding,
   and edge stretching. Balanced is the recommended default for fresh
   configurations; Off and Aggressive remain available for per-game testing.
-- Exact DLSS-G 310.9.0/310.9.1 provider and payload validation for the
+- Exact DLSS-G 310.9.0/310.9.1/310.9.16 provider and payload validation for the
   thin-geometry paths, with unknown providers failing closed instead of being
   patched speculatively.
 - Safer reconstructed-fatbin handling that preserves kernels and metadata after
@@ -456,7 +462,7 @@ resets or a separate pacing path.
 These controls modify separate stages of the DLSS-G kernel pipeline. They do
 not change the selected multiplier, presentation pacing, Reflex, Dynamic MFG,
 HUD/UI tags, or HDR color handling. They currently require an exactly validated
-DLSS-G 310.9.0 or 310.9.1 provider; unknown or changed providers fail closed and
+DLSS-G 310.9.0, 310.9.1 or 310.9.16 provider; unknown or changed providers fail closed and
 keep the normal kernel path. Changes take effect after restarting the game.
 
 **Intermediate scatter retention (Experimental — Recommended)** and
@@ -578,10 +584,12 @@ by the Pacing Lab.
 
 **Use NVIDIA Dynamic MFG** requests Streamline's native
 [`DLSSGMode::eDynamic`](https://github.com/NVIDIA-RTX/Streamline/blob/main/docs/ProgrammingGuideDLSS_G.md#63-enabling-dynamic-multi-frame-generation).
-Dynamic MFG in this release requires the exact validated stack:
+Dynamic MFG accepts the following explicit runtime versions. The new
+310.9.16 + 2.14.16 stack has passed offline interface and patch checks;
+in-game validation is pending. The previously supported .1 stack is retained:
 
-- **DLSS-G 310.9.1**
-- **Streamline 2.14.1**
+- **DLSS-G 310.9.1 or 310.9.16**
+- **Streamline 2.14.1 or 2.14.16**
 - NVIDIA display driver **595.41 or newer**, as required by NVIDIA's current
   Dynamic MFG integration guide
 - A compatible NVIDIA driver/runtime that reports
@@ -598,8 +606,8 @@ VSync is **not** a universal requirement for Dynamic MFG. When VSync is active,
 Streamline ignores the numeric Dynamic target and instead aims near the active
 display refresh for tear-free presentation. Users who are not using G-SYNC
 through the NVIDIA driver do not need to enable VSync solely because Dynamic
-MFG is enabled. If VSync is used with Dynamic MFG, use the validated 310.9.1 +
-2.14.1 stack, check that the addon reports VSync capability, and avoid a path
+MFG is enabled. If VSync is used with Dynamic MFG, use a supported 310.9.1/310.9.16 +
+2.14.1/2.14.16 stack, check that the addon reports VSync capability, and avoid a path
 that cannot reach Independent Flip; NVIDIA warns that such a path can add high
 latency.
 
@@ -634,13 +642,15 @@ it is not a universal claim for every game or presentation setup.
 |---|---|---|---|---|---|---|
 | 310.9.0 | 2.12.x | Validated legacy/compatibility path | Validated | Not release-validated on this older wrapper | Not supported by this release | Keep the game's established sync path; do not assume the 2.14.1 Dynamic/VSync behavior |
 | 310.9.0 | 2.14.0 / internal RC builds | Fixed MFG may work, including NVIDIA App override builds | Not release-validated as a complete combination | Not release-validated | The underlying runtime may expose Dynamic without VSync when its capability bit is true, but this addon does not advertise this combination as supported | Do not assume 2.14.1 VSync/frame-limiter behavior; use the exact current stack below for release testing |
-| 310.9.1 | 2.14.1 | Validated current path | Validated | Validated where the game supplies a correct pair; slight provider cost is expected | Supported on D3D12 when the runtime capability bit is true; final in-game release retest pending | VSync optional; with VSync, target follows refresh. G-SYNC remains a driver/display choice; capability and Independent Flip still matter |
+| 310.9.1 | 2.14.1 | Previously validated path | Validated | Validated where the game supplies a correct pair; slight provider cost is expected | Supported on D3D12 when the runtime capability bit is true; final in-game release retest pending | VSync optional; with VSync, target follows refresh. G-SYNC remains a driver/display choice; capability and Independent Flip still matter |
+
+| 310.9.16 | 2.14.16 | Offline patch/restore checks passed; in-game testing pending | In-game validation pending | In-game validation pending | Accepted by the version gate on D3D12; runtime capability is still required; in-game validation pending | Same public Dynamic/VSync interface as 2.14.1; verify capability and presentation behavior in-game |
 
 ### Manually using the current NVIDIA runtime
 
 > [!IMPORTANT]
 > **Do not assume that updating the NVIDIA App or display driver installs
-> DLSS-G 310.9.1 and Streamline 2.14.1 into a game.** Games normally keep the
+> DLSS-G 310.9.16 and Streamline 2.14.16 into a game.** Games normally keep the
 > DLLs they ship, while NVIDIA App driver-profile overrides may load a different
 > module from an NVIDIA cache. For the supported Dynamic configuration, the
 > files currently have to be installed manually and the driver overrides must
@@ -648,28 +658,28 @@ it is not a universal claim for every game or presentation setup.
 
 Dynamic MFG in this release requires the game process to **actually load** both:
 
-- `nvngx_dlssg.dll` **310.9.1**
-- the complete matching Streamline **2.14.1** runtime, including at least the
+- `nvngx_dlssg.dll` **310.9.16**
+- the complete matching Streamline **2.14.16** runtime, including at least the
   game's corresponding `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`,
   Reflex/PCL components, and any other Streamline plugins that game requires
 
-Replacing only `nvngx_dlssg.dll` is not sufficient. Likewise, seeing a 2.14.1
+Replacing only `nvngx_dlssg.dll` is not sufficient. Likewise, seeing a 2.14.16
 DLL in the game directory does not prove that the process selected it.
 
 - Normal users can obtain the current game DLL from the established
   [TechPowerUp DLSS Frame Generation archive](https://www.techpowerup.com/download/nvidia-dlss-3-frame-generation-dll/).
 - Developers and advanced users can obtain
-  [Streamline 2.14.1 from NVIDIA](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.1),
+  [Streamline 2.14.16 from NVIDIA](https://github.com/NVIDIA-RTX/Streamline/releases/tag/v2.14.16),
   inspect NVIDIA's official
   [Windows DLSS library directory](https://github.com/NVIDIA/DLSS/tree/main/lib/Windows_x86_64/rel),
   and consult the
-  [DLSS 310.9.1 release](https://github.com/NVIDIA/DLSS/releases/tag/v310.9.1).
+  [DLSS 310.9.16 release](https://github.com/NVIDIA/DLSS/releases/tag/v310.9.16).
 
 #### Required installation and override checklist
 
 1. Back up the original game DLLs.
-2. Install `nvngx_dlssg.dll` 310.9.1 manually.
-3. Install the **complete, version-matched** Streamline 2.14.1 set. Never mix
+2. Install `nvngx_dlssg.dll` 310.9.16 manually.
+3. Install the **complete, version-matched** Streamline 2.14.16 set. Never mix
    `sl.interposer.dll`, `sl.common.dll`, `sl.dlss_g.dll`, `sl.reflex.dll`, or
    other Streamline components from different packages.
 4. Open the NVIDIA App, check both **Global Settings** and the game's own
@@ -691,22 +701,22 @@ DLL in the game directory does not prove that the process selected it.
 
 For example, a path containing
 `ProgramData\\NVIDIA\\NGX\\models\\sl_dlss_g_override_0` means the driver/NVIDIA
-App override is active. In that situation a 2.14.1 file beside the executable
+App override is active. In that situation a 2.14.16 file beside the executable
 can be completely ignored. Do not delete NVIDIA cache directories as a normal
 installation step; correct the driver profile instead.
 
 Success means the log reports all of the following from the same launch:
 
 ```text
-observed Streamline DLSS-G wrapper version 2.14.1.0 from ...
-verified mapped DLSS-G provider candidate version 310.9.1.0
+observed Streamline DLSS-G wrapper version 2.14.16.0 from ...
+verified mapped DLSS-G provider candidate version 310.9.16.0
 slDLSSGGetState confirms NVIDIA Dynamic MFG support
 NVIDIA Dynamic MFG accepted
 ```
 
 If VSync is enabled, the last line can still report Dynamic as accepted, but
 the numeric `DynamicTargetFPS` is intentionally ignored and the provider aims
-near the active display refresh. Streamline 2.14.1 adds supported VSync and
+near the active display refresh. Streamline 2.14.1 introduced supported VSync and
 frame-limiter behavior to Dynamic mode; it does not make a custom Dynamic target
 override the monitor-refresh target while VSync is active.
 
@@ -742,7 +752,7 @@ Written to your `ReShade.ini` under `[RenoDX.MFGUnlock]`:
 | `ThinGeometryPreviousScatter` | `0` | Unstable advanced research control for a separate previous-to-current motion-rejection path; not recommended for normal use |
 | `BoundaryArtifactMitigationMode` | `1` | `0` restores the 0.9 intermediate-retention behavior, `1` is **Balanced** (recommended default for fresh configurations), and `2` is Aggressive. Existing saved choices are preserved; changing it requires a restart |
 | `ForceMultiplier` | `0` | `0` respects the game's own choice; `2`–`6` requests that exact multiplier, whether it is higher or lower than the game's choice |
-| `DynamicMFG` | `0` | Requests native NVIDIA Dynamic MFG only on the validated 310.9.1 + 2.14.1 D3D12 stack after the provider reports support; takes priority over `ForceMultiplier` while active |
+| `DynamicMFG` | `0` | Requests native NVIDIA Dynamic MFG only on the supported 310.9.1/310.9.16 + 2.14.1/2.14.16 D3D12 runtimes after the provider reports support; takes priority over `ForceMultiplier` while active |
 | `DynamicTargetFPS` | `0` | Dynamic output target; `0` follows display refresh. With VSync active, Streamline ignores a nonzero value and follows refresh instead |
 | `ReflexSourceFpsCap` | `0` | Compatibility key for **Output FPS Cap (Reflex)**. Despite the historical key name, the number is the final/output FPS ceiling; `120` targets up to approximately 120 displayed FPS |
 | `ReflexModeOverride` | `0` | `0` preserves the game setting; `1` uses FG-safe Off by keeping Streamline at Low Latency and bypassing only `slReflexSleep`; `2` forces On; `3` forces On + Boost |
@@ -820,7 +830,7 @@ the effective downstream request separately.
 
 ### Dynamic MFG is not recognized or ignores my target
 
-- Confirm the panel observes **DLSS-G 310.9.1**, **Streamline 2.14.1**, D3D12,
+- Confirm the panel observes supported versions: **DLSS-G 310.9.1/310.9.16**, **Streamline 2.14.1/2.14.16**, D3D12,
   a driver version of at least **595.41**, and
   `bIsDynamicMFGSupported = true`. A DLL merely present beside the game is not
   proof that Streamline selected it.

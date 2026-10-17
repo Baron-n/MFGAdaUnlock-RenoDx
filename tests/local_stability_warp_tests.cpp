@@ -20,11 +20,15 @@ int main(int argc, char** argv) {
   tg::g_adaptive_quality_v3_photometric = true;
   tg::g_adaptive_quality_v3_directional_border = true;
   std::string why;
-  if (argc == 4 && std::string(argv[1]) == "--emit") {
+  if (argc == 4 && (std::string(argv[1]) == "--emit" ||
+                    std::string(argv[1]) == "--emit-310916")) {
     std::ifstream input(argv[2], std::ios::binary);
     CHECK(input.good());
     std::string source{std::istreambuf_iterator<char>(input), {}};
-    CHECK(tg::internal::RewriteValidatedWarpBlend(source, tg::g_adaptive_quality_profile, why));
+    const auto layout = std::string(argv[1]) == "--emit-310916"
+                            ? tg::internal::BlendLayout::V310916
+                            : tg::internal::BlendLayout::Legacy;
+    CHECK(tg::internal::RewriteValidatedWarpBlend(source, tg::g_adaptive_quality_profile, why, layout));
     std::filesystem::create_directories(argv[3]);
     std::ofstream output(std::filesystem::path(argv[3]) / "warp-preset-0.ptx", std::ios::binary);
     output << source;

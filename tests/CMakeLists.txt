@@ -40,7 +40,7 @@ add_library(mfgunlock_local_low_overhead SHARED EXCLUDE_FROM_ALL
   ../src/addons/mfgunlock/addon.cpp)
 target_compile_definitions(mfgunlock_local_low_overhead PRIVATE
   $<TARGET_PROPERTY:mfgunlock_1_4_2_control,COMPILE_DEFINITIONS>
-  MFGUNLOCK_CONTINUOUS_BORDER_AXES MFGUNLOCK_RELEASE_1_4_3)
+  MFGUNLOCK_CONTINUOUS_BORDER_AXES MFGUNLOCK_RELEASE_1_4_3 MFGUNLOCK_RELEASE_1_4_4)
 target_compile_options(mfgunlock_local_low_overhead PRIVATE /bigobj)
 target_include_directories(mfgunlock_local_low_overhead SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
@@ -204,10 +204,10 @@ endif()
 
 # Keep candidate and control identities reviewable; no NVIDIA payload is exported.
 if(Python3_Interpreter_FOUND)
-  foreach(variant IN ITEMS control border-axis-candidate release-1.4.3)
+  foreach(variant IN ITEMS control border-axis-candidate release-1.4.4)
     if(variant STREQUAL "control")
       set(addon_target mfgunlock_1_4_2_control)
-    elseif(variant STREQUAL "release-1.4.3")
+    elseif(variant STREQUAL "release-1.4.4")
       set(addon_target mfgunlock_local_low_overhead)
     else()
       set(addon_target mfgunlock_border_axis_candidate)
