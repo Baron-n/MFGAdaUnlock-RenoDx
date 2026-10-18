@@ -1,10 +1,10 @@
 # MFG Unlock
 
-> Release **1.4.3** adds continuous border-axis blending to the local stability
-> improvements introduced in 1.4.2, targeting abrupt border-confidence changes
-> during diagonal movement. It uses **Local Stable geometry + V2 Compatibility
-> inpaint**, with no confidence-history backend or temporal launch interception.
-> Existing configuration is retained. See the [1.4.3 release notes](docs/releases/1.4.3.md).
+> Release **1.4.5** strengthens kernel and binary-patch identity, rollback,
+> allocation lifetime, hook error handling and latency-trial measurements.
+> **Local Stable geometry + V2 Compatibility inpaint**, native pacing and the
+> existing HUD/UI behavior are retained. See the [1.4.5 release notes](docs/releases/1.4.5.md).
+> In-game performance and image-quality gains have not been established.
 
 <p align="center">
   <a href="https://ko-fi.com/mavismmg"><img src="https://img.shields.io/badge/Support%20me%20on-Ko--fi-FF5E5B?logo=ko-fi&amp;logoColor=white" alt="Support me on Ko-fi"></a>
@@ -28,8 +28,10 @@ issues and keeps the game's required color, depth and motion-vector inputs
 intact.
 
 Nothing in the game installation is modified. Every patch is applied to the
-mapped image at runtime and reverted when the addon unloads. **No complete
-NVIDIA DLL or provider package is redistributed here.**
+mapped image at runtime. Release 1.4.5 retains module references and keeps the
+addon resident after the first observed Present; completely restart the game
+to change the addon or provider. Hot unload/reload is unsupported.
+**No complete NVIDIA DLL or provider package is redistributed here.**
 
 > [!NOTE]
 > Vulkan support is new in version 0.6 and remains experimental while its game
@@ -1047,6 +1049,22 @@ Run CTest and see [the research workflow](docs/research/post-1.4.2.md) for CUDA
 correctness, SASS inspection and controlled game captures. No full NVIDIA DLL or
 provider package is included. The diagnostic companion is optional and should
 be removed during performance measurements.
+
+### Building release 1.4.5
+
+Use the locally validated 1.4.4 generated payload tables and the existing
+RenoDX dependency checkout. The build script verifies their hashes; it does
+not download, regenerate or redistribute provider packages.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/Build-EngineeringExperimental.ps1 -RenoDxSource <RenoDX-checkout> -Variant release-1.4.5 -OfflineProviders "<semicolon-separated-local-provider-paths>"
+```
+
+The release target is `mfgunlock_release_1_4_5`, producing
+`renodx-mfgunlock-1.4.5.addon64` and an adjacent provenance manifest. The
+published download retains the standard name `renodx-mfgunlock.addon64`.
+Without explicit local provider inputs, provider-dependent tests are skipped;
+that does not reproduce the complete local release validation.
 
 ## Credits
 

@@ -8,6 +8,7 @@ from build_thin_geometry_variants import load_generated_records, fingerprint_elf
 from inspect_generated_cubins import arrays
 
 IDENTITIES = {
+    'release-1.4.5': b'Release 1.4.5 - Engineering & Reliability',
     'engineering-experimental': b'Experimental 1.4.4 Engineering',
     'release-1.4.4': b'Release 1.4.4 - DLSS-G 310.9.16 Hotfix',
     'release-1.4.3': b'Release 1.4.3 - Continuous Border Stability',
@@ -58,9 +59,10 @@ def make_manifest(addon, root, variant, validation=None, build_project=None):
     binary = addon.read_bytes()
     if not binary.startswith(b'MZ') or IDENTITIES[variant] not in binary:
         raise ValueError('Addon binary identity does not match requested variant')
-    if IDENTITIES['engineering-experimental'] in binary and variant != 'engineering-experimental':
-        raise ValueError('Experimental binary cannot be labeled as a stable release')
-    if variant == 'engineering-experimental' and subprocess.run(
+    for identity in ['engineering-experimental', 'release-1.4.5']:
+        if IDENTITIES[identity] in binary and variant != identity:
+            raise ValueError('Engineering binary cannot be labeled as another release')
+    if variant in ['engineering-experimental', 'release-1.4.5'] and subprocess.run(
         ['git','merge-base','--is-ancestor','3e898157fd59ed9eef65c181619060ddb305c6bd','HEAD'],cwd=root).returncode:
         raise ValueError('Experimental source is not descended from the authoritative 1.4.4 baseline')
     directory = root / 'src/addons/mfgunlock'
@@ -96,9 +98,9 @@ def make_manifest(addon, root, variant, validation=None, build_project=None):
         thin_geometry_payload_inputs=payloads, blackwell_payload_inputs=blackwell_payloads,
         in_game_validation='initial maintainer feedback positive; comparative benchmarks pending'
             if variant == 'release-1.4.3' else 'pending')
-    if variant == 'engineering-experimental':
+    if variant in ['engineering-experimental', 'release-1.4.5']:
         if not build_project or not build_project.is_file():
-            raise ValueError('Experimental manifest requires the actual generated build project')
+            raise ValueError('Engineering manifest requires the actual generated build project')
         import xml.etree.ElementTree as ET
         defines=[]
         for group in ET.parse(build_project).iter():
@@ -108,9 +110,14 @@ def make_manifest(addon, root, variant, validation=None, build_project=None):
                         defines += [x for x in item.text.split(';') if x and not x.startswith('%')]
         required={'MFGUNLOCK_ENGINEERING_EXPERIMENTAL','MFGUNLOCK_LOCAL_LOW_OVERHEAD',
             'MFGUNLOCK_LOCAL_STABILITY','MFGUNLOCK_CONTINUOUS_BORDER_AXES','MFGUNLOCK_RELEASE_1_4_3','MFGUNLOCK_RELEASE_1_4_4'}
-        if not required.issubset(defines):raise ValueError('Build flags do not match the experimental release policy')
+        if variant == 'release-1.4.5':
+            required.add('MFGUNLOCK_RELEASE_1_4_5')
+        elif 'MFGUNLOCK_RELEASE_1_4_5' in defines:
+            raise ValueError('Release 1.4.5 flags cannot identify the historical experiment')
+        if not required.issubset(defines):raise ValueError('Build flags do not match the engineering release policy')
         manifest.update(baseline_version='1.4.4',baseline_commit='3e898157fd59ed9eef65c181619060ddb305c6bd',
-            release_version='1.4.4-engineering-experimental',build_defines=defines,
+            release_version='1.4.5' if variant == 'release-1.4.5' else '1.4.4-engineering-experimental',
+            release_channel='release' if variant == 'release-1.4.5' else 'experimental',build_defines=defines,
             build_project_sha256=sha(build_project.read_bytes()),
             compiler_inputs=compiler_inputs(build_project),
             source_status=status.splitlines(),

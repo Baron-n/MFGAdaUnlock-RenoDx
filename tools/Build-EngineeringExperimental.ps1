@@ -2,7 +2,8 @@
 param(
   [Parameter(Mandatory=$true)][string]$RenoDxSource,
   [string]$BuildDirectory = 'build/tests',
-  [string[]]$OfflineProviders = @()
+  [string[]]$OfflineProviders = @(),
+  [ValidateSet('engineering-experimental','release-1.4.5')][string]$Variant = 'engineering-experimental'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -28,9 +29,15 @@ try {
   if ($LASTEXITCODE) { throw 'Test suite build failed.' }
   & cmake --build $BuildDirectory --config Release --target mfgunlock_engineering_experimental
   if ($LASTEXITCODE) { throw 'Experimental addon build failed.' }
+  if ($Variant -eq 'release-1.4.5') {
+    & cmake --build $BuildDirectory --config Release --target mfgunlock_release_1_4_5
+    if ($LASTEXITCODE) { throw 'Release 1.4.5 addon build failed.' }
+  }
   & ctest --test-dir $BuildDirectory -C Release --output-on-failure
   if ($LASTEXITCODE) { throw 'Validation failed; no package should be promoted.' }
-  & python tools/write_build_manifest.py --addon "$BuildDirectory/Release/renodx-mfgunlock-engineering-exp.addon64" --source-root . --variant engineering-experimental --build-project "$BuildDirectory/mfgunlock_engineering_experimental.vcxproj"
+  $artifactName = if ($Variant -eq 'release-1.4.5') { 'renodx-mfgunlock-1.4.5' } else { 'renodx-mfgunlock-engineering-exp' }
+  $artifactTarget = if ($Variant -eq 'release-1.4.5') { 'mfgunlock_release_1_4_5' } else { 'mfgunlock_engineering_experimental' }
+  & python tools/write_build_manifest.py --addon "$BuildDirectory/Release/$artifactName.addon64" --source-root . --variant $Variant --build-project "$BuildDirectory/$artifactTarget.vcxproj"
   if ($LASTEXITCODE) { throw 'Artifact provenance failed.' }
-  Write-Output 'Experimental artifact built; game installation and gameplay validation are separate steps.'
+  Write-Output "$Variant artifact built; game installation and gameplay validation are separate steps."
 } finally { Pop-Location }

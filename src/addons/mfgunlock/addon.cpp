@@ -2705,7 +2705,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
         reinterpret_cast<LPCWSTR>(&OnPresentStartDiscovery), &held) != FALSE;
     if (!resident) pin_attempted.store(false, std::memory_order_release);
     if (resident) reshade::log::message(reshade::log::level::info,
-        "mfgunlock: experimental session is process-resident after first Present; restart required, hot reload disabled.");
+        "mfgunlock: engineering session is process-resident after first Present; restart required, hot reload disabled.");
   }
 #endif
   // A primary swapchain can disappear while an already-existing secondary
@@ -6863,7 +6863,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
             kUiMuted);
 #if defined(MFGUNLOCK_LOCAL_STABILITY)
-#if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+#if defined(MFGUNLOCK_RELEASE_1_4_5)
+        StatusRow("Build", "Release 1.4.5 Engineering; gameplay validation pending", kUiWarning);
+#elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
         StatusRow("Build", "Experimental 1.4.4 Engineering; gameplay validation pending", kUiWarning);
 #elif defined(MFGUNLOCK_RELEASE_1_4_4)
         StatusRow("Build", "Release 1.4.4; DLSS-G 310.9.16 + Streamline 2.14.16 hotfix", kUiPositive);
@@ -7255,7 +7257,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
            << "V3.2 Stability effective: "
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
            << "History disabled; dedicated Local cubin requested (see installed variant above)" << '\n'
-#if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+#if defined(MFGUNLOCK_RELEASE_1_4_5)
+           << "Build: Release 1.4.5 Engineering; gameplay validation pending; restart required" << '\n'
+#elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
            << "Build: Experimental 1.4.4 Engineering; gameplay validation pending; restart required" << '\n'
 #elif defined(MFGUNLOCK_RELEASE_1_4_4)
            << "Build: Release 1.4.4; DLSS-G 310.9.16 + Streamline 2.14.16 hotfix; Local Stable; V2 inpaint" << '\n'
@@ -7985,7 +7989,10 @@ void LoadConfig() {
 #if defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   reshade::log::message(reshade::log::level::info,
       "mfgunlock: Local low-overhead build; V2 inpaint; confidence history, CUDA/NVAPI launch hooks and backend barriers disabled. Saved temporal keys preserved but ignored; native pacing remains the default. Output caps require a native sleep path; Game controlled accepts fresh driver-confirmed MFG.");
-#if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+#if defined(MFGUNLOCK_RELEASE_1_4_5)
+  reshade::log::message(reshade::log::level::info,
+      "mfgunlock: Release 1.4.5 Engineering; exact content profiles; offline validated only; restart required after first Present.");
+#elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
   reshade::log::message(reshade::log::level::info,
       "mfgunlock: Experimental 1.4.4 Engineering; exact content profiles; offline validated only; restart required after first Present.");
 #elif defined(MFGUNLOCK_RELEASE_1_4_4)
@@ -8008,7 +8015,9 @@ void LoadConfig() {
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
-#if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+#if defined(MFGUNLOCK_RELEASE_1_4_5)
+    "Release 1.4.5 - Engineering & Reliability; Local Stable; V2 Compatibility; in-game validation pending";
+#elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
     "Experimental 1.4.4 Engineering - content profiles, transactional patches, resource lifetime and acknowledged pacing trials; in-game validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_4)
     "Release 1.4.4 - DLSS-G 310.9.16 Hotfix; Streamline 2.14.16; Local low-overhead; V2 inpaint; no confidence history or CUDA/NVAPI launch interception";

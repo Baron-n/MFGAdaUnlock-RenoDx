@@ -61,6 +61,27 @@ target_link_libraries(mfgunlock_engineering_experimental PRIVATE ${MFGUNLOCK_NAT
 set_target_properties(mfgunlock_engineering_experimental PROPERTIES
   PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-engineering-exp")
 
+# Publish the engineering build under its own release identity; retain the
+# experimental lifecycle policy and the historical control targets.
+add_library(mfgunlock_release_1_4_5 SHARED EXCLUDE_FROM_ALL
+  ../src/addons/mfgunlock/addon.cpp)
+target_compile_definitions(mfgunlock_release_1_4_5 PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_engineering_experimental,COMPILE_DEFINITIONS>
+  MFGUNLOCK_RELEASE_1_4_5)
+target_compile_options(mfgunlock_release_1_4_5 PRIVATE /bigobj)
+target_include_directories(mfgunlock_release_1_4_5 SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(mfgunlock_release_1_4_5 PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
+set_target_properties(mfgunlock_release_1_4_5 PROPERTIES
+  PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-1.4.5")
+
+add_executable(release_1_4_5_policy_tests quality_build_policy_tests.cpp)
+target_compile_definitions(release_1_4_5_policy_tests PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>)
+target_include_directories(release_1_4_5_policy_tests SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+add_test(NAME release_1_4_5_policy COMMAND release_1_4_5_policy_tests)
+
 foreach(engineering_test IN ITEMS patch_transaction queue_ack provider_identity hook_failure loader_notify quality_numerical)
   add_executable(${engineering_test}_tests ${engineering_test}_tests.cpp)
   target_compile_definitions(${engineering_test}_tests PRIVATE NOMINMAX
@@ -266,4 +287,10 @@ if(Python3_Interpreter_FOUND)
     "$<TARGET_FILE:mfgunlock_engineering_experimental>"
     "${CMAKE_CURRENT_BINARY_DIR}/mfgunlock_engineering_experimental.vcxproj")
   set_tests_properties(engineering_manifest PROPERTIES SKIP_RETURN_CODE 77)
+  add_test(NAME release_1_4_5_manifest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/engineering_manifest_tests.py"
+    "$<TARGET_FILE:mfgunlock_release_1_4_5>"
+    "${CMAKE_CURRENT_BINARY_DIR}/mfgunlock_release_1_4_5.vcxproj"
+    "release-1.4.5")
+  set_tests_properties(release_1_4_5_manifest PROPERTIES SKIP_RETURN_CODE 77)
 endif()
