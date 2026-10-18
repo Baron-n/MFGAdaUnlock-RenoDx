@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
   [ValidatePattern('^[A-Za-z0-9][A-Za-z0-9._-]*$')]
@@ -12,6 +12,9 @@ param(
   [string]$ProcessName,
 
   [string]$ConfigurationNotes = '',
+  [ValidateSet('unknown','runtime','legacy','native')][string]$TimingPath = 'unknown',
+  [string]$RuntimeIdentity = 'unknown',
+  [string]$BuildManifest = '',
 
   [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'MFGBenchmarks'),
 
@@ -43,14 +46,19 @@ $csv = Join-Path $directory 'presentmon.csv'
 $modules = @()
 try {
   $modules = @($target.Modules | ForEach-Object {
-    $path = $_.FileName
+    $loadedModule = $_
+    $path = $loadedModule.FileName
     $name = [IO.Path]::GetFileName($path)
     if ($name -match '^(sl\.|nvngx_)' -or
         $name -match '^(ReShade|renodx-mfg)' -or
-        $name -like '*.addon64') {
+        $name -like '*.addon64' -or $path -match '(?i)[\\/]models[\\/](dlssg|sl_dlss_g_0)[\\/]') {
       $item = Get-Item -LiteralPath $path -ErrorAction Stop
       [ordered]@{
         name = $name
+        path = $path
+        base_address = ('0x{0:x}' -f $loadedModule.BaseAddress.ToInt64())
+        image_bytes = $loadedModule.ModuleMemorySize
+        role = 'mapped candidate; active feature selection unproven'
         file_version = $item.VersionInfo.FileVersion
         product_version = $item.VersionInfo.ProductVersion
         sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
@@ -74,8 +82,27 @@ try {
   $video = @([ordered]@{ inventory_error = $_.Exception.Message })
 }
 
+$collectorItem = Get-Item -LiteralPath $PresentMonPath
+$collectorHash = (Get-FileHash -LiteralPath $PresentMonPath -Algorithm SHA256).Hash
+$collectorIdentity = "$( $collectorItem.VersionInfo.FileVersion )|sha256=$collectorHash"
+$provenance = [ordered]@{ status = 'manifest not supplied'; active_provider = 'unproven' }
+if ($BuildManifest) {
+  $manifest = Get-Content -LiteralPath $BuildManifest -Raw | ConvertFrom-Json
+  if (!$manifest.addon_sha256 -or !(@($modules | Where-Object { $_.sha256 -eq $manifest.addon_sha256 }).Count)) {
+    throw 'Build manifest does not match a mapped addon hash; refusing an ambiguous capture.'
+  }
+  Copy-Item -LiteralPath $BuildManifest -Destination (Join-Path $directory 'addon-build-manifest.json')
+  $provenance = [ordered]@{ status='mapped addon hash matched'; source_commit=$manifest.source_commit;
+    addon_sha256=$manifest.addon_sha256; manifest_sha256=(Get-FileHash -LiteralPath $BuildManifest -Algorithm SHA256).Hash;
+    active_provider='unproven; use RuntimeIdentity only after feature selection is established' }
+}
 $metadata = [ordered]@{
-  schema = 1
+  schema = 2
+  build_provenance = $provenance
+  timing_path = $TimingPath
+  active_runtime_identity = $RuntimeIdentity
+  collector_identity = $collectorIdentity
+  collector_path = $PresentMonPath
   label = $Label
   captured_at = (Get-Date).ToString('o')
   duration_seconds = $DurationSeconds
@@ -134,6 +161,6 @@ if (-not (Test-Path -LiteralPath $csv -PathType Leaf)) {
 
 $analyzer = Join-Path $PSScriptRoot 'Analyze-PresentMon.ps1'
 if (Test-Path -LiteralPath $analyzer -PathType Leaf) {
-  & $analyzer -Path $csv -Label $Label
+  & $analyzer -Path $csv -Label $Label -CollectorVersion $collectorIdentity -TimingPath $TimingPath -RuntimeIdentity $RuntimeIdentity
 }
 Write-Host "Capture saved under: $directory"

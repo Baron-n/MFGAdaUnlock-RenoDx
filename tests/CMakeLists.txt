@@ -8,6 +8,7 @@ if(NOT EXISTS "${RENODX_SOURCE_DIR}/external/Streamline/include/sl.h")
   message(FATAL_ERROR "Set RENODX_SOURCE_DIR to the existing RenoDX build tree")
 endif()
 enable_testing()
+set(ENGINEERING_OFFLINE_PROVIDERS "" CACHE STRING "Explicit local provider/plugin inputs for mutation and profile tests")
 add_library(mfgunlock_addon_compile OBJECT
   ../src/addons/mfgunlock/addon.cpp)
 target_compile_definitions(mfgunlock_addon_compile PRIVATE
@@ -48,6 +49,43 @@ target_link_libraries(mfgunlock_local_low_overhead PRIVATE
   ${MFGUNLOCK_NATIVE_LIBRARIES})
 set_target_properties(mfgunlock_local_low_overhead PROPERTIES
   PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock")
+add_library(mfgunlock_engineering_experimental SHARED EXCLUDE_FROM_ALL
+  ../src/addons/mfgunlock/addon.cpp)
+target_compile_definitions(mfgunlock_engineering_experimental PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_local_low_overhead,COMPILE_DEFINITIONS>
+  MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
+target_compile_options(mfgunlock_engineering_experimental PRIVATE /bigobj)
+target_include_directories(mfgunlock_engineering_experimental SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(mfgunlock_engineering_experimental PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
+set_target_properties(mfgunlock_engineering_experimental PROPERTIES
+  PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-engineering-exp")
+
+foreach(engineering_test IN ITEMS patch_transaction queue_ack provider_identity hook_failure loader_notify quality_numerical)
+  add_executable(${engineering_test}_tests ${engineering_test}_tests.cpp)
+  target_compile_definitions(${engineering_test}_tests PRIVATE NOMINMAX
+    MFGUNLOCK_LOCAL_LOW_OVERHEAD MFGUNLOCK_LOCAL_STABILITY MFGUNLOCK_CONTINUOUS_BORDER_AXES
+    MFGUNLOCK_RELEASE_1_4_3 MFGUNLOCK_RELEASE_1_4_4)
+  target_include_directories(${engineering_test}_tests SYSTEM PRIVATE
+    $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+  target_link_libraries(${engineering_test}_tests PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
+  if(engineering_test STREQUAL "provider_identity")
+    add_test(NAME ${engineering_test} COMMAND ${engineering_test}_tests ${ENGINEERING_OFFLINE_PROVIDERS})
+    set_tests_properties(${engineering_test} PROPERTIES SKIP_RETURN_CODE 77)
+  else()
+    add_test(NAME ${engineering_test} COMMAND ${engineering_test}_tests)
+  endif()
+endforeach()
+add_executable(engineering_kernel_emitter engineering_kernel_emitter.cpp)
+target_compile_definitions(engineering_kernel_emitter PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_engineering_experimental,COMPILE_DEFINITIONS>)
+add_executable(engineering_provider_probe provider_probe.cpp)
+target_compile_definitions(engineering_provider_probe PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_engineering_experimental,COMPILE_DEFINITIONS>)
+target_include_directories(engineering_provider_probe SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+add_test(NAME presentmon_semantics COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/presentmon_semantics_tests.ps1")
 add_library(mfgunlock_border_axis_candidate SHARED EXCLUDE_FROM_ALL
   ../src/addons/mfgunlock/addon.cpp)
 target_compile_definitions(mfgunlock_border_axis_candidate PRIVATE
@@ -221,3 +259,11 @@ if(Python3_Interpreter_FOUND)
 endif()
 
 set_property(TARGET mfgunlock_1_4_2_control mfgunlock_local_low_overhead mfgunlock_border_axis_candidate APPEND PROPERTY LINK_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../tools/write_build_manifest.py")
+
+if(Python3_Interpreter_FOUND)
+  add_test(NAME engineering_manifest COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/engineering_manifest_tests.py"
+    "$<TARGET_FILE:mfgunlock_engineering_experimental>"
+    "${CMAKE_CURRENT_BINARY_DIR}/mfgunlock_engineering_experimental.vcxproj")
+  set_tests_properties(engineering_manifest PROPERTIES SKIP_RETURN_CODE 77)
+endif()

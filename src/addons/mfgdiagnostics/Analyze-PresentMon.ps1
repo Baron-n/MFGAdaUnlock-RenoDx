@@ -1,9 +1,12 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
   [string]$Path,
 
-  [string]$Label = ''
+  [string]$Label = '',
+  [string]$CollectorVersion = 'unknown',
+  [ValidateSet('unknown','runtime','legacy','native')][string]$TimingPath = 'unknown',
+  [string]$RuntimeIdentity = 'unknown'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -148,8 +151,46 @@ if ($mainRows[0].PSObject.Properties.Name -contains 'FrameType') {
   }
 }
 
+# Preserve the exact source column instead of declaring alternative fields equivalent.
+$metricColumns = [ordered]@{
+  display_intervals=@('MsBetweenDisplayChange','DisplayedTime')
+  application_intervals=@('MsBetweenSimulationStart','FrameTime','MsBetweenPresents')
+  present_intervals=@('MsBetweenPresents'); present_api_ms=@('MsInPresentAPI')
+  gpu_busy_ms=@('GPUBusy','MsGPUBusy'); gpu_time_ms=@('GPUTime','MsGPUTime')
+  source_frame_gpu_busy_ms=@('GPUBusy','MsGPUBusy'); source_frame_gpu_time_ms=@('GPUTime','MsGPUTime')
+  generated_candidate_gpu_busy_ms=@('GPUBusy','MsGPUBusy'); generated_candidate_gpu_time_ms=@('GPUTime','MsGPUTime')
+  pc_or_instrumented_latency_ms=@('MsPCLatency','InstrumentedLatency','DisplayLatency')
+  source_frame_latency_ms=@('MsPCLatency','InstrumentedLatency','DisplayLatency')
+  generated_candidate_latency_ms=@('MsPCLatency','InstrumentedLatency','DisplayLatency')
+  animation_error_ms=@('MsAnimationError','AnimationError')
+}
+$semantics = [ordered]@{}
+$rawColumns = [ordered]@{}
+$properties = @($mainRows[0].PSObject.Properties.Name)
+foreach ($entry in $metricColumns.GetEnumerator()) {
+  $column = $entry.Value | Where-Object { $properties -contains $_ } | Select-Object -First 1
+  if (!$column) { continue }
+  $sourcePopulation = $entry.Key.StartsWith('source_frame_') -or $entry.Key -eq 'application_intervals'
+  $generatedPopulation = $entry.Key.StartsWith('generated_candidate_')
+  $classification = if (($sourcePopulation -or $generatedPopulation) -and $useAnimationSplit) { 'AnimationTime heuristic' } else { 'all selected rows' }
+  $semantics[$entry.Key] = [ordered]@{
+    column=$column; units='ms'; definition=$column; collector_version=$CollectorVersion
+    population=if ($generatedPopulation) { 'generated candidates' } elseif ($sourcePopulation) { 'application candidates' } else { 'selected display/present rows' }
+    classification=$classification; timing_path=$TimingPath; runtime_identity=$RuntimeIdentity
+    cross_path_comparable=($entry.Key -in @('display_intervals','present_intervals','present_api_ms'))
+    authoritative_source_fps=$false
+  }
+  foreach ($raw in $entry.Value) {
+    if ($properties -contains $raw -and !$rawColumns.Contains($raw)) {
+      $rawColumns[$raw] = Get-SeriesSummary (Get-ColumnValues $mainRows @($raw))
+    }
+  }
+}
+
 $report = [ordered]@{
-  schema = 1
+  schema = 2
+  metric_semantics = $semantics
+  original_column_metrics = $rawColumns
   label = $Label
   source = (Resolve-Path -LiteralPath $Path).Path
   process = $mainRows[0].Application
