@@ -97,6 +97,8 @@
  */
 
 #include "binary_patch.hpp"
+#include "backend_selection.hpp"
+#include "xemfg/backend_api.hpp"
 
 #define ImTextureID ImU64
 
@@ -5214,6 +5216,29 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
 }
 
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
+  if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
+    ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG (1.4.5 base)");
+    ImGui::TextUnformatted("XeMFG uses OptiScaler's Frame Generation controls and XeLL.");
+    ImGui::TextUnformatted("Change backend with Switch-MFGBackend.ps1 while the game is closed.");
+    ImGui::TextUnformatted("DLSS-G patches and Reflex controller are inactive in this mode.");
+    if (auto module = GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi")) {
+      auto get_status = reinterpret_cast<mfgunlock::xemfg::GetStatus>(
+          GetProcAddress(module, "MFGAXeGetStatus"));
+      mfgunlock::xemfg::Status status;
+      if (get_status && get_status(&status, sizeof(status))) {
+        ImGui::TextWrapped("%s", status.detail);
+        ImGui::Text("Model: %s | Ready: %s | Enabled: %s",
+                    status.model ? "Intel MFG port" : "Native XeFG",
+                    status.initialized ? "yes" : "no", status.enabled ? "yes" : "no");
+        ImGui::Text("Requested output: %ux | Last presented: %u | Result: %d",
+                    status.generated + 1, status.presented, status.result);
+        ImGui::Text("Tensor Core launches: %llu", status.tensor_launches);
+      }
+    } else {
+      ImGui::TextUnformatted("XeMFG companion is not loaded. Check the OptiScaler plugins folder.");
+    }
+    return;
+  }
   mfgunlock::framecount::g_latency_guard_ui_heartbeat_ms.store(
       GetTickCount64(), std::memory_order_release);
   const bool enabled = g_enabled.load(std::memory_order_relaxed);
@@ -8015,7 +8040,9 @@ void LoadConfig() {
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
-#if defined(MFGUNLOCK_RELEASE_1_4_5)
+#if defined(MFGUNLOCK_DUAL_BACKEND)
+    "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
+#elif defined(MFGUNLOCK_RELEASE_1_4_5)
     "Release 1.4.5 - Engineering & Reliability; Local Stable; V2 Compatibility; in-game validation pending";
 #elif defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
     "Experimental 1.4.4 Engineering - content profiles, transactional patches, resource lifetime and acknowledged pacing trials; in-game validation pending";
@@ -8038,6 +8065,13 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
     case DLL_PROCESS_ATTACH: {
       g_self_module = h_module;
       if (!reshade::register_addon(h_module)) return FALSE;
+      mfgunlock::backend::active = mfgunlock::backend::Read();
+      if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
+        reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
+        reshade::log::message(reshade::log::level::info,
+            "mfgunlock: XeMFG/disabled startup; DLSS-G writers, discovery and Reflex controls bypassed.");
+        break;
+      }
       LoadConfig();
       g_is_star_wars_outlaws = CurrentProcessNameIs(L"Outlaws.exe");
       g_is_monster_hunter_wilds =
@@ -8113,6 +8147,11 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       // image. Avoid detour transactions and stale provider-memory restores
       // under the loader lock; explicit addon unload still performs cleanup.
       if (lpv_reserved != nullptr) break;
+      if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
+        reshade::unregister_overlay("MFG Unlock", OnRegisterOverlay);
+        reshade::unregister_addon(h_module);
+        break;
+      }
       reshade::unregister_event<reshade::addon_event::finish_present>(OnFinishPresent);
       reshade::unregister_event<reshade::addon_event::present>(OnPresentStartDiscovery);
       reshade::unregister_event<reshade::addon_event::init_command_queue>(OnInitCommandQueue);

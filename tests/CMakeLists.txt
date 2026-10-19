@@ -8,6 +8,7 @@ if(NOT EXISTS "${RENODX_SOURCE_DIR}/external/Streamline/include/sl.h")
   message(FATAL_ERROR "Set RENODX_SOURCE_DIR to the existing RenoDX build tree")
 endif()
 enable_testing()
+option(MFGUNLOCK_BUILD_XEMFG "Build the OptiScaler XeMFG companion and dual backend addon" OFF)
 set(ENGINEERING_OFFLINE_PROVIDERS "" CACHE STRING "Explicit local provider/plugin inputs for mutation and profile tests")
 add_library(mfgunlock_addon_compile OBJECT
   ../src/addons/mfgunlock/addon.cpp)
@@ -74,6 +75,10 @@ target_include_directories(mfgunlock_release_1_4_5 SYSTEM PRIVATE
 target_link_libraries(mfgunlock_release_1_4_5 PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
 set_target_properties(mfgunlock_release_1_4_5 PROPERTIES
   PREFIX "" SUFFIX ".addon64" OUTPUT_NAME "renodx-mfgunlock-1.4.5")
+
+if(MFGUNLOCK_BUILD_XEMFG)
+  add_subdirectory(../src/addons/mfgunlock/xemfg xemfg)
+endif()
 
 add_executable(release_1_4_5_policy_tests quality_build_policy_tests.cpp)
 target_compile_definitions(release_1_4_5_policy_tests PRIVATE

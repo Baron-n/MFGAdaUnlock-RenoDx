@@ -1,0 +1,13 @@
+# XeMFG component provenance
+
+Imported from [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker/tree/a4cf2c4ab632e84c72254932793bb9e64b33d76e/source/native), commit `a4cf2c4ab632e84c72254932793bb9e64b33d76e` (19 October 2026). The MIT copyright and permission notice are retained in `LICENSE.dashdogy.txt`; MinHook has its own notice.
+
+Reused components: decoded runtime layout witnesses, transactional count unlock, model catalog adaptation, shader decoder/program port, extra-output pacing and interval estimator, optional NVIDIA tensor-core route, SHA-256 helpers, native COM identity and NVAPI ownership validation. Include paths and the small logging/COM host adapters were adapted for this project. `image_slots.h` contains only the two image-range checks consumed by `overlay_native.h`. Our `port_support.h` supplies the logging and common declarations; it does not integrate the original renderer.
+
+The standalone DLSS implementation, overlay renderer, preset controls, motion-vector repair, HUD matching, scene-change override and Intel-architecture unlock were **not** imported. Our new `backend.cpp` handles OptiScaler startup admission and real context lifecycle. It does not implement an independent Streamline-to-XeFG converter: OptiScaler remains an external dependency and owns those resources, XeLL, the swapchain proxy and the settings UI.
+
+`runtime_layout.generated.h` is the upstream source-level instruction-profile metadata, not a shader/model payload. The three local NVIDIA-generated headers remain exactly the official 1.4.5 inputs. No DR1, MR1, CA1, TGL or LMR kernel change is in this branch.
+
+Intel-derived DXIL programs are separate local build inputs and retain Intel's terms (`XEFG-PROGRAMS-NOTICE.txt`). The 54-program manifest is pinned by upstream SHA-256. The seven authored shader outputs and the CUDA fatbin have their upstream generator hashes. For this local build they are statically read from the user's supplied 1.6.0.1010 ASI, after checking its complete SHA-256; its executable code is not loaded. They are not checked into this repository. The source HLSL/CUDA and pinned compiler recipes are included, but compiling those recipes was not a validation performed by this build. Intel runtime DLLs and model weights are supplied by the user's existing installation.
+
+OptiScaler source was inspected as an API/ownership reference; no GPL OptiScaler implementation is copied here. The official Intel SDK headers are externally supplied (their MIT notice is retained with the packaged notices).
