@@ -15,6 +15,7 @@ def main():
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--official-addon',type=Path,required=True)
     ap.add_argument('--intel-headers',type=Path,required=True)
+    ap.add_argument('--identity',default='Dual Backend X1.1 - deferred SDK startup on official 1.4.5 base')
     args=ap.parse_args()
     root=Path(__file__).resolve().parent.parent
     out=args.output.resolve(); out.mkdir(parents=True,exist_ok=True)
@@ -33,6 +34,7 @@ def main():
         'notices/Intel-SDK-LICENSE.txt':args.intel_headers/'LICENSE.txt',
         'PROVENANCE.md':root/'src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md',
         'engineering-report.md':root/'docs/research/dual-backend-xemfg-2026-10-19.md',
+        'README.txt':root/'docs/dual-backend-readme.txt',
     }
     if sha(args.official_addon)!='9715987f6323a2699dd5b7636412258a6b97a180a4d70c0f79d286714e2972e2':
         raise ValueError('Rollback must be the sealed official 1.4.5 addon')
@@ -47,16 +49,33 @@ def main():
             if p.is_file() and '__pycache__' not in p.parts:
                 source[p.relative_to(root).as_posix()]=sha(p)
     evidence={}
-    for name in ['build/ctest.log','build/runtime-smoke/final-smoke.log',
-                 'build/runtime-smoke/MFGAdaUnlock-XeMFG.log',
-                 'build/runtime-inactive/result.log','build/runtime-bad-provider/result.log']:
+    for name in ['build/ctest.log','build/loader-regression-results.json']:
         p=root/name
         if p.exists():
             target=out/'evidence'/Path(name).parent.name/Path(name).name
             target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,target)
             evidence[target.relative_to(out).as_posix()]=sha(target)
+    # Include only lifecycle/startup cases whose staged plugin matches the
+    # exact artifact being packaged. Older X1 traces remain separate context.
+    checks=root/'build/tests/xemfg-checks'
+    for mode in ['loader','early-lifecycle']:
+        for case in sorted(checks.glob(mode+'-*'),reverse=True):
+            plugin=case/('plugins/MFGAdaUnlock.XeMFG.asi' if mode=='loader' else 'MFGAdaUnlock.XeMFG.asi')
+            if not plugin.exists() or sha(plugin)!=sha(native/'MFGAdaUnlock.XeMFG.asi'): continue
+            directory=out/'evidence'/mode; directory.mkdir(parents=True,exist_ok=True)
+            for name in ['result.json','MFGAdaUnlock-XeMFG.log']:
+                p=case/name
+                if p.exists():
+                    target=directory/name; shutil.copy2(p,target)
+                    evidence[target.relative_to(out).as_posix()]=sha(target)
+            identity={p.relative_to(case).as_posix():sha(p) for p in case.rglob('*') if p.is_file() and p.suffix in ['.asi','.dll','.exe']}
+            target=directory/'inputs-sha256.json'
+            target.write_text(json.dumps(identity,indent=2),encoding='utf-8')
+            evidence[target.relative_to(out).as_posix()]=sha(target)
+            break
+        else: raise ValueError('Missing matching final-artifact evidence: '+mode)
     manifest={
-        'identity':'Dual Backend X1 - official 1.4.5 base',
+        'identity':args.identity,
         'baseline_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
@@ -66,7 +85,7 @@ def main():
         'assets':[{'name':name,'sha256':sha(out/name),'bytes':(out/name).stat().st_size} for name in assets],
         'source_inputs_sha256':source,'evidence_sha256':evidence,
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'40 CTest passed; 3 optional historical/NVIDIA-input checks skipped. Real SDK lifecycle and synthetic host tests; no generated image or gameplay validation.',
+        'test_scope':'42 CTest passed; 3 optional historical/NVIDIA-input checks skipped. Cold startup with real OptiScaler, early SDK lifecycle, model patch/restore; no generated image or successful gameplay validation.',
         'gameplay_validated':False,
     }
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8')

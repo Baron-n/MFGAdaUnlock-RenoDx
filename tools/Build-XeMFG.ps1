@@ -4,7 +4,7 @@ param(
   [Parameter(Mandatory=$true)][string]$XessSdkRoot,
   [Parameter(Mandatory=$true)][string]$ProgramSourceAsi,
   [string]$BuildDirectory = 'build/tests',
-  [string]$OfflineFg = '', [string]$OfflineLl = ''
+  [string]$OfflineFg = '', [string]$OfflineLl = '', [string]$OfflineHost = ''
 )
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
@@ -28,7 +28,7 @@ try {
   & python src/addons/mfgunlock/xemfg/vendor/generate_xess_programs.py --programs build/xemfg-inputs --output build/xemfg-generated
   if($LASTEXITCODE) { throw 'Program table failed.' }
   & cmake -S tests -B $BuildDirectory -G 'Visual Studio 17 2022' -A x64 "-DRENODX_SOURCE_DIR=$RenoDxSource" `
-    -DMFGUNLOCK_BUILD_XEMFG=ON "-DXEMFG_SDK_ROOT=$XessSdkRoot" "-DXEMFG_OFFLINE_FG=$OfflineFg" "-DXEMFG_OFFLINE_LL=$OfflineLl"
+    -DMFGUNLOCK_BUILD_XEMFG=ON "-DXEMFG_SDK_ROOT=$XessSdkRoot" "-DXEMFG_OFFLINE_FG=$OfflineFg" "-DXEMFG_OFFLINE_LL=$OfflineLl" "-DXEMFG_OFFLINE_HOST=$OfflineHost"
   if($LASTEXITCODE) { throw 'Configure failed.' }
   & cmake --build $BuildDirectory --config Release --parallel 4
   if($LASTEXITCODE) { throw 'Build failed.' }

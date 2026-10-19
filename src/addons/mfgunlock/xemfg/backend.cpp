@@ -30,6 +30,16 @@ HMODULE self{}, host{}, fg{}, ll{};
 std::recursive_mutex mutex;
 std::mutex sinkMutex;
 std::once_flag initializeOnce;
+std::once_flag startupOnce;
+HMODULE bootstrapFg{};
+bool bootstrapCreate{};
+bool InsideLoader() noexcept {
+  using Query = BOOLEAN (NTAPI*)();
+  const auto query = reinterpret_cast<Query>(GetProcAddress(
+      GetModuleHandleW(L"ntdll.dll"), "RtlIsThreadWithinLoaderCallout"));
+  return !query || query(); // Unknown context never authorizes SDK entry calls.
+}
+void CompleteStartup() noexcept;
 struct Context {
   ComPtr<ID3D12Device> device;
   uint64_t generation{};
@@ -190,7 +200,13 @@ API(xefgSwapChainSetNumInterpolatedFrames);
 API(xefgSwapChainGetLastPresentStatus);
 #undef API
 Result Create(ID3D12Device* device, Handle* output) {
+  // The public entry is captured early, but SDK code/metadata is never called
+  // from an OptiScaler DllMain callback. The first real client call can join
+  // the worker here before a context consumes the model or count settings.
+  if (InsideLoader()) return unsupported;
+  CompleteStartup();
   std::lock_guard lock(mutex); auto& s=Get();
+  if (!s.status.hooks) return original_xefgSwapChainD3D12CreateContext(device,output);
   if (!HostAddress(_ReturnAddress())) {
     s.foreignSeen=true;
     if (s.model) return unsupported;
@@ -297,6 +313,7 @@ void Start() {
   fg=LoadLibraryExW(fgPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   ll=LoadLibraryExW(llPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   if (!fg || !ll) throw std::runtime_error("Intel_runtime_load");
+  if (bootstrapCreate && bootstrapFg!=fg) throw std::runtime_error("bootstrap_provider_differs");
   if (!std::filesystem::equivalent(ModulePath(fg),fgPath)
       || !std::filesystem::equivalent(ModulePath(ll),llPath)) throw std::runtime_error("loaded_runtime_path_differs");
   Pin(self); Pin(host); Pin(fg); Pin(ll);
@@ -314,6 +331,7 @@ void Start() {
 #undef H
   std::vector<void*> targets;
   for (const auto& h:hooks) {
+    if (bootstrapCreate && h.original==reinterpret_cast<void**>(&original_xefgSwapChainD3D12CreateContext)) continue;
     void* target=reinterpret_cast<void*>(GetProcAddress(fg,h.name));
     if (!target || MH_CreateHook(target,h.target,h.original)!=MH_OK) {
       for (void* t:targets) MH_RemoveHook(t);
@@ -326,6 +344,44 @@ void Start() {
   Get().status.hooks=1;
   Detail("SDK hooks ready; waiting for OptiScaler XeFG context");
   xess_mod::WriteLog("ready","\"provider_sha256\":\""+fh+"\",\"xell_sha256\":\""+lh+"\"");
+}
+void CompleteStartup() noexcept {
+  // Do not enter call_once while inside the loader: another initializer may
+  // need that same loader before it can complete.
+  if (InsideLoader()) return;
+  std::call_once(startupOnce,[] {
+    try { Start(); }
+    catch (const std::exception& e) { std::lock_guard lock(mutex); Detail(e.what()); xess_mod::WriteLog("startup_rejected","\"reason\":\""+escape(e.what())+"\""); }
+    catch (...) { std::lock_guard lock(mutex); Detail("unexpected_startup_failure"); }
+  });
+}
+bool CaptureEarlyCreate() noexcept {
+  // Only inspect a mapped public export. In the initial dependency graph the
+  // Intel image may already be mapped even though its CRT/DllMain has not run.
+  // Calling GetVersion, touching its catalogs or loading another SDK here is
+  // unsafe (the X1 Cyberpunk dump reproduced exactly that failure).
+  const auto module=GetModuleHandleW(L"libxess_fg.dll");
+  if (!module) return false;
+  void* target=reinterpret_cast<void*>(GetProcAddress(module,"xefgSwapChainD3D12CreateContext"));
+  const auto mh=MH_Initialize();
+  if (!target || (mh!=MH_OK && mh!=MH_ERROR_ALREADY_INITIALIZED)) return false;
+  for (const auto owner : {self,module}) {
+    HMODULE pinned{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(owner),&pinned) || pinned!=owner) return false;
+  }
+  if (MH_CreateHook(target,reinterpret_cast<void*>(&Create),
+      reinterpret_cast<void**>(&original_xefgSwapChainD3D12CreateContext))!=MH_OK) return false;
+  bootstrapFg=module;
+  if (MH_EnableHook(target)!=MH_OK) return false; // Retain any published trampoline.
+  bootstrapCreate=true;
+  return true;
+}
+DWORD WINAPI StartupWorker(void* reference) {
+  // Windows starts this thread after the process's DLL initialization phase.
+  // No wait/join is performed by InitializeASI or DllMain.
+  CompleteStartup();
+  FreeLibraryAndExitThread(static_cast<HMODULE>(reference),0);
 }
 } // namespace
 
@@ -341,9 +397,20 @@ void WriteLog(const char* stage,const std::string& fields) noexcept {
 }
 extern "C" __declspec(dllexport) void InitializeASI() {
   std::call_once(initializeOnce,[] {
-    try { Start(); }
-    catch (const std::exception& e) { std::lock_guard lock(mutex); Detail(e.what()); xess_mod::WriteLog("startup_rejected","\"reason\":\""+escape(e.what())+"\""); }
-    catch (...) { std::lock_guard lock(mutex); Detail("unexpected_startup_failure"); }
+    if (!InsideLoader()) { CompleteStartup(); return; }
+    if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg) {
+      std::lock_guard lock(mutex); Detail("DLSS-G selected; XeMFG companion inactive"); return;
+    }
+    if (!CaptureEarlyCreate()) {
+      std::lock_guard lock(mutex); Detail("Early XeFG Create entry unavailable; native startup retained"); return;
+    }
+    { std::lock_guard lock(mutex); Detail("Waiting for DLL initialization to finish"); }
+    HMODULE reference{};
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        reinterpret_cast<LPCWSTR>(self),&reference)) return;
+    const auto thread=CreateThread(nullptr,0,&StartupWorker,reference,0,nullptr);
+    if (thread) CloseHandle(thread);
+    else FreeLibrary(reference); // First captured Create can still complete startup.
   });
 }
 extern "C" __declspec(dllexport) bool MFGAXeGetStatus(mfgunlock::xemfg::Status* out,uint32_t size) {

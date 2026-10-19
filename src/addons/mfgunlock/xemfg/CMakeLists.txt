@@ -21,6 +21,8 @@ add_library(mfgunlock_xemfg SHARED backend.cpp
   "${XEMFG_INPUTS}/embedded_xefg_cuda.rc" "${CMAKE_CURRENT_BINARY_DIR}/notices.rc")
 target_compile_definitions(mfgunlock_xemfg PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 target_compile_options(mfgunlock_xemfg PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/bigobj> /utf-8)
+target_compile_options(mfgunlock_xemfg PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/Zi>)
+target_link_options(mfgunlock_xemfg PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
 target_include_directories(mfgunlock_xemfg PRIVATE vendor
   "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${XEMFG_INPUTS}" "${XEMFG_GENERATED}")
@@ -54,3 +56,20 @@ target_compile_definitions(xemfg_host_fixture PRIVATE UNICODE _UNICODE NOMINMAX)
 target_include_directories(xemfg_host_fixture PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell")
 target_link_libraries(xemfg_host_fixture PRIVATE d3d12 dxgi user32)
 add_executable(xemfg_runtime_smoke "${CMAKE_SOURCE_DIR}/xemfg_runtime_smoke.cpp")
+add_executable(xemfg_loader_smoke "${CMAKE_SOURCE_DIR}/xemfg_loader_smoke.cpp")
+target_compile_definitions(xemfg_loader_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_loader_smoke PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg")
+target_link_libraries(xemfg_loader_smoke PRIVATE "${XEMFG_SDK_ROOT}/lib/libxess_fg.lib")
+set(XEMFG_OFFLINE_HOST "" CACHE FILEPATH "Explicit OptiScaler 10 loader for the cold-start regression test")
+if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
+  find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME xemfg_loader_startup COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode loader --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_loader_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}")
+  add_test(NAME xemfg_early_sdk_lifecycle COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode early-lifecycle --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_runtime_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host $<TARGET_FILE:xemfg_host_fixture>)
+  set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle PROPERTIES TIMEOUT 45)
+endif()

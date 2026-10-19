@@ -9,6 +9,18 @@
 #include <iostream>
 #include <stdexcept>
 using Microsoft::WRL::ComPtr;
+BOOL WINAPI DllMain(HMODULE,DWORD reason,LPVOID) {
+  if(reason==DLL_PROCESS_ATTACH) {
+    wchar_t enabled[4]{};
+    if(GetEnvironmentVariableW(L"MFGAXE_FIXTURE_EARLY",enabled,4) && enabled[0]==L'1') {
+      auto plugin=LoadLibraryW(L"MFGAdaUnlock.XeMFG.asi");
+      auto init=plugin ? reinterpret_cast<void(*)()>(GetProcAddress(plugin,"InitializeASI")) : nullptr;
+      if(!init) return FALSE;
+      init(); // Deliberately model the host's callback inside DLL initialization.
+    }
+  }
+  return TRUE;
+}
 #define PROC(m,n) auto n##_fn=reinterpret_cast<decltype(&n)>(GetProcAddress(m,#n)); if(!n##_fn) throw std::runtime_error(#n)
 #define CALL(n,...) do { const auto r=n##_fn(__VA_ARGS__); std::cout<<#n<<"="<<r<<std::endl; if(r!=0) throw std::runtime_error(#n); } while(false)
 extern "C" __declspec(dllexport) int RunFixture() {

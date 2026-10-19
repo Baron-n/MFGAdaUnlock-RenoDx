@@ -2,6 +2,12 @@
 #include <iostream>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 int main(int argc,char** argv) {
+  char early[4]{};
+  if(GetEnvironmentVariableA("MFGAXE_FIXTURE_EARLY",early,4) && early[0]=='1') {
+    // The real OptiScaler dependency graph already maps this pair before its
+    // ASI callback. The synthetic host deliberately models that prerequisite.
+    if(!LoadLibraryW(L"libxess_fg.dll") || !LoadLibraryW(L"libxell.dll")) return 6;
+  }
   auto host=LoadLibraryW(L"xemfg_host_fixture.dll");
   auto plugin=LoadLibraryW(L"MFGAdaUnlock.XeMFG.asi");
   if(!host || !plugin) { std::cerr<<"Load fixture/plugin failed: "<<GetLastError()<<'\n'; return 1; }
