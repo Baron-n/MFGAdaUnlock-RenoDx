@@ -95,6 +95,7 @@ int wmain(int argc,wchar_t** argv) {
     CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     ImGui::CreateContext(); auto& io=ImGui::GetIO(); io.IniFilename=nullptr;
     io.DisplaySize=ImVec2(float(width),float(height)); io.DeltaTime=1.f/60.f;
+    if(scenario==L"navigation") io.ConfigFlags|=ImGuiConfigFlags_NavEnableKeyboard;
     ImFontConfig font; font.SizePixels=argc>=5?std::stof(argv[4]):16.f; io.Fonts->AddFontDefault(&font);
     unsigned char* tex{}; int tw{},th{}; io.Fonts->GetTexDataAsRGBA32(&tex,&tw,&th); io.Fonts->SetTexID(1);
     auto& style=ImGui::GetStyle(); style.WindowRounding=10; style.WindowPadding=ImVec2(16,14);
@@ -104,15 +105,40 @@ int wmain(int argc,wchar_t** argv) {
     LoadControls(); auto& state=State(); state.status.enabled=state.status.output=state.status.xell=state.status.streamline=true;
     state.status.submitted=4; state.status.frames=5500; state.multiplier=4; state.reflexOff=true;
     state.latencySleeps=5500; state.latencyMarkers=33000; state.gameReflexMode=1; state.latencyModeUpdates=1;
-    ImVec2 click{};
+    ImVec2 click{}; unsigned navigationFrames{},controlFrames{}; std::string lastNavigationWindow;
     for(int frame=0;frame<48;++frame) {
       if(frame==2) io.AddMousePosEvent(click.x,click.y);
       if(frame==4 || frame==6) io.AddMouseButtonEvent(0,frame==4);
       if(scenario==L"multiplier" && (frame==12 || frame==14)) io.AddMouseButtonEvent(0,frame==12);
+      if(scenario==L"navigation" && frame>=8) {
+        io.AddKeyEvent(ImGuiKey_Tab,frame%4==0);
+        io.AddKeyEvent(ImGuiKey_Enter,frame==10);
+        io.AddKeyEvent(ImGuiKey_Home,frame==37);
+      }
       state.inputTick=state.outputTick=GetTickCount64();
       ImGui::NewFrame(); ImGui::SetNextWindowPos(ImVec2(0,0)); ImGui::SetNextWindowSize(io.DisplaySize);
       ImGui::Begin("Layout preview - synthetic status",nullptr,ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse);
-      { mfgunlock::ui::Theme theme; Draw(); }
+      { mfgunlock::ui::Theme theme;
+        if(scenario==L"navigation") {
+          mfgunlock::ui::Hero("4x","XeMFG","DX12","Generating frames",true);
+          mfgunlock::ui::Card controls("##keyboard_controls");
+          static int selected{};
+          mfgunlock::ui::Setting("##keyboard_multiplier","Frame multiplier","Keyboard navigation remains available in real controls.",[&] {
+            ImGui::Combo("##keyboard_combo",&selected,"2x\0" "3x\0" "4x\0");
+          });
+          static bool enabled{}; ImGui::Checkbox("Driver flip metering",&enabled);
+        } else Draw();
+      }
+      if(scenario==L"navigation" && GImGui->NavWindow) {
+        if(GImGui->NavId) ++navigationFrames;
+        const auto* name=GImGui->NavWindow->Name;
+        if(lastNavigationWindow!=name) { lastNavigationWindow=name; std::cout<<"Navigation window: "<<name<<'\n'; }
+        if(strstr(name,"/summary_") || strstr(name,"##compact_overview"))
+          throw std::runtime_error("read-only overview captured keyboard navigation");
+        if(strstr(name,"##keyboard_controls") && GImGui->NavId) ++controlFrames;
+      }
+      if(scenario==L"navigation" && frame<2) for(auto* window:GImGui->Windows)
+        if(strstr(window->Name,"/summary_") || strstr(window->Name,"##compact_overview")) { click=window->Rect().GetCenter(); break; }
       auto* bar=GImGui->TabBars.GetByKey(ImGui::GetID("##xemfg_pages"));
       if(bar && bar->Tabs.Size==4) click=ImVec2(bar->BarRect.Min.x+bar->Tabs[page].Offset+bar->Tabs[page].Width*.5f,bar->BarRect.GetCenter().y);
       if(frame==9 && bar && bar->SelectedTabId!=bar->Tabs[page].ID) throw std::runtime_error("requested preview tab was not selected");
@@ -153,6 +179,7 @@ int wmain(int argc,wchar_t** argv) {
       ImGui::End(); ImGui::Render();
     }
     std::vector<unsigned char> pixels(size_t(width)*height*4,255);
+    if(scenario==L"navigation" && (!navigationFrames || !controlFrames)) throw std::runtime_error("keyboard test did not reach real settings: "+std::to_string(navigationFrames)+"/"+std::to_string(controlFrames));
     Raster(ImGui::GetDrawData(),tex,tw,th,pixels,width,height);
     std::filesystem::create_directories(std::filesystem::path(argv[1]).parent_path()); Save(argv[1],pixels,width,height);
     ImGui::DestroyContext(); std::cout<<"Rendered actual XeMFG widgets with synthetic status\n"; return 0;

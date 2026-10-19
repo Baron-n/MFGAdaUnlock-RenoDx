@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.7.1
+MFGAdaUnlock - Native ReShade XeMFG R1.7.2
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. R1.7.1 full suite: 64 passed,
+bypass, FG disable, resize and context destruction. R1.7.2 full suite: 66 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -160,3 +160,11 @@ Gameplay Home/focus confirmation remains pending; this is not a pacing or
 HUD-quality change. Callback GUI bookkeeping can add CPU work and needs the
 same controlled benchmark before a performance claim. R1.7 and R1.6 rollbacks
 are included; retain the exact installation backup for the preceding setup.
+
+R1.7.2 makes the Multiplier/Backend/Renderer readouts passive, in both wide
+and compact layouts, for DLSS-G and XeMFG. Only actual settings receive
+keyboard/gamepad navigation; the readout containers cannot take mouse focus.
+Wide/compact tests navigate into actual controls and exclude the readouts.
+This fixes the blue navigation highlight shown in the user screenshot; it
+does not establish that all intermittent Home failures have the same cause.
+See passive-card-focus.md. R1.7.1 is also included for exact rollback.

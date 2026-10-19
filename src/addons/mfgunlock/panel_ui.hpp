@@ -59,12 +59,16 @@ inline void Section(const char* title,const char* description=nullptr) {
 }
 struct Card {
   bool visible;
-  Card(const char* id) {
+  Card(const char* id,ImGuiWindowFlags flags=0) {
     visible=ImGui::BeginChild(id,ImVec2(0,0),ImGuiChildFlags_AutoResizeY|ImGuiChildFlags_AlwaysUseWindowPadding,
-        ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+        ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|flags);
   }
   ~Card() { ImGui::EndChild(); ImGui::Spacing(); }
   explicit operator bool() const { return visible; }
+};
+struct NoNavigation {
+  NoNavigation() { ImGui::PushItemFlag(ImGuiItemFlags_NoNav,true); }
+  ~NoNavigation() { ImGui::PopItemFlag(); }
 };
 template<class F> void Setting(const char* id,const char* title,const char* description,F control) {
   const auto label=[&] {
@@ -102,8 +106,11 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
   ImGui::PushTextWrapPos(); ImGui::TextColored(active?Accent:Warning,"%s",state); ImGui::PopTextWrapPos();
   const char* values[]={multiplier,backend,renderer};
   const char* labels[]={"Multiplier","Backend","Renderer"};
+  // These are readouts, including the child-container item added by EndChild.
+  // Keep real settings outside this scope so keyboard navigation still works.
+  NoNavigation summaries;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
-    Card card("##compact_overview");
+    Card card("##compact_overview",ImGuiWindowFlags_NoInputs);
     if(ImGui::BeginTable("##compact_summary",2,ImGuiTableFlags_SizingStretchSame)) {
       for(int i=0;i<3;++i) {
         ImGui::TableNextColumn(); Description(labels[i]);
@@ -117,7 +124,7 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
     for(int i=0;i<3;++i) {
       ImGui::TableNextColumn(); ImGui::PushID(i);
       ImGui::BeginChild("summary",ImVec2(0,ImGui::GetTextLineHeight()*2.f+ImGui::GetStyle().ItemSpacing.y+ImGui::GetStyle().WindowPadding.y*2),ImGuiChildFlags_AlwaysUseWindowPadding,
-          ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
+          ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|ImGuiWindowFlags_NoInputs);
       ImGui::TextColored(i==0?Accent:ImVec4(.93f,.95f,.98f,1),"%s",values[i]);
       Description(labels[i]); ImGui::EndChild(); ImGui::PopID();
     }
