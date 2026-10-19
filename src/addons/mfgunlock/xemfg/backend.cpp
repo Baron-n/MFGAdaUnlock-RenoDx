@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <span>
 
 namespace {
 using Handle = xefg_swapchain_handle_t;
@@ -46,6 +47,10 @@ struct Context {
   uint64_t generation{};
   bool initialized{}, enabled{};
   uint32_t generated{};
+  bool hostOwner{};
+  uint64_t statusTick{};
+  uint32_t statusSamples{};
+  xefg_swapchain_present_status_t lastStatus{};
 };
 struct State {
   mfgunlock::xemfg::Status status;
@@ -54,7 +59,8 @@ struct State {
   std::unique_ptr<ShaderPort> shaders;
   std::unique_ptr<ModelPort> model;
   std::unique_ptr<xess_host_unlock::Unlock> unlock;
-  bool attempted{}, deferred{}, rejected{};
+  std::span<const unsigned char> cudaFatbin; // Resource bytes in the process-pinned companion.
+  bool attempted{}, deferred{}, rejected{}, publishing{};
   uint64_t generation{};
 };
 // Once hooks exist, callbacks, payloads and provider stay alive until exit.
@@ -87,6 +93,11 @@ bool SdkAddress(const void* p) noexcept {
   MEMORY_BASIC_INFORMATION m{};
   return p && VirtualQuery(p,&m,sizeof(m))==sizeof(m) && m.Type==MEM_IMAGE
       && (m.AllocationBase==fg || m.AllocationBase==ll);
+}
+bool GameAddress(const void* p) noexcept {
+  MEMORY_BASIC_INFORMATION m{};
+  return p && VirtualQuery(p,&m,sizeof(m))==sizeof(m) && m.Type==MEM_IMAGE
+      && m.AllocationBase==GetModuleHandleW(nullptr);
 }
 std::string CallerName(const void* p) noexcept {
   try {
@@ -146,29 +157,29 @@ void Pin(HMODULE module) {
 }
 void Prepare(ID3D12Device* device) {
   auto& s=Get(); if (s.attempted) return;
-  // Native capability probes are often created and destroyed before the real
-  // output context. Only live native contexts forbid process-wide publication.
-  // Include host contexts created during a deferred attempt in this lifetime.
+  // Unadmitted callers retain the native SDK. Never publish over their live
+  // contexts. Admitted game/host consumers share the port from their first
+  // Create, even when the game's capability context precedes the host output.
   if(!s.nativeContexts.empty()) {
     Detail("Native XeFG 2x: waiting for earlier native contexts to retire");
     if(!s.deferred) xess_mod::WriteLog("port_deferred","\"reason\":\"native_contexts_live\",\"contexts\":"+std::to_string(s.nativeContexts.size()));
     s.deferred=true; return;
   }
   s.attempted=true; s.deferred=false;
+  s.publishing=true;
+  struct PublicationScope { bool& flag; ~PublicationScope() { flag=false; } } publication{s.publishing};
   try {
     if (Vendor(device)!=0x10de) throw std::runtime_error("first_build_targets_nvidia_only");
     if (!xess_layout::Pair(fg,ll)) throw std::runtime_error("provider_layout_rejected");
-    const auto fatbin=xess_payload::Read(self,xefg_cuda::embedded::fatbin);
+    auto fatbin=xess_payload::Read(self,xefg_cuda::embedded::fatbin);
     // Publish only the true multi-frame model. Never repeat the stock 2x model
     // at the wrong phases as an alternative unlock.
     auto shaders=std::make_unique<ShaderPort>(fg,self);
     auto model=std::make_unique<ModelPort>(fg,true,true);
     auto unlock=std::make_unique<xess_host_unlock::Unlock>(fg,ll,5,false);
     s.shaders=std::move(shaders); s.model=std::move(model); s.unlock=std::move(unlock);
+    s.cudaFatbin=std::move(fatbin);
     s.status.model=1;
-    xefg_cuda::SetLog(&xess_mod::WriteLog);
-    std::string reason;
-    xefg_cuda::Install(device,fg,fatbin,reason);
     Detail("Intel multi-frame model ready; OptiScaler owns inputs and XeLL");
   } catch (const std::exception& e) {
     s.rejected=true; Detail(std::string("Native XeFG 2x fallback: ")+e.what());
@@ -230,9 +241,11 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   CompleteStartup();
   std::lock_guard lock(mutex); auto& s=Get();
   if (!s.status.hooks) return original_xefgSwapChainD3D12CreateContext(device,output);
+  if(s.publishing) return unsupported; // Do not create a native context reentrantly during publication.
   // SDK self-calls retain their original forwarding/lifecycle semantics.
   if(SdkAddress(caller)) return original_xefgSwapChainD3D12CreateContext(device,output);
-  if (!HostAddress(caller)) {
+  const bool hostCall=HostAddress(caller),gameCall=GameAddress(caller);
+  if (!hostCall && !gameCall) {
     if (s.model) return unsupported;
     const auto r=original_xefgSwapChainD3D12CreateContext(device,output);
     if(r==success && output && *output) s.nativeContexts.insert(*output);
@@ -240,15 +253,26 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
     return r;
   }
   if (!device || !output) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  if(s.contexts.size()>=8) return unsupported;
+  const bool first=!s.attempted && s.nativeContexts.empty();
   Prepare(device);
+  if(first && s.model) xess_mod::WriteLog("model_prepared_before_create","\"owner\":\""+std::string(hostCall?"host":"game")+"\",\"caller\":\""+escape(CallerName(caller))+"\"");
+  if(hostCall && s.model) {
+    // Bind the optional GPU route to the actual output device, not an earlier
+    // game capability probe. Other devices retain the profiled DXIL path.
+    xefg_cuda::SetLog(&xess_mod::WriteLog);
+    std::string reason;
+    xefg_cuda::Install(device,fg,s.cudaFatbin,reason);
+  }
   const auto r=original_xefgSwapChainD3D12CreateContext(device,output);
   s.status.result=r;
   if (r==success && *output && s.model) {
-    s.contexts.emplace(*output,Context{device,++s.generation});
+    Context c{device,++s.generation}; c.hostOwner=hostCall;
+    s.contexts.emplace(*output,std::move(c));
     s.status.contexts=uint32_t(s.contexts.size());
   }
   else if(r==success && *output) s.nativeContexts.insert(*output);
-  xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false")+",\"handle\":"+std::to_string(r==success?uintptr_t(*output):0));
+  xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false")+",\"owner\":\""+(hostCall?"host":"game")+"\",\"handle\":"+std::to_string(r==success?uintptr_t(*output):0));
   return r;
 }
 template<class Init> Result Initialize(Handle handle, Init call) {
@@ -270,7 +294,7 @@ template<class Init> Result Initialize(Handle handle, Init call) {
   }
   c.initialized=true; s.status.initialized=1;
   Detail("XeMFG ready (2x-6x); use OptiScaler Frame Generation controls");
-  xess_mod::WriteLog("context_initialized","\"paced\":true,\"generation\":"+std::to_string(c.generation));
+  xess_mod::WriteLog("context_initialized","\"paced\":true,\"owner\":\""+std::string(c.hostOwner?"host":"game")+"\",\"generation\":"+std::to_string(c.generation));
   return r;
 }
 __declspec(noinline) Result InitChain(Handle h, ID3D12CommandQueue* q,const xefg_swapchain_d3d12_init_params_t* p) {
@@ -302,15 +326,30 @@ __declspec(noinline) Result Count(Handle h,uint32_t count) {
     if (it->second.generated!=count) sdk_pacing::Reset(h,it->second.generation);
     it->second.generated=count; s.status.generated=count;
   }
+  if(it!=s.contexts.end()) xess_mod::WriteLog("count_result","\"owner\":\""+std::string(it->second.hostOwner?"host":"game")+"\",\"generated\":"+std::to_string(count)+",\"result\":"+std::to_string(r));
   s.status.result=r; return r;
 }
 Result LastStatus(Handle h,xefg_swapchain_present_status_t* p) {
   const auto r=original_xefgSwapChainGetLastPresentStatus(h,p);
   if (r==success && p) {
     std::lock_guard lock(mutex); auto& s=Get();
-    if (s.contexts.contains(h)) {
+    auto it=s.contexts.find(h);
+    if (it!=s.contexts.end() && it->second.hostOwner) {
       s.status.presented=p->framesPresented; s.status.result=p->frameGenResult;
       s.status.enabled=p->isFrameGenEnabled;
+      s.status.tensor_launches=xefg_cuda::Snapshot().launches;
+      auto& c=it->second;
+      const auto tick=GetTickCount64();
+      const bool changed=p->framesPresented!=c.lastStatus.framesPresented
+          || p->isFrameGenEnabled!=c.lastStatus.isFrameGenEnabled || p->frameGenResult!=c.lastStatus.frameGenResult;
+      // A bounded startup sample, then only changes. SDK presentation status
+      // is not evidence of monitor scanout, FPS or physical latency.
+      if(tick-c.statusTick>=1000 && (c.statusSamples<30 || changed)) {
+        c.statusTick=tick; ++c.statusSamples; c.lastStatus=*p;
+        xess_mod::WriteLog("output_status","\"handle\":"+std::to_string(uintptr_t(h))
+            +",\"frames_presented\":"+std::to_string(p->framesPresented)+",\"enabled\":"+std::to_string(p->isFrameGenEnabled)
+            +",\"interpolation_result\":"+std::to_string(p->frameGenResult)+",\"tensor_launches\":"+std::to_string(s.status.tensor_launches));
+      }
     }
   }
   return r;

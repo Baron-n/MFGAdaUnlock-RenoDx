@@ -1,9 +1,10 @@
-MFGAdaUnlock - Dual Backend X1.2 (base oficial 1.4.5)
+MFGAdaUnlock - Dual Backend X1.3 (base oficial 1.4.5)
 
-Preserva os redirecionamentos de API que pertencem ao OptiScaler, sem inserir
-outro wrapper que mude a identificacao do chamador. Contextos temporarios ja
-destruidos deixam de bloquear MFG; um contexto nativo ainda vivo continua
-impedindo a publicacao global do modelo. Mantem a correcao de startup da X1.1.
+Prepara o modelo antes do primeiro contexto admitido do jogo ou do OptiScaler.
+Os dois passam a compartilhar o modelo desde a criacao; nao se altera um
+contexto nativo ja vivo. Um contexto de componente nao admitido ainda bloqueia
+o port global. A rota Tensor Core e ligada ao dispositivo do output do host.
+Mantem os redirecionamentos do OptiScaler e a correcao de startup das anteriores.
 O modelo, os shaders e os ajustes de imagem nao foram alterados nesta correcao.
 
 DLSSG: base de geracao/qualidade 1.4.5, com ReShade direto.
@@ -23,11 +24,13 @@ O backup inicial do Cyberpunk permanece em MFGAdaUnlock-profiles na pasta x64.
 Para voltar ao addon oficial 1.4.5, selecione primeiro DLSSG e substitua o addon
 pelo arquivo da pasta rollback, usando o nome renodx-mfgunlock.addon64.
 
-Validacao: 45 testes aprovados; 3 opcionais pulados. Inclui abertura com
+Validacao: 46 testes aprovados; 3 opcionais pulados. Inclui abertura com
 OptiScaler real, ciclo de vida XeLL/XeFG e contagens 2x/3x/4x/6x em host
-sintetico, caller dos redirects, Present/resize e protecao de contexto vivo.
+sintetico, caller dos redirects, Present/resize, jogo criando o primeiro
+contexto MFG e protecao contra publicacao sobre contexto estrangeiro vivo.
 A X1.1 passou do startup e caiu durante Present no XeLL no Cyberpunk.
-Esta candidata corrige duas falhas reproduzidas offline; a eliminacao daquele
-crash e o funcionamento com imagens geradas ainda aguardam teste no jogo.
+A X1.2 abriu e carregou a cena no teste do usuario, mas ficou em XeFG nativo.
+A X1.3 corrige o bloqueio de ativacao reproduzido. Sua abertura, geracao real
+e qualidade ainda aguardam verificacao no jogo; o log inclui estado do SDK.
 Veja engineering-report.md, manifest.json, evidence/, PROVENANCE.md e notices/.
 Este e um pacote local; nenhuma nova release foi publicada.

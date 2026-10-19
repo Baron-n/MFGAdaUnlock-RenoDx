@@ -66,6 +66,9 @@ add_executable(xemfg_optiscaler_present_smoke "${CMAKE_SOURCE_DIR}/xemfg_optisca
 target_compile_definitions(xemfg_optiscaler_present_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_optiscaler_present_smoke PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg")
 target_link_libraries(xemfg_optiscaler_present_smoke PRIVATE "${XEMFG_SDK_ROOT}/lib/libxess_fg.lib" d3d12 dxgi user32)
+add_library(xemfg_foreign_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_foreign_fixture.cpp")
+target_include_directories(xemfg_foreign_fixture PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg")
+target_link_libraries(xemfg_foreign_fixture PRIVATE "${XEMFG_SDK_ROOT}/lib/libxess_fg.lib")
 set(XEMFG_OFFLINE_HOST "" CACHE FILEPATH "Explicit OptiScaler 10 loader for the cold-start regression test")
 if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -88,6 +91,11 @@ if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   add_test(NAME xemfg_native_context_publication_guard COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
     --mode optiscaler-live-native --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
     --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_optiscaler_present_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}"
+    --foreign-fixture $<TARGET_FILE:xemfg_foreign_fixture>)
+  add_test(NAME xemfg_game_first_shared_model COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode optiscaler-game-first --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_optiscaler_present_smoke>
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}")
-  set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle xemfg_host_redirect_lifecycle xemfg_optiscaler_present xemfg_native_context_publication_guard PROPERTIES TIMEOUT 45)
+  set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle xemfg_host_redirect_lifecycle xemfg_optiscaler_present xemfg_native_context_publication_guard xemfg_game_first_shared_model PROPERTIES TIMEOUT 45)
 endif()

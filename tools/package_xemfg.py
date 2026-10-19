@@ -15,7 +15,7 @@ def main():
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--official-addon',type=Path,required=True)
     ap.add_argument('--intel-headers',type=Path,required=True)
-    ap.add_argument('--identity',default='Dual Backend X1.2 - OptiScaler API ownership on official 1.4.5 base')
+    ap.add_argument('--identity',default='Dual Backend X1.3 - MFG before first game context on official 1.4.5 base')
     args=ap.parse_args()
     root=Path(__file__).resolve().parent.parent
     out=args.output.resolve(); out.mkdir(parents=True,exist_ok=True)
@@ -49,7 +49,7 @@ def main():
             if p.is_file() and '__pycache__' not in p.parts:
                 source[p.relative_to(root).as_posix()]=sha(p)
     evidence={}
-    for name in ['build/ctest.log','build/loader-regression-results.json','build/host-ownership-regression-results.json']:
+    for name in ['build/ctest.log','build/loader-regression-results.json','build/host-ownership-regression-results.json','build/game-first-regression-results.json']:
         p=root/name
         if p.exists():
             target=out/'evidence'/Path(name).parent.name/Path(name).name
@@ -58,8 +58,8 @@ def main():
     # Include only lifecycle/startup cases whose staged plugin matches the
     # exact artifact being packaged. Older X1 traces remain separate context.
     checks=root/'build/tests/xemfg-checks'
-    real_host_modes=['loader','optiscaler-present','optiscaler-live-native']
-    for mode in ['loader','early-lifecycle','redirect-lifecycle','optiscaler-present','optiscaler-live-native']:
+    real_host_modes=['loader','optiscaler-present','optiscaler-live-native','optiscaler-game-first']
+    for mode in ['loader','early-lifecycle','redirect-lifecycle','optiscaler-present','optiscaler-live-native','optiscaler-game-first']:
         for case in sorted(checks.glob(mode+'-*'),reverse=True):
             plugin=case/('plugins/MFGAdaUnlock.XeMFG.asi' if mode in real_host_modes else 'MFGAdaUnlock.XeMFG.asi')
             if not plugin.exists() or sha(plugin)!=sha(native/'MFGAdaUnlock.XeMFG.asi'): continue
@@ -87,7 +87,7 @@ def main():
         'assets':[{'name':name,'sha256':sha(out/name),'bytes':(out/name).stat().st_size} for name in assets],
         'source_inputs_sha256':source,'evidence_sha256':evidence,
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'45 CTest passed; 3 optional historical/NVIDIA-input checks skipped. Cold startup, host redirect ownership, real OptiScaler Present/resize, live native publication guard, early SDK lifecycle, model patch/restore; no generated image or successful gameplay validation.',
+        'test_scope':'46 CTest passed; 3 optional historical/NVIDIA-input checks skipped. Game-first shared MFG model, cold startup, host redirect ownership, real OptiScaler Present/resize, live foreign native publication guard, early SDK lifecycle, model patch/restore; no generated images or gameplay validated in X1.3.',
         'gameplay_validated':False,
     }
     (out/'manifest.json').write_text(json.dumps(manifest,indent=2,ensure_ascii=False),encoding='utf-8')
