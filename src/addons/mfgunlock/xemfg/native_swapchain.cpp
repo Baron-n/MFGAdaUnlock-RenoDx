@@ -50,14 +50,25 @@ public:
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
   HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
-    if(a) return DXGI_ERROR_UNSUPPORTED; return chain->SetFullscreenState(a,b);
+    if(a) {
+      if(ControlsSettings().forceBorderless && owner->window) {
+        owner->window->Request(true); return chain->SetFullscreenState(FALSE,nullptr);
+      }
+      return DXGI_ERROR_UNSUPPORTED;
+    }
+    return chain->SetFullscreenState(a,b);
   }
   HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* a,IDXGIOutput** b) override { return chain->GetFullscreenState(a,b); }
   HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* a) override { return chain->GetDesc(a); }
   HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e) override {
     auto hr=chain->ResizeBuffers(a,b,c,d,e); Resized(hr); return hr;
   }
-  HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* a) override { return chain->ResizeTarget(a); }
+  HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* a) override {
+    if(ControlsSettings().forceBorderless && owner->window) {
+      owner->window->Request(true); return S_OK; // Keep the desktop's refresh/mode.
+    }
+    return chain->ResizeTarget(a);
+  }
   HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** a) override { return chain->GetContainingOutput(a); }
   HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS* a) override { return chain->GetFrameStatistics(a); }
   HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* a) override { return chain->GetLastPresentCount(a); }

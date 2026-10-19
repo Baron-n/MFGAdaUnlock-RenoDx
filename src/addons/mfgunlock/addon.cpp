@@ -5230,13 +5230,12 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG (1.4.5 base)");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::xemfg::native::Draw();
-    if (auto module = g_self_module) {
+    return;
 #else
     ImGui::TextUnformatted("XeMFG uses OptiScaler's Frame Generation controls and XeLL.");
     ImGui::TextUnformatted("Change backend with Switch-MFGBackend.ps1 while the game is closed.");
     ImGui::TextUnformatted("DLSS-G patches and Reflex controller are inactive in this mode.");
     if (auto module = GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi")) {
-#endif
       auto get_status = reinterpret_cast<mfgunlock::xemfg::GetStatus>(
           GetProcAddress(module, "MFGAXeGetStatus"));
       mfgunlock::xemfg::Status status;
@@ -5252,6 +5251,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     } else {
       ImGui::TextUnformatted("XeMFG companion is not loaded. Check the OptiScaler plugins folder.");
     }
+#endif
     return;
   }
   mfgunlock::framecount::g_latency_guard_ui_heartbeat_ms.store(
@@ -8056,7 +8056,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "Native ReShade XeMFG R1 - independent MIT Streamline D3D12 bridge; official DLSS-G 1.4.5 base";
+    "Native ReShade XeMFG R1.2 - runtime controls and status; independent MIT Streamline D3D12 bridge; official DLSS-G 1.4.5 base";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

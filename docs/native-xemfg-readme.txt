@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.1
+MFGAdaUnlock - Native ReShade XeMFG R1.2
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -25,7 +25,24 @@ XeLL: libxell.dll 1.3.0.5 or validated 1.3.2.10 (manifest lists identities).
 In ReShade's MFG Unlock panel:
 - Select DLSS-G or XeMFG. Restart the game after changing the backend.
 - XeMFG multiplier is 2x-6x. Enable frame generation in the game's menu.
-- The panel reports the bridge, model, XeLL and Tensor status.
+- The panel reports the effective FG state, model port, CUDA compute capability,
+  recognized layers, Tensor launches and dispatch fallbacks.
+- Driver flip metering can be toggled live. A request is committed by the
+  presenter at the next generated batch, not in the middle of one. Status
+  distinguishes NVAPI availability, queue readiness, driver acceptance,
+  independent-flip feedback, refusal and SDK fallback. This is driver feedback,
+  not a measurement of monitor scanout or proof of Blackwell display hardware.
+- Force Borderless is optional (off by default). Window changes run on the
+  HWND owner's message thread. The panel shows the actual style/monitor coverage,
+  pending requests and Win32 errors. Unchecking restores the preceding style and
+  placement only while they are still owned by this controller. Exclusive
+  fullscreen requests are redirected to windowed mode while force is selected.
+- Latency input: Auto or Reflex (Streamline). Output: Auto or XeLL. Auto resolves
+  to this same implemented route. Both preferences persist in MFGAdaUnlock.ini.
+  These selectors do not add native XeLL/NVAPI input adapters. Reflex output with
+  XeMFG is not offered: XeFG requires XeLL. Use the DLSS-G backend for native Reflex.
+- Active latency labels are based on recent received/successful sleep calls,
+  with marker counters and the native Reflex-disable acknowledgement.
 - Source FPS limits from Reflex are passed to XeLL; no second Reflex sleep.
 
 Current output formats: SDR RGBA8/BGRA8 and HDR10 RGB10A2.
@@ -51,6 +68,13 @@ accepted driver metering. The user also reports image and responsiveness
 remain good versus X1.3. This is initial functional and subjective approval;
 controlled performance, blind image equivalence, monitor cadence and physical
 latency have not been measured.
+
+R1.2 adds the controls above and preserves the R1.1 inference/input path. Its
+isolated real-SDK tests cover the explicit latency preferences, unsupported
+output rejection, live flip requests and window apply/restore. A separate
+Win32 test covers cross-thread requests, reentrant resize/retirement, hidden
+window visibility and foreign ownership. R1.1 gameplay approval does not by
+itself validate the new window controls in every game.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"

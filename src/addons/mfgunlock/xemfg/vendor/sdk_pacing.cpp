@@ -95,6 +95,7 @@ std::mutex installMutex;
 // (0x220c70), whose frame First() reads for the batch's output count.
 std::atomic<SetFlipConfigFunction> flipFunction{};
 std::atomic<bool> flipEnabled{}, firstLayout{}, flipToggleDown{}, flipToggleKey{};
+std::atomic<bool> flipRequested{};
 std::atomic<int64_t> flipLeadNs{2500000};
 std::atomic<unsigned> flipToggleLogs{};
 // A batch is configured once the estimate holds this many batch deltas (DLSS-G averages six).
@@ -396,8 +397,8 @@ void PollFlipToggle() noexcept
     const bool down = (GetAsyncKeyState(VK_PRIOR) & 0x8000) != 0;
     if (!down) { flipToggleDown.store(false, std::memory_order_relaxed); return; }
     if (flipToggleDown.exchange(true, std::memory_order_relaxed)) return;
-    const bool enabled = !flipEnabled.load(std::memory_order_acquire);
-    flipEnabled.store(enabled, std::memory_order_release);
+    const bool enabled = !flipRequested.load(std::memory_order_acquire);
+    flipRequested.store(enabled, std::memory_order_release);
     LARGE_INTEGER qpc{};
     QueryPerformanceCounter(&qpc);
     if (flipToggleLogs.fetch_add(1, std::memory_order_relaxed) < 256)
@@ -417,7 +418,11 @@ void FlipBeforePresent(Route& current, const Invocation& call)
     const auto offset = call.returnAddress-uintptr_t(current.module);
     const bool first = offset == kFirstReturn && call.generated;
     if (!first && (offset == kExtraReturn || offset == kRealReturn)) return;
-    if (first) PollFlipToggle();
+    if (first) {
+        PollFlipToggle();
+        flipEnabled.store(flipRequested.load(std::memory_order_acquire) && flipFunction.load(std::memory_order_acquire),
+            std::memory_order_release);
+    }
     const auto owners = current.owners.load(std::memory_order_acquire);
     if (!owners) return;
     for (const auto& entry : *owners)
@@ -916,6 +921,7 @@ void SetFlipMetering(SetFlipConfigFunction setFlipConfig, bool enabled, int64_t 
 {
     flipLeadNs.store(innerLeadNs >= 0 && innerLeadNs <= 8000000 ? innerLeadNs : 2500000, std::memory_order_relaxed);
     flipEnabled.store(enabled && setFlipConfig, std::memory_order_release);
+    flipRequested.store(enabled, std::memory_order_release);
     flipFunction.store(setFlipConfig, std::memory_order_release);
 }
 
@@ -923,5 +929,29 @@ void SetFlipToggleHotkey(bool enabled) noexcept
 {
     flipToggleDown.store(false, std::memory_order_relaxed);
     flipToggleKey.store(enabled, std::memory_order_release);
+}
+
+void RequestFlipMetering(bool enabled) noexcept { flipRequested.store(enabled, std::memory_order_release); }
+FlipStatus Snapshot(void* handle) noexcept {
+    FlipStatus status{};
+    status.requested=flipRequested.load(std::memory_order_acquire);
+    status.enabled=flipEnabled.load(std::memory_order_acquire);
+    status.available=flipFunction.load(std::memory_order_acquire)!=nullptr;
+    const auto current=route.load(std::memory_order_acquire);
+    if(!current) return status;
+    status.installed=current->enabled.load(std::memory_order_acquire);
+    const auto owners=current->owners.load(std::memory_order_acquire);
+    if(!owners) return status;
+    for(const auto& owner:*owners) {
+        if(owner->handle!=handle || owner->retired.load() || owner->disabled.load()) continue;
+        status.registered=true; status.queue=bool(owner->flipQueue);
+        std::unique_lock guard(owner->flipMutex,std::try_to_lock);
+        if(!guard.owns_lock()) { status.busy=true; return status; }
+        status.configured=owner->flip.configured; status.metered=owner->flip.metered;
+        status.refused=owner->flip.refused; status.outputs=owner->flip.outputs;
+        status.feedback=owner->flip.feedback; status.status=owner->flip.status; status.calls=owner->flip.calls;
+        return status;
+    }
+    return status;
 }
 }

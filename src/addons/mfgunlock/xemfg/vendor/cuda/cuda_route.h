@@ -59,6 +59,8 @@ struct Status
     std::string reason;
 };
 Status Snapshot() noexcept;
+// Presentation-overlay reader: never wait for installation/retirement work.
+bool TrySnapshot(Status& out) noexcept;
 // The architecture gate (tests): compute capability major.minor of the adapter and its CUDA device name.
 bool SupportedArchitecture(int major, int minor, const std::string& name) noexcept;
 // Lock-free: the route is active and a layer has run on tensor cores (OptiScaler's "XeFG model" line).

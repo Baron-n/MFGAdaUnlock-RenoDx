@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "native_bridge.hpp"
+#include "native_controls.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -39,6 +40,7 @@ struct Output {
   std::recursive_mutex io;
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12CommandQueue> queue;
+  std::shared_ptr<WindowControl> window;
   xefg_swapchain_handle_t fg{};
   xell_context_handle_t ll{};
   std::map<uint32_t,Frame> frames;
@@ -57,6 +59,8 @@ struct Bridge {
   std::atomic<bool> nativeOff{false}, reflexOff{false}, requested{false};
   std::atomic<uint32_t> multiplier{4}, limitUs{0};
   std::atomic<uint64_t> outputPresents{0};
+  std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
+  std::atomic<uint32_t> gameReflexMode{0};
   bool lowLatency{true}, invert{true}, jitter{false};
 };
 Bridge& State();

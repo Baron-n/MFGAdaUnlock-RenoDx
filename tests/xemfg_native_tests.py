@@ -1,6 +1,7 @@
 """Run the native ReShade transport in a separate directory, never in a game."""
 import argparse
 import ctypes
+import configparser
 import datetime
 import hashlib
 import json
@@ -26,7 +27,12 @@ for src,name in inputs.items():
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier)],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
+prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
+persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
+    and prefs.get('Latency','Output',fallback='')=='XeLL'
+    and prefs.get('XeFG','ForceBorderless',fallback='')=='0'
+    and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on')
 (d/'result.json').write_text(json.dumps({'inputs':manifest,'exit':result.returncode,
-    'stdout':result.stdout,'stderr':result.stderr},indent=2),encoding='utf-8')
+    'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and persisted else 1)

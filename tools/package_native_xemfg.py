@@ -16,6 +16,7 @@ def main():
     ap.add_argument('--official-addon',type=Path,required=True)
     ap.add_argument('--intel-sdk',type=Path,required=True)
     ap.add_argument('--game-validation',type=Path)
+    ap.add_argument('--previous-addon',type=Path)
     args=ap.parse_args()
     root=Path(__file__).resolve().parent.parent
     output=args.output.resolve(); output.mkdir(parents=True,exist_ok=True)
@@ -41,8 +42,14 @@ def main():
         'notices/PROVENANCE.md':root/'src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md',
         'evidence/ctest.log':root/'build/ctest-native.log',
         'evidence/ctest-r1.1.log':root/'build/ctest-native-r1.1.log',
+        'evidence/ctest-r1.2.log':root/'build/ctest-native-r1.2.log',
+        'overlay-controls.md':root/'docs/research/native-xemfg-overlay-r1.2-2026-10-19.md',
     }
     game_validation=None
+    if args.previous_addon:
+        if sha(args.previous_addon)!='66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac':
+            raise ValueError('Previous native rollback must be sealed R1.1')
+        assets['rollback/renodx-mfgunlock-native-r1.1.addon64']=args.previous_addon
     if args.game_validation:
         game_validation=json.loads(args.game_validation.read_text(encoding='utf-8'))
         if game_validation['input_identity']['renodx-mfgunlock.addon64']!=sha(addon):
@@ -61,7 +68,7 @@ def main():
             if not result.is_file() or not candidate.is_file() or sha(candidate)!=sha(addon): continue
             data=json.loads(result.read_text(encoding='utf-8'))
             if data['exit']!=0 or f'{count}x requested' not in data['stdout']: continue
-            for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log'):
+            for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log','MFGAdaUnlock.ini'):
                 assets[f'evidence/{count}x/{name}']=case/name
             break
         else:
@@ -77,7 +84,7 @@ def main():
                 source[path.relative_to(root).as_posix()]=sha(path)
     manifest={
         'identity':'Native ReShade XeMFG R1',
-        'revision':'R1.1',
+        'revision':'R1.2',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
         'official_1_4_5_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
@@ -90,7 +97,7 @@ def main():
         'source_inputs_sha256':source,
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'R1 baseline: 50 passed, 3 optional skipped. R1.1: four native tests rerun and passed at 2x/3x/4x/6x, including RenderSubmitEnd after Present and successful forwarding of its real timestamp. Synthetic/occluded output; no gameplay/display cadence/physical latency claim.',
+        'test_scope':'R1.2: full suite, plus native real-SDK inference at 2x/3x/4x/6x with latency preferences, unsupported-output rejection, live metering requests and window apply/restore. Separate owner-thread Win32 tests include hidden visibility, foreign ownership and reentrant retirement. Exact counts in ctest-r1.2.log. Synthetic/occluded output; no gameplay/display cadence/physical latency claim for R1.2.',
         'gameplay_validated':bool(game_validation and game_validation.get('functional_and_initial_user_validation_complete')),
         'gameplay_validation_scope':None if not game_validation else {
             'game':'Cyberpunk 2077','sdk_outputs_observed':[2,3,4,6],

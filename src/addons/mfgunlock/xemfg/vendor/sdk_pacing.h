@@ -38,4 +38,16 @@ void SetFlipMetering(SetFlipConfigFunction setFlipConfig, bool enabled, int64_t 
 // V1.5.1: Page Up toggles the switch live only after the user's opt-in (OptiScaler.ini [XeFG]
 // XeFGFlipMeteringHotkey = on); off by default, as Page Up is also OptiScaler's FPS overlay key.
 void SetFlipToggleHotkey(bool enabled) noexcept;
+// Overlay controls only queue a request. The presenter commits it at the next
+// batch boundary, using the already verified NVAPI entry point.
+void RequestFlipMetering(bool enabled) noexcept;
+struct FlipStatus {
+    bool requested{}, enabled{}, available{}, installed{}, registered{}, queue{}, busy{};
+    bool configured{}, metered{}, refused{};
+    uint32_t outputs{}, feedback{};
+    int status{};
+    uint64_t calls{};
+};
+// Read only, scoped to the exact live SDK handle (never another context).
+FlipStatus Snapshot(void* handle) noexcept;
 }

@@ -1186,6 +1186,18 @@ bool Launched() noexcept
     return gState.load(std::memory_order_acquire) == State::Active && gLaunches.load(std::memory_order_relaxed) != 0;
 }
 
+bool TrySnapshot(Status& status) noexcept {
+    std::unique_lock guard(gMutex,std::try_to_lock);
+    if(!guard.owns_lock()) return false;
+    status.state=gState.load(std::memory_order_acquire);
+    status.major=gMajor; status.minor=gMinor;
+    status.layers=gLayerCount.load(std::memory_order_relaxed);
+    status.launches=gLaunches.load(std::memory_order_relaxed);
+    status.fallbacks=gFallbacks.load(std::memory_order_relaxed);
+    try { status.reason=gReason; } catch(...) {}
+    return true;
+}
+
 // Architectures with SASS in the fatbin: 7.5 (RTX 20), 8.6 (RTX 30; also runs RTX 40), 8.9 (RTX 40) and 12.0
 // (RTX 50; 12.1, GB10, is not admitted).
 // Compute capability 7.5 also covers the Turing parts without tensor cores (TU116/TU117: GTX 16, MX, T-series

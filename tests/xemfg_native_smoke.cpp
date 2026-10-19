@@ -11,6 +11,7 @@
 #include <sl_pcl.h>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_bridge.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_controls.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -43,6 +44,19 @@ int main(int argc,char** argv) {
     auto modelStatus=Import<mfgunlock::xemfg::GetStatus>(addon,"MFGAXeGetStatus");
     using BridgeStatus=bool(*)(mfgunlock::xemfg::native::Status*,uint32_t);
     auto bridgeStatus=Import<BridgeStatus>(addon,"MFGAXeNativeStatus");
+    using ControlsStatus=bool(*)(mfgunlock::xemfg::native::ControlStatus*,uint32_t);
+    using Configure=bool(*)(const mfgunlock::xemfg::native::ControlSettings*,uint32_t);
+    auto controlStatus=Import<ControlsStatus>(addon,"MFGAXeControlsStatus");
+    auto configure=Import<Configure>(addon,"MFGAXeConfigure");
+    mfgunlock::xemfg::native::ControlStatus cs;
+    Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
+    auto settings=cs.settings; settings.input=mfgunlock::xemfg::native::LatencyInput::StreamlineReflex;
+    settings.output=mfgunlock::xemfg::native::LatencyOutput::XeLL;
+    settings.forceBorderless=true;
+    Require(configure(&settings,sizeof(settings)),"explicit Reflex to XeLL preference");
+    auto unsupported=settings; unsupported.output=static_cast<mfgunlock::xemfg::native::LatencyOutput>(2);
+    Require(!configure(&unsupported,sizeof(unsupported)),"unsupported output accepted");
+    controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
     Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"queue");
     WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.lpszClassName=L"XeMFGNativeSmoke"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
@@ -51,10 +65,20 @@ int main(int argc,char** argv) {
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
     ComPtr<IDXGISwapChain1> base;
-    Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"swapchain");
+    // Simulate a game's exclusive startup request. The persisted force policy
+    // must turn it into a valid Intel windowed output before SDK init.
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=FALSE;
+    Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,&exclusive,nullptr,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
+    settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
+    { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+    controlStatus(&cs,sizeof(cs)); Require(cs.window.borderless && cs.window.coversMonitor,"overlay borderless not applied");
+    Check(chain->SetFullscreenState(TRUE,nullptr),"exclusive request redirected to borderless");
+    settings.forceBorderless=false; Require(configure(&settings,sizeof(settings)),"window restore request");
+    { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+    controlStatus(&cs,sizeof(cs)); Require(!cs.window.managed && !cs.window.error,"overlay window restore failed");
     auto resolve=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
     auto feature=[&]<class T>(sl::Feature id,const char* name) { void* fn{}; Require(resolve(id,name,fn)==sl::Result::eOk,name); return reinterpret_cast<T>(fn); };
     auto options=feature.operator()<PFun_slDLSSGSetOptions*>(sl::kFeatureDLSS_G,"slDLSSGSetOptions");
@@ -115,6 +139,15 @@ int main(int argc,char** argv) {
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(frame==16 || frame==32) {
+        settings.flipMetering=frame==32;
+        Require(configure(&settings,sizeof(settings)),"live flip request during inference");
+      }
+      if(frame==30) {
+        controlStatus(&cs,sizeof(cs));
+        Require(!cs.flipRequested && !cs.flipEnabled,"flip request did not commit at a batch boundary");
+        Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
+      }
       Token token; token.id=frame;
       Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
       marker(sl::PCLMarker::eSimulationStart,token); marker(sl::PCLMarker::eSimulationEnd,token);
@@ -152,6 +185,13 @@ int main(int argc,char** argv) {
     // turn this into a claim about four displayed frames or scanout cadence.
     Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
     Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
+    controlStatus(&cs,sizeof(cs));
+    Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
+    Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
+        "observed latency route/counters missing");
+    settings.flipMetering=false; Require(configure(&settings,sizeof(settings)),"flip toggle off");
+    controlStatus(&cs,sizeof(cs)); Require(!cs.flipRequested,"flip request did not reach pacer");
+    settings.flipMetering=true; Require(configure(&settings,sizeof(settings)),"flip toggle on");
     sl::DLSSGState live; Require(getState(viewport,live,nullptr)==sl::Result::eOk,"GetState bridge");
     Require(live.numFramesActuallyPresented==ms.presented && live.numFramesToGenerateMax==5,"requested and submitted counts confused");
     live.structVersion=1; live.numFramesToGenerateMax=0xdeadbeef;

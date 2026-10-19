@@ -199,7 +199,6 @@ void ConfigureFlip() noexcept {
       wchar_t setting[32]{};
       GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",setting,32,ini.c_str());
       const bool enabled=_wcsicmp(setting,L"off") && _wcsicmp(setting,L"false") && wcscmp(setting,L"0");
-      if (!enabled) { sdk_pacing::SetFlipMetering(nullptr,false,0); return; }
       wchar_t system[1024]{};
       if (!GetSystemDirectoryW(system,1024)) throw std::runtime_error("system_directory");
       const auto dll=std::filesystem::path(system)/L"nvapi64.dll";
@@ -220,7 +219,7 @@ void ConfigureFlip() noexcept {
       Pin(dispatcher);
       auto lead=GetPrivateProfileIntW(L"XeFG",L"XeFGFlipMeteringLeadUs",2500,ini.c_str());
       if (lead>8000) lead=2500;
-      sdk_pacing::SetFlipMetering(set,true,int64_t(lead)*1000);
+      sdk_pacing::SetFlipMetering(set,enabled,int64_t(lead)*1000);
       xess_mod::WriteLog("flip_metering_available","\"lead_us\":"+std::to_string(lead));
     } catch(const std::exception& e) {
       sdk_pacing::SetFlipMetering(nullptr,false,0);
@@ -529,6 +528,11 @@ extern "C" __declspec(dllexport) bool MFGAXeGetStatus(mfgunlock::xemfg::Status* 
 }
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 namespace mfgunlock::xemfg {
+bool TryModelStatus(Status& out) {
+  std::unique_lock guard(mutex,std::try_to_lock);
+  if(!guard.owns_lock()) return false;
+  out=Get().status; return true;
+}
 void AttachModel(HMODULE module) {
   self=module;
   InitializeASI();

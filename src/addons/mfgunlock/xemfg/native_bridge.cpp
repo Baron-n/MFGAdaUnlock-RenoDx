@@ -50,6 +50,7 @@ Output::~Output() {
   // Only the outer application's COM lifetime owns this object. The SDK joins
   // its workers before the XeLL context and queue can be destroyed.
   auto& a=State().api;
+  if(window) window->Retire();
   if(fg) {
     a.xefgSwapChainSetEnabled(fg,0);
     const auto result=a.xefgSwapChainDestroy(fg);
@@ -67,7 +68,14 @@ Output::~Output() {
 HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** result) {
-  if(!result || !desc || !hwnd || restrictOutput || (full && !full->Windowed)) return E_NOINTERFACE;
+  if(!result || !desc || !hwnd || restrictOutput) return E_NOINTERFACE;
+  const bool forceBorderless=ControlsSettings().forceBorderless;
+  if(full && !full->Windowed && !forceBorderless) {
+    Report("XeMFG requires windowed/borderless mode; enable Force Borderless before restarting");
+    return E_NOINTERFACE;
+  }
+  auto windowed=full?*full:DXGI_SWAP_CHAIN_FULLSCREEN_DESC{};
+  if(forceBorderless) windowed.Windowed=TRUE;
   if(desc->Format!=DXGI_FORMAT_R10G10B10A2_UNORM && desc->Format!=DXGI_FORMAT_R8G8B8A8_UNORM
       && desc->Format!=DXGI_FORMAT_B8G8R8A8_UNORM) {
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
@@ -102,7 +110,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)
       |(o->jitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
   init.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
-  const auto code=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,full,queue.Get(),factory,&init);
+  const auto code=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),factory,&init);
   if(code!=0) {
     xess_mod::WriteLog("native_swapchain_init_failed","\"result\":"+std::to_string(code));
     Report("XeFG swapchain initialization failed; inspect the XeMFG log"); return E_NOINTERFACE;
@@ -116,6 +124,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     debug(o->fg,0,0,nullptr);
   a.xefgSwapChainSetUiCompositionState(o->fg,XEFG_SWAPCHAIN_UI_COMPOSITION_STATE_ENABLED);
   a.xefgSwapChainSetEnabled(o->fg,0);
+  o->window=WindowControl::Bind(hwnd,forceBorderless);
   *result=Wrap(std::move(chain),o);
   { std::lock_guard guard(s.lock); s.output=o; s.status.output=true; s.status.xell=true; }
   Report("XeMFG swapchain ready; waiting for Streamline inputs and XeLL markers");
@@ -168,6 +177,7 @@ void Attach(HMODULE module) {
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
   s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",1,ini.c_str())!=0;
   s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",0,ini.c_str())!=0;
+  LoadControls();
   AttachModel(module);
   reshade::register_event<reshade::addon_event::init_device>(&DeviceEvent);
   reshade::register_event<reshade::addon_event::present>(&OutputPresent);
@@ -181,6 +191,7 @@ void Attach(HMODULE module) {
 void Draw() {
   auto& s=State(); const auto status=Snapshot();
   ImGui::TextUnformatted("XeMFG - native ReShade / Streamline D3D12 bridge");
+  ImGui::TextUnformatted("FG input: DLSS-G via Streamline | FG output: XeMFG");
   int count=int(s.multiplier.load());
   if(ImGui::SliderInt("Frame multiplier",&count,2,6,"%dx")) {
     s.multiplier=uint32_t(count);
@@ -188,11 +199,13 @@ void Draw() {
     WritePrivateProfileStringW(L"XeFG",L"Multiplier",std::to_wstring(count).c_str(),ini.c_str());
   }
   ImGui::TextWrapped("%s",status.detail);
+  ImGui::Text("Current XeFG state: %s",status.enabled?"ON":status.output?"OFF / waiting for valid inputs":"not initialized");
   ImGui::Text("Streamline: %s | Output: %s | XeLL: %s",status.streamline?"hooked":"waiting",
       status.output?"ready":"waiting",status.xell?"ready":"waiting");
   ImGui::Text("Inputs admitted: %s | Source presents: %u | Incomplete: %u",
       status.enabled?"yes":"no",status.frames,status.rejected);
   ImGui::Text("SDK submissions: %u | Interpolation result: %d",status.submitted,status.sdkResult);
+  DrawControls();
 }
 }
 extern "C" __declspec(dllexport) bool MFGAXeNativeStatus(mfgunlock::xemfg::native::Status* out,uint32_t size) {

@@ -164,11 +164,13 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
   sl::ReflexOptions disabled; disabled.mode=sl::ReflexMode::eOff;
   const auto result=reflexOptions(disabled);
   State().reflexOff=result==sl::Result::eOk;
+  State().gameReflexMode=uint32_t(opts.mode);
   State().limitUs=opts.frameLimitUs;
   return result;
 }
 sl::Result SleepHook(const sl::FrameToken& f) {
   auto o=Active(); if(!o) return reflexSleep(f);
+  State().inputTick=GetTickCount64();
   std::lock_guard lock(o->io); const auto id=FrameId(uint32_t(f));
   auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
   if(frame->sleeping) return sl::Result::eOk;
@@ -176,7 +178,9 @@ sl::Result SleepHook(const sl::FrameToken& f) {
   auto& a=State().api;
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS || a.xellSleep(o->ll,id)!=XELL_RESULT_SUCCESS)
     return sl::Result::eErrorReflexAPI;
-  frame->sleeping=true; return sl::Result::eOk;
+  frame->sleeping=true;
+  ++State().latencySleeps; State().outputTick=GetTickCount64();
+  return sl::Result::eOk;
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   const auto id=FrameId(uint32_t(f)); auto& s=State(); const auto value=uint32_t(marker);
@@ -192,6 +196,7 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
           const auto r=s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(mapped));
           if(r!=XELL_RESULT_SUCCESS) frame->failed=true;
           else {
+            ++s.latencyMarkers;
             frame->markers|=1u<<mapped;
             if(mapped==XELL_RENDERSUBMIT_END && id<=o->last) {
               // XeLL explicitly allows RenderSubmit and Present to overlap.
