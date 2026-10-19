@@ -83,12 +83,13 @@ void Raster(ImDrawData* data,const unsigned char* tex,int tw,int th,std::vector<
 }
 int wmain(int argc,wchar_t** argv) {
   try {
-    if(argc!=4 && argc!=5) throw std::runtime_error("usage: preview output.png page(0..3) width [font-size]");
+    if(argc<4 || argc>6) throw std::runtime_error("usage: preview output.png page(0..3) width [font-size] [expanded|tooltip|multiplier]");
+    const std::wstring scenario=argc==6?argv[5]:L"";
     const int page=std::stoi(argv[2]),width=std::stoi(argv[3]),height=1250;
     CoInitializeEx(nullptr,COINIT_MULTITHREADED);
     ImGui::CreateContext(); auto& io=ImGui::GetIO(); io.IniFilename=nullptr;
     io.DisplaySize=ImVec2(float(width),float(height)); io.DeltaTime=1.f/60.f;
-    ImFontConfig font; font.SizePixels=argc==5?std::stof(argv[4]):16.f; io.Fonts->AddFontDefault(&font);
+    ImFontConfig font; font.SizePixels=argc>=5?std::stof(argv[4]):16.f; io.Fonts->AddFontDefault(&font);
     unsigned char* tex{}; int tw{},th{}; io.Fonts->GetTexDataAsRGBA32(&tex,&tw,&th); io.Fonts->SetTexID(1);
     auto& style=ImGui::GetStyle(); style.WindowRounding=10; style.WindowPadding=ImVec2(16,14);
     style.Colors[ImGuiCol_WindowBg]=ImVec4(.085f,.095f,.12f,1);
@@ -98,9 +99,10 @@ int wmain(int argc,wchar_t** argv) {
     state.status.submitted=4; state.status.frames=5500; state.multiplier=4; state.reflexOff=true;
     state.latencySleeps=5500; state.latencyMarkers=33000; state.gameReflexMode=1; state.latencyModeUpdates=1;
     ImVec2 click{};
-    for(int frame=0;frame<10;++frame) {
+    for(int frame=0;frame<48;++frame) {
       if(frame==2) io.AddMousePosEvent(click.x,click.y);
       if(frame==4 || frame==6) io.AddMouseButtonEvent(0,frame==4);
+      if(scenario==L"multiplier" && (frame==12 || frame==14)) io.AddMouseButtonEvent(0,frame==12);
       state.inputTick=state.outputTick=GetTickCount64();
       ImGui::NewFrame(); ImGui::SetNextWindowPos(ImVec2(0,0)); ImGui::SetNextWindowSize(io.DisplaySize);
       ImGui::Begin("Layout preview - synthetic status",nullptr,ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse);
@@ -108,6 +110,28 @@ int wmain(int argc,wchar_t** argv) {
       auto* bar=GImGui->TabBars.GetByKey(ImGui::GetID("##xemfg_pages"));
       if(bar && bar->Tabs.Size==4) click=ImVec2(bar->BarRect.Min.x+bar->Tabs[page].Offset+bar->Tabs[page].Width*.5f,bar->BarRect.GetCenter().y);
       if(frame==9 && bar && bar->SelectedTabId!=bar->Tabs[page].ID) throw std::runtime_error("requested preview tab was not selected");
+      if(frame>=8) for(auto* window:GImGui->Windows) {
+        if(scenario==L"expanded" && strstr(window->Name,"##xe_latency_"))
+          window->StateStorage.SetInt(window->GetID("Advanced latency routing"),1);
+        if((scenario==L"tooltip" || scenario==L"multiplier") && strstr(window->Name,"##xemfg_generation_")) {
+          auto* table=GImGui->Tables.GetByKey(window->GetID(scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
+          if(table && table->ColumnsCount==2)
+            io.AddMousePosEvent((table->Columns[1].MinX+table->Columns[1].MaxX)*.5f,table->OuterRect.GetCenter().y);
+        }
+      }
+      if(frame==47 && scenario==L"expanded") {
+        bool found=false;
+        for(auto* window:GImGui->Windows) if(strstr(window->Name,"##xe_latency_")) {
+          found=window->StateStorage.GetInt(window->GetID("Advanced latency routing"))!=0;
+          if(window->ContentSize.x>window->InnerRect.GetWidth()+1.f) throw std::runtime_error("expanded latency controls overflow the card");
+        }
+        if(!found) throw std::runtime_error("advanced routing was not expanded");
+      }
+      if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
+      if(frame==47 && scenario==L"tooltip") {
+        bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;
+        if(!found) throw std::runtime_error("control tooltip did not appear");
+      }
       ImGui::End(); ImGui::Render();
     }
     std::vector<unsigned char> pixels(size_t(width)*height*4,255);

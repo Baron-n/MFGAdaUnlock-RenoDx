@@ -28,14 +28,28 @@ struct Theme {
     ImGui::PushStyleColor(ImGuiCol_Tab,ImVec4(.12f,.14f,.18f,1));
     ImGui::PushStyleColor(ImGuiCol_TabSelected,ImVec4(.23f,.31f,.40f,1));
     ImGui::PushStyleColor(ImGuiCol_TextDisabled,Muted);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,7.f*scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,10.f*scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(10.f*scale,7.f*scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(10.f*scale,10.f*scale));
-    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,ImVec2(10.f*scale,8.f*scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding,4.f*scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding,6.f*scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,ImVec2(7.f*scale,3.f*scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,ImVec2(7.f*scale,5.f*scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,ImVec2(4.f*scale,4.f*scale));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding,ImVec2(8.f*scale,7.f*scale));
   }
-  ~Theme() { ImGui::PopStyleVar(5); ImGui::PopStyleColor(13); }
+  ~Theme() { ImGui::PopStyleVar(6); ImGui::PopStyleColor(13); }
 };
+inline void Tooltip(const char* text) {
+  if(!text || !text[0] || !ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip|ImGuiHoveredFlags_AllowWhenDisabled)) return;
+  if(ImGui::BeginTooltip()) {
+    ImGui::PushTextWrapPos(ImGui::GetFontSize()*34.f);
+    ImGui::TextUnformatted(text);
+    ImGui::PopTextWrapPos(); ImGui::EndTooltip();
+  }
+}
+inline void Help(const char* text) {
+  if(!text || !text[0]) return;
+  ImGui::SameLine(0,ImGui::GetStyle().ItemInnerSpacing.x);
+  ImGui::TextDisabled("(?)"); Tooltip(text);
+}
 inline void Description(const char* text) {
   ImGui::PushStyleColor(ImGuiCol_Text,Muted); ImGui::TextWrapped("%s",text); ImGui::PopStyleColor();
 }
@@ -53,24 +67,39 @@ struct Card {
   explicit operator bool() const { return visible; }
 };
 template<class F> void Setting(const char* id,const char* title,const char* description,F control) {
+  const auto label=[&] {
+    ImGui::AlignTextToFramePadding();
+    const float helpWidth=description?ImGui::CalcTextSize("(?)").x+ImGui::GetStyle().ItemInnerSpacing.x:0.f;
+    ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+(std::max)(1.f,ImGui::GetContentRegionAvail().x-helpWidth));
+    ImGui::TextUnformatted(title); ImGui::PopTextWrapPos(); Tooltip(description); Help(description);
+  };
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*28.f) {
-    ImGui::TextUnformatted(title); if(description) Description(description);
-    ImGui::SetNextItemWidth(-1); control(); return;
+    label(); ImGui::SetNextItemWidth(-1); control(); Tooltip(description); return;
   }
-  if(ImGui::BeginTable(id,2,ImGuiTableFlags_SizingStretchProp)) {
-    ImGui::TableSetupColumn("Setting",ImGuiTableColumnFlags_WidthStretch,.58f);
-    ImGui::TableSetupColumn("Control",ImGuiTableColumnFlags_WidthStretch,.42f);
-    ImGui::TableNextColumn(); ImGui::TextUnformatted(title); if(description) Description(description);
-    ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); control(); ImGui::EndTable();
+  if(ImGui::BeginTable(id,2,ImGuiTableFlags_SizingStretchProp|ImGuiTableFlags_NoPadOuterX)) {
+    ImGui::TableSetupColumn("Setting",ImGuiTableColumnFlags_WidthStretch,.55f);
+    ImGui::TableSetupColumn("Control",ImGuiTableColumnFlags_WidthStretch,.45f);
+    ImGui::TableNextColumn(); label();
+    ImGui::TableNextColumn(); ImGui::SetNextItemWidth(-1); control(); Tooltip(description); ImGui::EndTable();
   }
 }
 inline void Notice(const char* text,ImVec4 color=Warning) {
   ImGui::PushStyleColor(ImGuiCol_Text,color); ImGui::TextWrapped("%s",text); ImGui::PopStyleColor();
 }
+inline void Readout(const char* id,const char* title,const char* value,const char* tooltip=nullptr,ImVec4 color=Muted) {
+  Setting(id,title,tooltip,[&] {
+    ImGui::AlignTextToFramePadding();
+    ImGui::PushStyleColor(ImGuiCol_Text,color); ImGui::TextWrapped("%s",value); ImGui::PopStyleColor();
+  });
+}
 inline void Hero(const char* multiplier,const char* backend,const char* renderer,const char* state,bool active) {
+  const float right=ImGui::GetCursorPosX()+ImGui::GetContentRegionAvail().x;
   ImGui::TextUnformatted("MFG Unlock");
-  Description("Frame Generation Control Center");
-  ImGui::TextColored(active?Accent:Warning,"%s",state);
+  if(ImGui::GetContentRegionAvail().x>ImGui::CalcTextSize(state).x+ImGui::GetFontSize()*10.f) {
+    ImGui::SameLine();
+    ImGui::SetCursorPosX((std::max)(ImGui::GetCursorPosX(),right-ImGui::CalcTextSize(state).x));
+  }
+  ImGui::PushTextWrapPos(); ImGui::TextColored(active?Accent:Warning,"%s",state); ImGui::PopTextWrapPos();
   const char* values[]={multiplier,backend,renderer};
   const char* labels[]={"Multiplier","Backend","Renderer"};
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
@@ -84,10 +113,10 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
     }
     return;
   }
-  if(ImGui::BeginTable("##mfg_summary_cards",3,ImGuiTableFlags_SizingStretchSame)) {
+  if(ImGui::BeginTable("##mfg_summary_cards",3,ImGuiTableFlags_SizingStretchSame|ImGuiTableFlags_NoPadOuterX)) {
     for(int i=0;i<3;++i) {
       ImGui::TableNextColumn(); ImGui::PushID(i);
-      ImGui::BeginChild("summary",ImVec2(0,ImGui::GetTextLineHeight()*4.5f+ImGui::GetStyle().WindowPadding.y*2),ImGuiChildFlags_AlwaysUseWindowPadding,
+      ImGui::BeginChild("summary",ImVec2(0,ImGui::GetTextLineHeight()*2.f+ImGui::GetStyle().ItemSpacing.y+ImGui::GetStyle().WindowPadding.y*2),ImGuiChildFlags_AlwaysUseWindowPadding,
           ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
       ImGui::TextColored(i==0?Accent:ImVec4(.93f,.95f,.98f,1),"%s",values[i]);
       Description(labels[i]); ImGui::EndChild(); ImGui::PopID();

@@ -65,6 +65,12 @@ Para aprovar a resposta do mouse: comparar R1.2 e R1.3 na mesma cena, multiplica
 
 Resultado final: **57 testes passaram, três opcionais foram ignorados, nenhum falhou**, em 45,89 segundos. Os ignorados dependem de artefatos históricos (`provider_identity`, `engineering_manifest`, `release_1_4_5_manifest`). Depois da correção do hook local, Window Controls, 4x e 6x também passaram em três repetições consecutivas cada; isso não substitui um teste de longa duração em jogo.
 
+## Retorno do usuário — 19/10/2026
+
+Após instalar a R1.3, o usuário respondeu **“Mais próximo do que sentia com OptiScaler”** à comparação do peso/atraso do mouse com a R1.2. O protocolo solicitado foi ManualSave-317, XeMFG 4x, mesmos ajustes e faixa de FPS de base; essas condições não foram medidas independentemente nesta rodada. O addon instalado foi conferido pelo SHA-256 `f20a92b2ced415fbe8462b4cfb82f1f80b526e4a9b839bfbf6417e704bd7dcff`, da build de código `8fe4cc97033e334fd60bdb130d317439e284469f`.
+
+O retorno registra uma melhora subjetiva inicial da resposta do mouse. Não demonstra equivalência completa ao transporte com OptiScaler, redução de latência física ou qual correção causou a diferença. Também não constitui avaliação da nova interface nem validação geral de desempenho e estabilidade. A R1.3 fica preservada como referência desta comparação; nenhum binário, configuração ou pacote selado foi alterado para registrar o relato.
+
 ## Fontes primárias
 
 - [MFG-Unlocker, referência fixada](https://github.com/dashdogy/MFG-Unlocker/tree/a4cf2c4ab632e84c72254932793bb9e64b33d76e/source/native/xess): `sdk_pacing`, `LlLease`, `ApplySceneDetector`, modelo/CUDA e controle do host.

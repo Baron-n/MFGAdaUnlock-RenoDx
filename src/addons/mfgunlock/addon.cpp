@@ -3521,13 +3521,17 @@ void DrawInputDiagnosticsPanel() {
 void SettingLabel(const char* label, const char* summary, const char* tooltip,
                   const char* badge = nullptr,
                   const ImVec4& badge_color = kUiMuted) {
-  ImGui::TextUnformatted(label);
-  if (tooltip != nullptr) HelpMarker(tooltip);
+  ImGui::AlignTextToFramePadding();
+  const float help_width=tooltip?ImGui::CalcTextSize("(?)").x+ImGui::GetStyle().ItemInnerSpacing.x:0.f;
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+(std::max)(1.f,ImGui::GetContentRegionAvail().x-help_width));
+  ImGui::TextUnformatted(label); ImGui::PopTextWrapPos();
+  mfgunlock::ui::Tooltip(tooltip);
+  mfgunlock::ui::Help(tooltip);
   if (badge != nullptr) {
     ImGui::SameLine();
     ImGui::TextColored(badge_color, "%s", badge);
   }
-  if (summary != nullptr) ImGui::TextDisabled("%s", summary);
+  if (summary != nullptr) TextDisabledWrapped(summary);
 }
 
 std::string PackedVersionString(uint64_t version, bool seen) {
@@ -7947,7 +7951,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "Native ReShade XeMFG R1.3 - player control center and concurrent latency markers; official DLSS-G 1.4.5 base";
+    "Native ReShade XeMFG R1.4 - compact aligned controls and contextual help; official DLSS-G 1.4.5 base";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

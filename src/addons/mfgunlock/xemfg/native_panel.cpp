@@ -23,28 +23,19 @@ void Draw() {
     ImGui::EndTabBar();
   }
   if(page==PanelPage::General) {
-    ui::Section("Frame generation","Generate extra frames for smoother motion. Keep Frame Generation enabled in the game's settings.");
+    ui::Section("Frame generation","Keep Frame Generation enabled in the game.");
     ui::Card card("##xemfg_generation");
     ui::BackendSelector();
     int choice=int(s.multiplier.load())-2;
-    ui::Setting("##xe_multiplier_row","Frame multiplier","4x creates up to three extra frames per rendered frame. Higher values use more GPU time.",[&] {
-      if(ImGui::Combo("##xe_multiplier",&choice,"2x\0 3x\0 4x\0 5x\0 6x\0")) {
+    ui::Setting("##xe_multiplier_row","Frame multiplier","Applies while playing. 2x adds up to one generated frame per rendered frame; 4x adds up to three. Higher values use more GPU time.",[&] {
+      if(ImGui::Combo("##xe_multiplier",&choice,"2x\0" "3x\0" "4x\0" "5x\0" "6x\0")) {
         s.multiplier=uint32_t(choice+2);
         const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
         WritePrivateProfileStringW(L"XeFG",L"Multiplier",std::to_wstring(choice+2).c_str(),ini.c_str());
       }
     });
-    ui::Description("Multiplier changes apply while playing. Switching between DLSS-G and XeMFG requires restarting the game.");
   }
   DrawControls(page);
-  if(page==PanelPage::Diagnostics) {
-    ui::Section("Bridge status","Technical information for troubleshooting. These counters do not measure displayed FPS or physical input latency.");
-    ui::Card card("##xe_bridge_diagnostics");
-    ImGui::TextWrapped("%s",status.detail);
-    ImGui::Text("Streamline: %s | Output: %s | XeLL: %s",status.streamline?"hooked":"waiting",status.output?"ready":"waiting",status.xell?"ready":"waiting");
-    ImGui::Text("Source presents: %u | Incomplete inputs: %u",status.frames,status.rejected);
-    ImGui::Text("SDK submissions: %u | SDK result: %d",status.submitted,status.sdkResult);
-  }
-  ImGui::Spacing(); ui::Description("MFG Unlock 1.4.5 base | Native XeMFG R1.3");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.4");
 }
 }

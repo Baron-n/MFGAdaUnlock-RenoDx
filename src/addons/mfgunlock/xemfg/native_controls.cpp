@@ -83,77 +83,91 @@ ControlStatus ControlsSnapshot() {
 void DrawControls(PanelPage page) {
   const auto status=ControlsSnapshot(); auto value=status.settings;
   const bool metering=status.flipMetered && !status.flipBusy;
-  const char* flip=status.flipBusy?"Checking...":!status.flipAvailable?"Unavailable - using XeFG pacing":
+  const char* flip=status.flipBusy?"Checking...":!status.flipAvailable?"XeFG pacing (driver unavailable)":
       !status.flipRegistered || !status.flipQueue?"Waiting for frame generation":
-      status.flipRefused?"Driver declined - using XeFG pacing":metering?"Active - accepted by the driver":
-      status.flipConfigured?"Using XeFG pacing in this display mode":!status.flipEnabled?"Off":"Waiting for a stable frame rate";
+      status.flipRefused?"XeFG pacing (driver declined)":metering?"NVIDIA driver - active":
+      status.flipConfigured?"XeFG pacing (current display mode)":!status.flipEnabled?"XeFG pacing (driver metering off)":"Waiting for a stable frame rate";
   const auto& w=status.window;
   const char* window=!w.available?"Window not available":w.borderless?(w.coversMonitor?"Borderless fullscreen":"Borderless window"):"Windowed";
+  const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":!status.modelPort?"Native XeFG model":
+      status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Cores (CUDA)":
+      status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shaders";
+  constexpr const char* flipHelp="Uses the NVIDIA driver to space generated frames evenly. Leave enabled for driver pacing when available; otherwise XeFG uses its own pacing. Changes apply at the next frame group. Active reports driver acceptance, not a monitor scanout measurement.";
   if(page==PanelPage::General) {
     ui::Section("Smoothness and display");
     ui::Card card("##xe_presentation");
-    ui::Setting("##xe_flip_row","Driver frame pacing","Let the NVIDIA driver space the generated frames. XeFG pacing remains available if the driver cannot use this mode.",[&] {
+    ui::Setting("##xe_flip_row","Driver flip metering",flipHelp,[&] {
       if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
     });
-    ImGui::TextColored(metering?ui::Accent:ui::Muted,"%s",flip);
+    ui::Readout("##xe_flip_state","Pacing status",flip,flipHelp,metering?ui::Accent:ui::Muted);
     if(status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
     ImGui::Separator();
     ui::Setting("##xe_window_row","Force Borderless","Fill the current monitor without window borders. Use this if the game requests exclusive fullscreen.",[&] {
       if(ImGui::Checkbox("##xe_borderless",&value.forceBorderless)) ConfigureControls(value);
     });
-    ImGui::Text("Display mode: %s%s",window,w.pending?" (change pending)":"");
+    ui::Readout("##xe_window_state","Display mode",w.pending?"Change pending":window,
+        "Shows the current window borders and monitor coverage. Turning Force Borderless off restores the previous mode only if the addon still owns the window changes.");
     if(w.error==ERROR_BUSY) ui::Notice("The game or another addon changed the window. The current window state was preserved.");
     else if(w.error) ui::Notice("The window mode could not be changed. Diagnostics has the reported error.");
     if(value.forceBorderless && w.available && !w.pending && (!w.borderless || !w.coversMonitor || w.error))
       if(ImGui::Button("Apply borderless again")) if(auto output=Active(); output && output->window) output->window->Request(true);
   }
   if(page==PanelPage::Quality) {
-    ui::Section("Image quality","XeMFG reconstructs frames with Intel's multi-frame model.");
+    ui::Section("Image quality");
     ui::Card card("##xe_quality");
-    ImGui::TextUnformatted("XeMFG reconstruction");
-    ui::Description("The model is selected automatically. DLSS-G quality profiles belong to the NVIDIA backend and are not applied to XeMFG.");
-    ImGui::Separator();
-    const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking acceleration...":!status.modelInitialized?"Waiting for the model":!status.modelPort?"Native XeFG compatibility model":
-        status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Core acceleration active":
-        status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shader route";
-    ImGui::TextColored(ui::Accent,"%s",acceleration);
-    ui::Description("A higher rendered frame rate gives frame generation more recent motion information. Extra generated frames improve smoothness; they do not add new input samples.");
+    ui::Readout("##xe_model_quality","Model",status.modelUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":status.modelPort?"Intel XeMFG (automatic)":"Intel XeFG (compatibility)",
+        "The multi-frame model is selected automatically. DLSS-G quality profiles only affect the NVIDIA backend.");
+    ui::Readout("##xe_acceleration_quality","Acceleration",acceleration,
+        "CUDA runs the supported model layers on NVIDIA Tensor Cores. Compatibility shaders handle other dispatches. This is the execution route, not a different quality preset.",ui::Accent);
+    ui::Description("For best results, keep the game's rendered frame rate stable.");
+    ui::Tooltip("A higher base frame rate supplies more recent motion information. Generated frames improve smoothness but do not add new input samples.");
   }
   if(page==PanelPage::Latency) {
-    ui::Section("Mouse and input response","XeLL schedules the game's real frames. It is active alongside XeMFG; native Reflex sleeping is replaced to avoid two competing waits.");
+    ui::Section("Mouse and input response");
     ui::Card card("##xe_latency");
-    ImGui::TextColored(status.xellObserved?ui::Accent:ui::Warning,"XeLL: %s",status.xellObserved?"receiving game frames":"waiting for game timing");
-    ImGui::Text("Timing source: %s",status.reflexObserved?"Game Reflex / Streamline":"not observed yet");
-    ui::Description("Keep the game's low-latency option enabled when available. Avoid stacking external FPS limiters while comparing responsiveness.");
+    ui::Readout("##xe_latency_state","Low latency",status.xellObserved?"XeLL - active":"Waiting for game timing",
+        "XeLL schedules real game frames. The bridge replaces native Reflex sleeping with XeLL to avoid two competing waits. Active means recent successful XeLL sleeps, not a physical latency measurement.",status.xellObserved?ui::Accent:ui::Warning);
+    ui::Readout("##xe_latency_source","Timing source",status.reflexObserved?"Reflex / Streamline":"Not observed yet",
+        "Uses the game's Reflex timing and markers as input to XeLL. Keep the game's low-latency option enabled when available.");
+    ui::Description("Keep the game's low-latency option enabled.");
+    ui::Tooltip("Avoid stacking external FPS limiters while comparing responsiveness. Generated FPS and physical input latency measure different things.");
     if(ImGui::CollapsingHeader("Advanced latency routing")) {
       int input=int(value.input),output=int(value.output);
-      ImGui::SetNextItemWidth(-1);
-      if(ImGui::Combo("Timing input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
-      ImGui::SetNextItemWidth(-1);
-      if(ImGui::Combo("Latency output",&output,"Auto (recommended)\0XeLL\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
-      ui::Description("Auto uses Reflex timing from the game and XeLL for the output. This bridge currently supports that route. To use native Reflex output, select the DLSS-G backend and restart.");
+      ui::Setting("##xe_input_row","Timing input","Auto uses Reflex / Streamline timing. This bridge currently supports that input route.",[&] {
+        if(ImGui::Combo("##xe_timing_input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
+      });
+      ui::Setting("##xe_output_row","Latency output","Auto uses XeLL. XeMFG needs XeLL; native Reflex output is available with the DLSS-G backend after a restart.",[&] {
+        if(ImGui::Combo("##xe_latency_output",&output,"Auto (recommended)\0XeLL\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
+      });
     }
   }
   if(page==PanelPage::Diagnostics) {
-    ui::Section("Model and timing details");
+    const auto bridge=Snapshot();
+    ui::Section("System status","Use Copy diagnostic report when reporting a problem.");
     ui::Card card("##xe_model_details");
-    ImGui::Text("Model port: %s | Initialized: %s",status.modelUpdating?"updating":status.modelPort?"MFG":"native XeFG",status.modelInitialized?"yes":"no");
-    ImGui::Text("CUDA state: %u | Compute: %d.%d | Layers: %u",status.cudaState,status.cudaMajor,status.cudaMinor,status.cudaLayers);
-    ImGui::Text("Tensor launches: %llu | Dispatch fallbacks: %llu",status.cudaLaunches,status.cudaFallbacks);
-    if(status.cudaReason[0]) ImGui::TextWrapped("CUDA detail: %s",status.cudaReason);
-    ImGui::TextWrapped("Flip metering: %s",flip);
-    ImGui::Text("NVAPI result: %d | Feedback: 0x%X | Outputs: %u",status.flipResult,status.flipFeedback,status.flipOutputs);
-    ImGui::Text("Window error: %lu | Managed: %s",static_cast<unsigned long>(w.error),w.managed?"yes":"no");
-    ImGui::Text("Native Reflex disabled: %s | Game request: %u",status.nativeReflexDisabled?"yes":"no",status.gameReflexMode);
-    ImGui::Text("XeLL sleeps: %llu | Markers: %llu",status.sleeps,status.markers);
-    ImGui::Text("Sleep-mode changes: %llu | Last CPU sleep: %llu us",status.modeUpdates,status.lastSleepUs);
-    ui::Description("Driver acceptance is not a scanout measurement. Counters are accumulated for this process.");
-    if(ImGui::Button("Copy XeMFG diagnostics")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.3\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor
-          <<" launches="<<status.cudaLaunches<<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback
-          <<"\nwindow="<<window<<" error="<<w.error<<"\nsleeps="<<status.sleeps<<" markers="<<status.markers;
+    ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
+        "Checks the Streamline input hooks and DirectX 12 output. Load a scene and enable Frame Generation in the game.");
+    ui::Readout("##xe_diag_model","Model",status.modelUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":status.modelPort?"Intel XeMFG - ready":"Intel XeFG (compatibility)");
+    ui::Readout("##xe_diag_cuda","Acceleration",acceleration,
+        "NVIDIA Tensor Core execution is observed through the CUDA route. Raw counters are included in the copied report.");
+    ui::Readout("##xe_diag_flip","Flip metering",flip,flipHelp,metering?ui::Accent:ui::Muted);
+    ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":"Waiting for game timing");
+    ui::Readout("##xe_diag_window","Display mode",window);
+    if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
+    if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
+    if(ImGui::Button("Copy diagnostic report")) {
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.4\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+          <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
+          <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
+          <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
+          <<"\nwindow="<<window<<" error="<<w.error<<" managed="<<w.managed
+          <<"\nnative_reflex_disabled="<<status.nativeReflexDisabled<<" game_reflex_mode="<<status.gameReflexMode
+          <<"\nsleeps="<<status.sleeps<<" markers="<<status.markers<<" mode_changes="<<status.modeUpdates<<" last_sleep_us="<<status.lastSleepUs
+          <<"\nbridge="<<bridge.detail<<" source_presents="<<bridge.frames<<" incomplete_inputs="<<bridge.rejected
+          <<" submissions="<<bridge.submitted<<" SDK_result="<<bridge.sdkResult;
       ImGui::SetClipboardText(report.str().c_str());
     }
+    ui::Tooltip("Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.");
   }
   if(!status.settingsSaved) ui::Notice("Settings are active but could not be saved. Check write access to the game folder.");
 }

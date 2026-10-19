@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.3
+MFGAdaUnlock - Native ReShade XeMFG R1.4
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -24,12 +24,13 @@ XeLL: libxell.dll 1.3.0.5 or validated 1.3.2.10 (manifest lists identities).
 
 In ReShade's MFG Unlock panel:
 - General, Quality, Latency and Diagnostics are shared across the two backends.
-  Technical codes/counters are on Diagnostics; common controls have short
-  explanations. Narrow windows use a page selector and compact summary.
+  Controls are compact and aligned. Hover a control, its label or (?) for help.
+  Diagnostics shows readable states; raw codes/counters are in Copy diagnostic
+  report. Narrow windows use a page selector and stacked controls.
 - Select DLSS-G or XeMFG. Restart the game after changing the backend.
 - XeMFG multiplier is 2x-6x. Enable frame generation in the game's menu.
-- The panel reports the effective FG state, model port, CUDA compute capability,
-  recognized layers, Tensor launches and dispatch fallbacks.
+- The panel reports effective FG state, model and CUDA/Tensor acceleration.
+  Compute capability, layer/launch counts and fallbacks remain in the copied report.
 - Driver flip metering can be toggled live. A request is committed by the
   presenter at the next generated batch, not in the middle of one. Status
   distinguishes NVAPI availability, queue readiness, driver acceptance,
@@ -87,6 +88,13 @@ These are tested code changes, not a measured input-to-photon improvement.
 The source comparison and remaining differences versus dashdogy/OptiScaler
 are in interface-and-latency.md. The package includes synthetic-status PNG
 renders of the actual XeMFG widgets; they are layout evidence only.
+
+R1.4 compacts the shared DLSS-G/XeMFG style and overview, adds contextual help,
+fixes clipped latency selector labels and removes live counter lists from XeMFG
+Diagnostics. The ReShade font and other addons' styles are preserved. Frame
+generation, CUDA execution, XeLL scheduling and metering behavior are unchanged
+from R1.3. On NVIDIA, the metering used here and by dashdogy is NVIDIA driver
+flip metering; XeFG's own pacing remains the fallback. See compact-interface.md.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"
