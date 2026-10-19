@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Independent Streamline/DXGI transport. No OptiScaler source is used here.
 #include "native_internal.hpp"
+#include "native_overlay.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
@@ -92,7 +93,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   ComPtr<ID3D12Device> device;
   if(FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))
       || !single_overlay::native::Unwrap(device.Get(),o->device)) return E_NOINTERFACE;
-  o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height;
+  o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height; o->format=desc->Format;
   auto& a=s.api;
   if(a.xellD3D12CreateContext(o->device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
     Report("XeLL D3D12 context creation failed"); return E_NOINTERFACE;
@@ -120,7 +121,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   ComPtr<IDXGISwapChain4> chain;
   if(a.xefgSwapChainD3D12GetSwapChainPtr(o->fg,IID_PPV_ARGS(&chain))!=0) return E_FAIL;
   DXGI_SWAP_CHAIN_DESC1 actual{};
-  if(SUCCEEDED(chain->GetDesc1(&actual))) { o->width=actual.Width; o->height=actual.Height; }
+  if(SUCCEEDED(chain->GetDesc1(&actual))) { o->width=actual.Width; o->height=actual.Height; o->format=actual.Format; }
   using Debug=xefg_swapchain_result_t(*)(xefg_swapchain_handle_t,uint32_t,uint32_t,void*);
   if(auto debug=reinterpret_cast<Debug>(GetProcAddress(GetModuleHandleW(L"libxess_fg.dll"),"xefgSwapChainEnableDebugFeature")))
     debug(o->fg,0,0,nullptr);
@@ -142,11 +143,16 @@ using FactoryCreate=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*,IUnknown*,HWND,
     const DXGI_SWAP_CHAIN_DESC1*,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
 static FactoryCreate originalFactory{};
 static thread_local bool internalCreate{};
+static thread_local HWND creatingWindow{};
 static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
-  if(internalCreate) return originalFactory(f,d,w,desc,full,restrictOutput,out);
-  struct Scope { Scope(){internalCreate=true;} ~Scope(){internalCreate=false;} } scope;
+  if(internalCreate) {
+    const auto hr=originalFactory(f,d,w,desc,full,restrictOutput,out);
+    if(SUCCEEDED(hr) && creatingWindow==w) WrapFinalOutput(d,w,out);
+    return hr;
+  }
+  struct Scope { Scope(HWND w){internalCreate=true;creatingWindow=w;} ~Scope(){internalCreate=false;creatingWindow=nullptr;} } scope(w);
   DiscoverStreamline();
   const auto hr=CreateOutput(f,d,w,desc,full,restrictOutput,out);
   if(hr!=E_NOINTERFACE) return hr;

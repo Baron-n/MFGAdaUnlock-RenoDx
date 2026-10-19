@@ -41,12 +41,17 @@ void SetFlipToggleHotkey(bool enabled) noexcept;
 // Overlay controls only queue a request. The presenter commits it at the next
 // batch boundary, using the already verified NVAPI entry point.
 void RequestFlipMetering(bool enabled) noexcept;
+// Optional comparison path: keep the provider's original arithmetic deadline.
+// Commits on output 0 of a generated batch, disables driver metering for that
+// batch, and preserves all SDK waits and the extra-output pacing hook.
+void RequestSdkDeadlines(bool enabled) noexcept;
 struct FlipStatus {
     bool requested{}, enabled{}, available{}, installed{}, registered{}, queue{}, busy{};
     bool configured{}, metered{}, refused{};
     uint32_t outputs{}, feedback{};
     int status{};
     uint64_t calls{};
+    bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
 };
 // Read only, scoped to the exact live SDK handle (never another context).
 FlipStatus Snapshot(void* handle) noexcept;

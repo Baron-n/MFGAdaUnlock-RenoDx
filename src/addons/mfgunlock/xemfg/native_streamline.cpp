@@ -67,13 +67,23 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
   for(uint32_t i=0;i<count;++i) {
     const auto& t=tags[i]; auto type=ResourceType(t.type); if(!type) continue;
     const auto bit=1u<<*type;
+    const bool optional=*type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR || *type==XEFG_SWAPCHAIN_RES_UI;
+    const auto reject=[&](uint32_t issues) {
+      if(!optional || (frame->resources&bit)) frame->failed=true;
+      // Cannot retract an earlier successful tag for this same frame: bypass
+      // that batch instead. Otherwise omit only the incompatible optional tag.
+      if(optional) {
+        frame->hudIssues|=issues; ++State().hudRejected;
+        if(o->hudLogBudget<8) { ++o->hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(*type)+",\"issues\":"+std::to_string(issues)); }
+      }
+    };
     if(!t.resource || !t.resource->native) { frame->resources&=~bit; continue; }
-    if(t.structVersion!=1 || t.resource->structVersion!=1 || t.resource->type!=sl::ResourceType::eTex2d
-        || t.resource->state==UINT_MAX) { frame->failed=true; continue; }
+    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || t.resource->structVersion!=1
+        || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
     ComPtr<ID3D12Resource> resource;
     if(!single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(t.resource->native),resource)) {
       if(id<6) xess_mod::WriteLog("native_tag_rejected","\"reason\":\"resource_unwrap\"");
-      frame->failed=true; continue;
+      reject(HudMetadata); continue;
     }
     const auto desc=resource->GetDesc();
     ComPtr<ID3D12Device> device, nativeDevice; resource->GetDevice(IID_PPV_ARGS(&device));
@@ -81,14 +91,18 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     ComPtr<IUnknown> identity, expectedIdentity;
     if(nativeDevice) nativeDevice.As(&identity); o->device.As(&expectedIdentity);
     if(identity.Get()!=expectedIdentity.Get() || desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D
-        || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { frame->failed=true; continue; }
+        || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { reject(HudMetadata); continue; }
     xefg_swapchain_d3d12_resource_data_t data{};
     data.type=*type; data.pResource=resource.Get();
     data.incomingState=static_cast<D3D12_RESOURCE_STATES>(t.resource->state);
     data.resourceBase={t.extent.left,t.extent.top};
     data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
     if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
-        || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { frame->failed=true; continue; }
+        || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { reject(HudExtent); continue; }
+    if(optional) {
+      const auto issues=CheckHudInput(desc,o->format,o->width,o->height,data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
+      if(issues) { reject(issues); continue; }
+    }
     ComPtr<ID3D12CommandList> list;
     if(t.lifecycle==sl::eValidUntilPresent) data.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
     else if(t.lifecycle==sl::eOnlyValidNow || t.lifecycle==sl::eValidUntilEvaluate) {
@@ -96,16 +110,22 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
       // using the producer's list and restoring its resource state. A COM
       // AddRef alone would not preserve the contents of a volatile resource.
       if(!command || !single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(command),list)
-          || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { frame->failed=true; continue; }
+          || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { reject(HudMetadata); continue; }
       data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
-    } else { frame->failed=true; continue; }
+    } else { reject(HudMetadata); continue; }
     const auto code=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);
     if(id<6) xess_mod::WriteLog("native_tag","\"type\":"+std::to_string(*type)+",\"result\":"+std::to_string(code)
         +",\"format\":"+std::to_string(desc.Format)+",\"width\":"+std::to_string(data.resourceSize.x)
         +",\"height\":"+std::to_string(data.resourceSize.y)+",\"lifecycle\":"+std::to_string(t.lifecycle));
-    if(code<0) frame->failed=true;
+    if(code<0) { frame->failed=true; reject(HudMetadata); }
     else {
       frame->resources|=bit;
+      if(optional && !(o->hudKindsSeen&bit)) {
+        o->hudKindsSeen|=bit;
+        xess_mod::WriteLog("native_hud_input","\"type\":"+std::to_string(*type)+",\"format\":"+std::to_string(desc.Format)
+            +",\"output_format\":"+std::to_string(o->format)+",\"width\":"+std::to_string(data.resourceSize.x)
+            +",\"height\":"+std::to_string(data.resourceSize.y)+",\"encoding_verified\":false");
+      }
       if(*type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR) {
         frame->motionWidth=data.resourceSize.x; frame->motionHeight=data.resourceSize.y;
       }
@@ -238,6 +258,8 @@ void DiscoverStreamline() {
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
   const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
+  s.lastHudIssues=frame?frame->hudIssues:0;
+  s.lastHudInputs=frame?frame->resources&((1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)|(1u<<XEFG_SWAPCHAIN_RES_UI)):0;
   const bool hudless=frame && !frame->failed
       && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
   const bool compositionReady=ApplyUiComposition(*o,hudless);

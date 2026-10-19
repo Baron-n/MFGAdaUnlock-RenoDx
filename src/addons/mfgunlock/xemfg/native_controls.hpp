@@ -6,13 +6,13 @@ namespace mfgunlock::xemfg::native {
 enum class LatencyInput : uint32_t { Auto, StreamlineReflex };
 enum class LatencyOutput : uint32_t { Auto, XeLL };
 struct ControlSettings {
-  uint32_t version{2};
+  uint32_t version{3};
   LatencyInput input{LatencyInput::Auto};
   LatencyOutput output{LatencyOutput::Auto};
-  bool flipMetering{true}, forceBorderless{}, uiComposition{};
+  bool flipMetering{true}, forceBorderless{}, uiComposition{},sdkDeadlines{};
 };
 struct ControlStatus {
-  uint32_t version{2};
+  uint32_t version{3};
   ControlSettings settings;
   WindowStatus window;
   bool reflexObserved{}, xellObserved{}, nativeReflexDisabled{};
@@ -31,6 +31,9 @@ struct ControlStatus {
   uint32_t flipOutputs{}, flipFeedback{};
   int flipResult{};
   uint64_t flipCalls{};
+  bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
+  uint32_t hudIssues{},hudInputs{};
+  uint64_t hudRejected{};
   char cudaReason[128]{};
 };
 void LoadControls();

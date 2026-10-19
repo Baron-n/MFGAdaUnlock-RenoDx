@@ -2,6 +2,7 @@
 // Own overlay/control implementation. No OptiScaler code is incorporated.
 #include "native_internal.hpp"
 #include "native_controls.hpp"
+#include "native_overlay.hpp"
 #include "backend_api.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/cuda/cuda_route.h"
@@ -27,13 +28,15 @@ void LoadControls() {
   settings.output=ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
   settings.forceBorderless=GetPrivateProfileIntW(L"XeFG",L"ForceBorderless",0,Ini().c_str())!=0;
   settings.uiComposition=GetPrivateProfileIntW(L"XeFG",L"UIComposition",0,Ini().c_str())!=0;
+  settings.sdkDeadlines=GetPrivateProfileIntW(L"XeFG",L"SdkDeadlines",0,Ini().c_str())!=0;
+  sdk_pacing::RequestSdkDeadlines(settings.sdkDeadlines);
   wchar_t flip[32]{}; GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",flip,32,Ini().c_str());
   settings.flipMetering=_wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0");
 }
 bool ConfigureControls(const ControlSettings& value) {
   // This transport has one implemented input and one compatible output. Never
   // persist unsupported enum values or silently combine Reflex sleep + XeLL.
-  if(value.version!=2 || uint32_t(value.input)>1 || uint32_t(value.output)>1) return false;
+  if(value.version!=3 || uint32_t(value.input)>1 || uint32_t(value.output)>1) return false;
   ControlSettings old;
   { std::lock_guard guard(settingsLock); old=settings; settings=value; }
   const auto ini=Ini();
@@ -42,8 +45,10 @@ bool ConfigureControls(const ControlSettings& value) {
   saved=WritePrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0",ini.c_str()) && saved;
+  saved=WritePrivateProfileStringW(L"XeFG",L"SdkDeadlines",value.sdkDeadlines?L"1":L"0",ini.c_str()) && saved;
   settingsSaved=saved;
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
+  if(old.sdkDeadlines!=value.sdkDeadlines) sdk_pacing::RequestSdkDeadlines(value.sdkDeadlines);
   if(old.forceBorderless!=value.forceBorderless)
     if(auto output=Active(); output && output->window) output->window->Request(value.forceBorderless);
   xess_mod::WriteLog("native_controls","\"input\":"+std::to_string(uint32_t(value.input))
@@ -66,6 +71,7 @@ ControlStatus ControlsSnapshot() {
   result.reflexObserved=s.inputTick && now-s.inputTick.load()<2000;
   result.xellObserved=s.outputTick && now-s.outputTick.load()<2000;
   result.nativeReflexDisabled=s.reflexOff; result.gameReflexMode=s.gameReflexMode;
+  result.hudIssues=s.lastHudIssues; result.hudInputs=s.lastHudInputs; result.hudRejected=s.hudRejected;
   xefg_cuda::Status cuda;
   result.cudaUpdating=!xefg_cuda::TrySnapshot(cuda);
   result.cudaState=uint32_t(cuda.state); result.cudaLayers=cuda.layers;
@@ -91,12 +97,13 @@ ControlStatus ControlsSnapshot() {
   result.flipRequested=flip.requested; result.flipEnabled=flip.enabled;
   result.flipConfigured=flip.configured; result.flipMetered=flip.metered; result.flipRefused=flip.refused;
   result.flipOutputs=flip.outputs; result.flipFeedback=flip.feedback; result.flipResult=flip.status; result.flipCalls=flip.calls;
+  result.sdkDeadlinesRequested=flip.sdkDeadlinesRequested; result.sdkDeadlinesActive=flip.sdkDeadlinesActive;
   return result;
 }
 void DrawControls(PanelPage page) {
   const auto status=ControlsSnapshot(); auto value=status.settings;
   const bool metering=status.flipMetered && !status.flipBusy;
-  const char* flip=status.flipBusy?"Checking...":!status.flipAvailable?"XeFG pacing (driver unavailable)":
+  const char* flip=status.sdkDeadlinesActive?"Intel SDK timing (experimental)":status.flipBusy?"Checking...":!status.flipAvailable?"XeFG pacing (driver unavailable)":
       !status.flipRegistered || !status.flipQueue?"Waiting for frame generation":
       status.flipRefused?"XeFG pacing (driver declined)":metering?"NVIDIA driver - active":
       status.flipConfigured?"XeFG pacing (current display mode)":!status.flipEnabled?"XeFG pacing (driver metering off)":"Waiting for a stable frame rate";
@@ -114,10 +121,19 @@ void DrawControls(PanelPage page) {
     ui::Section("Smoothness and display");
     ui::Card card("##xe_presentation");
     ui::Setting("##xe_flip_row","Driver flip metering",flipHelp,[&] {
+      ImGui::BeginDisabled(value.sdkDeadlines);
       if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
+      ImGui::EndDisabled();
     });
     ui::Readout("##xe_flip_state","Pacing status",flip,flipHelp,metering?ui::Accent:ui::Muted);
-    if(status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
+    if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
+    if(ImGui::CollapsingHeader("Advanced pacing comparison")) {
+      ui::Setting("##xe_deadline_row","Use Intel SDK timing (test)","Off keeps the current driver/adaptive path. On keeps Intel's original deadlines and disables driver metering at the next generated group. This experimental comparison does not add a pacer, wait or FPS cap. Keep the same scene and compare displayed intervals and mouse response; turn off to restore the usual path.",[&] {
+        if(ImGui::Checkbox("##xe_sdk_deadlines",&value.sdkDeadlines)) ConfigureControls(value);
+      });
+      ui::Description(status.sdkDeadlinesActive?"Intel SDK timing active (experimental)":"Driver / adaptive timing active");
+      if(status.sdkDeadlinesRequested!=status.sdkDeadlinesActive) ui::Description("Waiting for the next generated group.");
+    }
     ImGui::Separator();
     ui::Setting("##xe_window_row","Force Borderless","Fill the current monitor without window borders. Use this if the game requests exclusive fullscreen.",[&] {
       if(ImGui::Checkbox("##xe_borderless",&value.forceBorderless)) ConfigureControls(value);
@@ -143,6 +159,8 @@ void DrawControls(PanelPage page) {
       ImGui::EndDisabled();
     });
     ui::Readout("##xe_composition_state","HUD handling",composition,compositionHelp);
+    ui::Readout("##xe_hud_safety","HUD input safety",status.hudIssues?"Incompatible input filtered":status.hudInputs?"Game HUD inputs accepted":"No separate HUD texture",
+        "Checks the game's optional HUD textures for matching format, full output size and valid shader input. Compatible textures can help Intel's UI interpolation with composition off. Invalid optional input falls back to backbuffer interpolation. This does not prove matching HDR encoding or remove every model artifact.");
     if(status.uiCompositionResult<0) ui::Notice("UI composition could not be applied. Copy Diagnostics for details.");
     ui::Description("For best results, keep the game's rendered frame rate stable.");
     ui::Tooltip("A higher base frame rate supplies more recent motion information. Generated frames improve smoothness but do not add new input samples.");
@@ -168,10 +186,13 @@ void DrawControls(PanelPage page) {
   }
   if(page==PanelPage::Diagnostics) {
     const auto bridge=Snapshot();
+    const auto overlay=OverlaySnapshot();
     ui::Section("System status","Use Copy diagnostic report when reporting a problem.");
     ui::Card card("##xe_model_details");
     ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
         "Checks the Streamline input hooks and DirectX 12 output. Load a scene and enable Frame Generation in the game.");
+    ui::Readout("##xe_diag_overlay","ReShade output",overlay.created>overlay.destroyed?"Final output linked":"Automatic hook / waiting",
+        "Links ReShade effects and keyboard input to Intel's final output when its private queue is not automatically hooked. Recreated on resize and released before output destruction.");
     ui::Readout("##xe_diag_model","Model",status.modelUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":status.modelPort?"Intel XeMFG - ready":"Intel XeFG (compatibility)");
     ui::Readout("##xe_diag_cuda","Acceleration",acceleration,
         "NVIDIA Tensor Core execution is observed through the CUDA route. Raw counters are included in the copied report.");
@@ -182,10 +203,13 @@ void DrawControls(PanelPage page) {
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.6\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.7\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
+          <<"\nsdk_deadlines_requested="<<status.sdkDeadlinesRequested<<" active="<<status.sdkDeadlinesActive
+          <<"\nhud_inputs="<<status.hudInputs<<" issues="<<status.hudIssues<<" filtered_tags="<<status.hudRejected
+          <<"\noverlay_created="<<overlay.created<<" destroyed="<<overlay.destroyed<<" updates="<<overlay.updates<<" failed="<<overlay.failed
           <<"\nwindow="<<window<<" error="<<w.error<<" managed="<<w.managed
           <<"\nnative_reflex_disabled="<<status.nativeReflexDisabled<<" game_reflex_mode="<<status.gameReflexMode
           <<"\nsleeps="<<status.sleeps<<" markers="<<status.markers<<" mode_changes="<<status.modeUpdates<<" last_sleep_us="<<status.lastSleepUs

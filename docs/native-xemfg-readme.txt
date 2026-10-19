@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.6
+MFGAdaUnlock - Native ReShade XeMFG R1.7
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. R1.6 full suite: 62 passed,
+bypass, FG disable, resize and context destruction. R1.7 full suite: 63 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -125,8 +125,25 @@ D3D12 devices for Intel contexts and retires viewport selection with its output.
 Diagnostics > Performance capture (advanced) adds a bounded CPU timing window,
 disabled by default. It does not measure displayed FPS, GPU execution or physical
 input latency. CPU profiling adds work; leave it off for performance benchmarks.
-See ENGINEERING_AUDIT.md, PACING_ANALYSIS.md, BENCHMARK_PLAN.md and CHANGELOG.md.
+R1.6 reports are ENGINEERING_AUDIT.md, PACING_ANALYSIS.md, BENCHMARK_PLAN.md
+and CHANGELOG.md under history/r1.6/ in the current package.
 No pacing formulas, waits, quality/model or image inputs changed in R1.6.
 Controlled gameplay/display cadence/physical-latency gains are NOT TESTED.
 SleepMode GPU-idle coordination and concurrent lifecycle remain open audit items.
-The package includes the preceding R1.5 addon for an identical-runtime A/B.
+The historical R1.6 package included R1.5 for an identical-runtime A/B.
+
+R1.7 connects a manual ReShade runtime to Intel's final output when ReShade
+cannot automatically hook the SDK's native private queue. Effects and overlay
+run after interpolation; Home remains the ReShade key. Resize/retirement are
+covered by real-SDK tests; actual Home/focus behavior still needs gameplay check.
+Quality > HUD input safety validates optional textures without enabling UI
+Composition. Correct inputs are preserved; this is not a new HUD interpolation
+model or a guarantee that every crosshair artifact disappears.
+General > Advanced pacing comparison > Use Intel SDK timing (test) is OFF by
+default. ON preserves Intel's original deadlines and disables driver metering
+at the next generated group; OFF restores the preceding driver/adaptive policy.
+No new wait, FPS cap, multiplier reduction or controller is added. This is an
+experimental A/B option; no displayed-cadence gain is claimed yet. See
+pacing-overlay-hud.md for sources, tests, limitations and the validation protocol.
+Native control ABI is version 3. The current package includes R1.6 rollback;
+historical R1.6 engineering reports are under history/r1.6/.

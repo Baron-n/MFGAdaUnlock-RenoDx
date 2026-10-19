@@ -2,6 +2,7 @@
 // Renders the production XeMFG widgets with synthetic status, without a game,
 // a GPU driver, ReShade injection, or global keyboard/mouse input.
 #include "../src/addons/mfgunlock/xemfg/native_internal.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_overlay.hpp"
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 #include "../src/addons/mfgunlock/xemfg/vendor/cuda/cuda_route.h"
 #include "../src/addons/mfgunlock/xemfg/vendor/sdk_pacing.h"
@@ -16,6 +17,7 @@ namespace mfgunlock::xemfg {
 LogStatus LogSnapshot() noexcept { return {}; }
 bool TryModelStatus(Status& out) { out.model=out.initialized=out.enabled=1; return true; }
 namespace native {
+OverlayStatus OverlaySnapshot() noexcept { return {1,0,5500,0}; }
 Bridge& State() {static Bridge state; return state;}
 Status Snapshot(){ return State().status; }
 Output::~Output()=default;
@@ -34,6 +36,7 @@ bool TrySnapshot(Status& out) noexcept { out.state=State::Active; out.major=8; o
 }
 namespace sdk_pacing {
 void RequestFlipMetering(bool) noexcept {}
+void RequestSdkDeadlines(bool) noexcept {}
 FlipStatus Snapshot(void*) noexcept {
   FlipStatus status; status.requested=status.enabled=status.available=status.installed=status.registered=status.queue=status.configured=status.metered=true;
   status.outputs=4; status.calls=3500; return status;
@@ -117,6 +120,8 @@ int wmain(int argc,wchar_t** argv) {
           window->StateStorage.SetInt(window->GetID("Advanced latency routing"),1);
         if(scenario==L"performance" && strstr(window->Name,"##xe_model_details_"))
           window->StateStorage.SetInt(window->GetID("Performance capture (advanced)"),1);
+        if(scenario==L"pacing" && strstr(window->Name,"##xe_presentation_"))
+          window->StateStorage.SetInt(window->GetID("Advanced pacing comparison"),1);
         if((scenario==L"tooltip" || scenario==L"multiplier") && strstr(window->Name,"##xemfg_generation_")) {
           auto* table=GImGui->Tables.GetByKey(window->GetID(scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
           if(table && table->ColumnsCount==2)

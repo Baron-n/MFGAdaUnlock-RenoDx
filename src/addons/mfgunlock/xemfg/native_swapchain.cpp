@@ -11,7 +11,7 @@ class Swapchain final : public IDXGISwapChain4 {
     if(FAILED(hr)) return;
     std::lock_guard lock(owner->io);
     DXGI_SWAP_CHAIN_DESC1 desc{}; chain->GetDesc1(&desc);
-    owner->width=desc.Width; owner->height=desc.Height;
+    owner->width=desc.Width; owner->height=desc.Height; owner->format=desc.Format;
     owner->compatible=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM
         || desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM;
     ++owner->epoch; owner->frames.clear(); owner->last=0; owner->enabled=false;

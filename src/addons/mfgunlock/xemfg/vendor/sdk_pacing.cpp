@@ -96,6 +96,7 @@ std::mutex installMutex;
 std::atomic<SetFlipConfigFunction> flipFunction{};
 std::atomic<bool> flipEnabled{}, firstLayout{}, flipToggleDown{}, flipToggleKey{};
 std::atomic<bool> flipRequested{};
+std::atomic<bool> sdkDeadlinesRequested{},sdkDeadlinesActive{};
 std::atomic<int64_t> flipLeadNs{2500000};
 std::atomic<unsigned> flipToggleLogs{};
 // A batch is configured once the estimate holds this many batch deltas (DLSS-G averages six).
@@ -420,7 +421,8 @@ void FlipBeforePresent(Route& current, const Invocation& call)
     if (!first && (offset == kExtraReturn || offset == kRealReturn)) return;
     if (first) {
         PollFlipToggle();
-        flipEnabled.store(flipRequested.load(std::memory_order_acquire) && flipFunction.load(std::memory_order_acquire),
+        flipEnabled.store(!sdkDeadlinesActive.load(std::memory_order_acquire)
+            && flipRequested.load(std::memory_order_acquire) && flipFunction.load(std::memory_order_acquire),
             std::memory_order_release);
     }
     const auto owners = current.owners.load(std::memory_order_acquire);
@@ -481,6 +483,15 @@ void FlipBeforePresent(Route& current, const Invocation& call)
 HRESULT Dispatch(Route& current, const Invocation& call)
 {
     const DWORD incomingError = GetLastError();
+    if(current.enabled.load(std::memory_order_acquire) && call.generated
+        && call.returnAddress==uintptr_t(current.module)+kFirstReturn) {
+        const bool wanted=sdkDeadlinesRequested.load(std::memory_order_acquire);
+        if(sdkDeadlinesActive.exchange(wanted)!=wanted) {
+            if(const auto owners=current.owners.load(std::memory_order_acquire))
+                for(const auto& owner:*owners) if(owner->presenter==uintptr_t(call.presenter)) owner->intervalLogs=0;
+            try { xess_mod::WriteLog("pacing_policy",wanted?"\"deadlines\":\"sdk\"":"\"deadlines\":\"adaptive\""); } catch(...) {}
+        }
+    }
     if (current.enabled.load(std::memory_order_acquire) && flipFunction.load(std::memory_order_acquire))
     {
         try { FlipBeforePresent(current, call); }
@@ -647,7 +658,8 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
             excluded = owner.batchInterval.Excluded();
         }
         const auto sdkDeadline = *output;
-        if (planned) *output = decision.deadline;
+        const bool nativeDeadlines=sdkDeadlinesActive.load(std::memory_order_acquire);
+        if (planned && !nativeDeadlines) *output = decision.deadline;
         // flipmeter.1: inside a batch the driver meters, the configured spacing (the hardware's)
         // places each output and it is released early by the lead.
         cadence::MeteredDeadline metered{};
@@ -662,7 +674,7 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
             const bool anchored = flip.anchorFrame == frame && flip.anchorNs > 0 && batchStart > 0
                 && flip.anchorNs <= batchStart && batchStart-flip.anchorNs <= flip.batchNs;
             flipBase = anchored ? flip.anchorNs : batchStart;
-            if (flip.metered && flip.outputs == total && flipEnabled.load(std::memory_order_acquire)
+            if (!nativeDeadlines && flip.metered && flip.outputs == total && flipEnabled.load(std::memory_order_acquire)
                 && cadence::PlanMetered(flipBase, flip.spacing, index, flipLeadNs.load(std::memory_order_relaxed),
                     now, metered))
             {
@@ -676,7 +688,8 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
         if (owner.intervalLogs.fetch_add(1, std::memory_order_relaxed) < 24 || (index == 1 && frame%120 == 0))
             xess_mod::WriteLog("dlssg_interval_deadline", "\"generation\":"+std::to_string(owner.generation)+
                 ",\"frame\":"+std::to_string(frame)+",\"index\":"+std::to_string(index)+",\"outputs\":"+std::to_string(total)+
-                ",\"applied\":"+(planned ? "true" : "false")+",\"interval_ns\":"+std::to_string(decision.interval)+
+                ",\"applied\":"+(planned && !nativeDeadlines ? "true" : "false")
+                +",\"sdk_deadlines\":"+(nativeDeadlines ? "true" : "false")+",\"interval_ns\":"+std::to_string(decision.interval)+
                 ",\"samples\":"+std::to_string(decision.samples)+",\"capped\":"+(decision.capped ? "true" : "false")+
                 ",\"batch_start_ns\":"+std::to_string(batchStart)+",\"now_ns\":"+std::to_string(now)+
                 ",\"sdk_deadline_ns\":"+std::to_string(sdkDeadline)+",\"deadline_ns\":"+std::to_string(*output)+
@@ -932,11 +945,14 @@ void SetFlipToggleHotkey(bool enabled) noexcept
 }
 
 void RequestFlipMetering(bool enabled) noexcept { flipRequested.store(enabled, std::memory_order_release); }
+void RequestSdkDeadlines(bool enabled) noexcept { sdkDeadlinesRequested.store(enabled,std::memory_order_release); }
 FlipStatus Snapshot(void* handle) noexcept {
     FlipStatus status{};
     status.requested=flipRequested.load(std::memory_order_acquire);
     status.enabled=flipEnabled.load(std::memory_order_acquire);
     status.available=flipFunction.load(std::memory_order_acquire)!=nullptr;
+    status.sdkDeadlinesRequested=sdkDeadlinesRequested.load(std::memory_order_acquire);
+    status.sdkDeadlinesActive=sdkDeadlinesActive.load(std::memory_order_acquire);
     const auto current=route.load(std::memory_order_acquire);
     if(!current) return status;
     status.installed=current->enabled.load(std::memory_order_acquire);

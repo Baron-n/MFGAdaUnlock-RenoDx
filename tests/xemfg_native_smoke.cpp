@@ -12,6 +12,7 @@
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_bridge.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_controls.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_overlay.hpp"
 #include <iostream>
 #include <stdexcept>
 #include <vector>
@@ -50,17 +51,18 @@ int main(int argc,char** argv) {
     auto configure=Import<Configure>(addon,"MFGAXeConfigure");
     auto timingEnable=Import<void(*)(bool)>(addon,"MFGAXeTimingEnable");
     auto timingReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeTimingReport");
+    auto overlayStatus=Import<bool(*)(mfgunlock::xemfg::native::OverlayStatus*,uint32_t)>(addon,"MFGAXeOverlayStatus");
     timingEnable(true);
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
-    Require(cs.version==2 && cs.settings.version==2 && !cs.settings.uiComposition,"UI composition default/ABI");
+    Require(cs.version==3 && cs.settings.version==3 && !cs.settings.uiComposition && !cs.settings.sdkDeadlines,"default/ABI");
     auto settings=cs.settings; settings.input=mfgunlock::xemfg::native::LatencyInput::StreamlineReflex;
     settings.output=mfgunlock::xemfg::native::LatencyOutput::XeLL;
     settings.forceBorderless=true;
     Require(configure(&settings,sizeof(settings)),"explicit Reflex to XeLL preference");
     auto unsupported=settings; unsupported.output=static_cast<mfgunlock::xemfg::native::LatencyOutput>(2);
     Require(!configure(&unsupported,sizeof(unsupported)),"unsupported output accepted");
-    auto oldAbi=settings; oldAbi.version=1;
+    auto oldAbi=settings; oldAbi.version=2;
     Require(!configure(&oldAbi,sizeof(oldAbi)),"old settings padding interpreted as UI composition");
     controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
@@ -78,6 +80,8 @@ int main(int argc,char** argv) {
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
+    mfgunlock::xemfg::native::OverlayStatus os;
+    Require(overlayStatus(&os,sizeof(os)) && os.created==1 && os.failed==0,"final output has no manual ReShade runtime");
     settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
     // The owner-thread controller is asynchronous; SDK/ReShade startup may
@@ -160,6 +164,9 @@ int main(int argc,char** argv) {
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(frame==36 || frame==42) {
+        settings.sdkDeadlines=frame==36; Require(configure(&settings,sizeof(settings)),"deadline comparison request");
+      }
       if(frame==8) {
         controlStatus(&cs,sizeof(cs));
         Require(cs.uiCompositionKnown && !cs.uiCompositionApplied && cs.uiCompositionUpdates==0,"SDK default interpolation was overridden");
@@ -195,6 +202,10 @@ int main(int argc,char** argv) {
       const uint32_t tagCount=frame==34?1:frame==17?2:3; // Missing MV bypass; missing HUD-less uses UI interpolation.
       if(frame%2) tags(token,viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       else legacyTags(viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
+      if(frame==37 || frame==38) {
+        sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
+        tags(token,viewport,&invalidOptional,1,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
+      }
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
       const bool lateSubmitEnd=frame>=17;
       if(!lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
@@ -207,8 +218,14 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
-      if(frame==34) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV did not disable FG"); }
+      if(frame==34 || frame==38) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV or invalid retag did not bypass FG"); }
       else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,"valid overlapping RenderSubmit/Present was rejected"); }
+      if(frame==37) {
+        controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues && cs.hudRejected && !cs.uiCompositionApplied,"invalid optional HUD did not fall back to default interpolation");
+      }
+      if(frame==40 || frame==48) {
+        controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
+      }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
     }
     mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms)); bridgeStatus(&bs,sizeof(bs));
@@ -220,6 +237,7 @@ int main(int argc,char** argv) {
     // turn this into a claim about four displayed frames or scanout cadence.
     Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
     Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
+    Require(overlayStatus(&os,sizeof(os)) && os.updates>=48 && os.failed==0,"ReShade did not render final outputs");
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
     Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
@@ -241,6 +259,7 @@ int main(int argc,char** argv) {
     Check(chain->Present(0,0),"disabled Present");
     Check(chain->ResizeBuffers(3,800,450,DXGI_FORMAT_UNKNOWN,0),"ResizeBuffers");
     chain.Reset();
+    Require(overlayStatus(&os,sizeof(os)) && os.created>=2 && os.created==os.destroyed && os.failed==0,"manual ReShade runtime resize/teardown leaked");
     sl::ViewportHandle replacementViewport{7};
     Require(options(replacementViewport,off)==sl::Result::eOk,"retired output kept the old viewport selection");
     CloseHandle(event); DestroyWindow(hwnd);

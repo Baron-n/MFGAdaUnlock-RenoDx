@@ -4,6 +4,7 @@
 #include "native_controls.hpp"
 #include "frame_store.hpp"
 #include "native_diagnostics.hpp"
+#include "hud_inputs.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -36,6 +37,7 @@ struct Frame {
   uint32_t id{}, viewport{}, resources{}, markers{};
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
+  uint32_t hudIssues{};
   xefg_swapchain_frame_constant_data_t data{};
 };
 struct Output {
@@ -50,6 +52,8 @@ struct Output {
   FrameStore<Frame> frames;
   uint32_t last{}, appliedCount{}, width{}, height{};
   uint32_t lastAdmission{UINT32_MAX};
+  DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
+  uint32_t hudLogBudget{},hudKindsSeen{};
   uint64_t admissionTick{};
   uint64_t epoch{};
   uint64_t diagnosticOutput{};
@@ -75,6 +79,8 @@ struct Bridge {
   std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
   std::atomic<uint64_t> latencyModeUpdates{0}, lastSleepUs{0};
   std::atomic<uint32_t> gameReflexMode{0};
+  std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
+  std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
 };
 Bridge& State();
