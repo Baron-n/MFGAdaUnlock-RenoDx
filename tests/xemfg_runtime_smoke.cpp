@@ -14,6 +14,11 @@ int main(int argc,char** argv) {
   auto init=reinterpret_cast<void(*)()>(GetProcAddress(plugin,"InitializeASI"));
   auto run=reinterpret_cast<int(*)()>(GetProcAddress(host,"RunFixture"));
   if(!init || !run) return 2;
+  char redirected[4]{};
+  if(GetEnvironmentVariableA("MFGAXE_FIXTURE_REDIRECT",redirected,4) && redirected[0]=='1') {
+    auto prepare=reinterpret_cast<int(*)()>(GetProcAddress(host,"PrepareRedirects"));
+    if(!prepare || prepare()) return 7;
+  }
   init();
   auto get=reinterpret_cast<mfgunlock::xemfg::GetStatus>(GetProcAddress(plugin,"MFGAXeGetStatus"));
   mfgunlock::xemfg::Status status;

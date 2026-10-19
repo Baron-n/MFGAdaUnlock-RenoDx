@@ -8,9 +8,32 @@
 #include <xell_d3d12.h>
 #include <iostream>
 #include <stdexcept>
+#include <intrin.h>
+#include "../src/addons/mfgunlock/xemfg/vendor/third_party/minhook/include/MinHook.h"
 using Microsoft::WRL::ComPtr;
-BOOL WINAPI DllMain(HMODULE,DWORD reason,LPVOID) {
+static HMODULE fixtureModule{};
+static decltype(&xefgSwapChainSetEnabled) nativeEnable{};
+static unsigned redirectedCalls{};
+static xefg_swapchain_result_t RedirectEnable(xefg_swapchain_handle_t context,uint32_t enabled) {
+  MEMORY_BASIC_INFORMATION caller{};
+  VirtualQuery(_ReturnAddress(),&caller,sizeof(caller));
+  if(caller.AllocationBase!=fixtureModule) {
+    std::cerr<<"FAIL: companion changed the caller of the host-owned enable redirect"<<std::endl;
+    return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  }
+  ++redirectedCalls;
+  return nativeEnable(context,enabled);
+}
+extern "C" __declspec(dllexport) int PrepareRedirects() {
+  auto fg=LoadLibraryW(L"libxess_fg.dll");
+  auto target=fg?reinterpret_cast<void*>(GetProcAddress(fg,"xefgSwapChainSetEnabled")):nullptr;
+  if(!target || MH_Initialize()!=MH_OK || MH_CreateHook(target,reinterpret_cast<void*>(&RedirectEnable),
+      reinterpret_cast<void**>(&nativeEnable))!=MH_OK || MH_EnableHook(target)!=MH_OK) return 1;
+  return 0;
+}
+BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID) {
   if(reason==DLL_PROCESS_ATTACH) {
+    fixtureModule=module;
     wchar_t enabled[4]{};
     if(GetEnvironmentVariableW(L"MFGAXE_FIXTURE_EARLY",enabled,4) && enabled[0]==L'1') {
       auto plugin=LoadLibraryW(L"MFGAdaUnlock.XeMFG.asi");
@@ -64,6 +87,7 @@ extern "C" __declspec(dllexport) int RunFixture() {
     for(unsigned count:{1,2,3,5,3,1}) CALL(xefgSwapChainSetNumInterpolatedFrames,context,count);
     CALL(xefgSwapChainSetEnabled,context,1);
     CALL(xefgSwapChainSetEnabled,context,0);
+    if(nativeEnable && redirectedCalls!=2) throw std::runtime_error("host redirect call count");
     CALL(xefgSwapChainDestroy,context);
     CALL(xellDestroyContext,latency);
     DestroyWindow(hwnd);

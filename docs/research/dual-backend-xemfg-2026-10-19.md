@@ -2,6 +2,8 @@
 
 ## Base e resultado
 
+Estado atual: **candidata local X1.2, sem validação de gameplay concluída**. A X1 falhou no loader; a X1.1 abriu e sofreu uma segunda falha durante Present/XeLL. As verificações e limitações da correção atual estão na seção X1.2 ao fim deste documento. Os resultados iniciais abaixo são históricos, não uma declaração de estabilidade dessas builds.
+
 Branch `feature/1.4.5-xemfg`, criada diretamente da **1.4.5 oficial**, commit `0fe65579d287581107babe267ee3e48c9135bf8a`. As árvores antigas, a release publicada e os experimentos de reconstrução foram preservados. Nenhuma alteração de LMR/MR/CA/DR/TGL integra esta candidata.
 
 A build contém dois backends selecionados antes de iniciar o jogo:
@@ -71,12 +73,47 @@ Headers Intel consultados: commit `de0fb9c1c510661c571164e1418ceca8101dab69`; re
 Pacote local: `out/dual-backend-1.4.5-x1/`, com binários, manifest, licenças, seletores e addon oficial 1.4.5 para rollback. Não foi publicada uma release. O primeiro teste recomendado é o ManualSave-317 em 4x, com os mesmos ajustes, verificando também crosshair, asfalto e contagem efetiva no painel do OptiScaler. Antes de promover, comparar dois jogos, enable/disable repetido, resize/alt-tab, 2x/3x/4x/6x e medir desempenho/pacing/VRAM sem profiler.
 
 
-## X1.1 ? corre??o do crash de abertura
+## X1.1 — correção do crash de abertura
 
-A tentativa real com X1 falhou antes do primeiro contexto. O minidump `Cyberpunk2077.exe.25356.dmp` mostra `InitializeASI` chamado pelo `DllMain` do OptiScaler durante `LdrpInitializeGraphRecurse`. A consulta de vers?o feita pela descoberta do layout chegou a c?digo de `libxess_fg` antes de sua inicializa??o completar; `RtlpWaitOnCriticalSection` falhou com `c0000005`. Isso era um erro de bootstrap da X1. O teste anterior chamava InitializeASI depois de `LoadLibrary`, fora desse grafo, e n?o cobria essa ordem.
+A tentativa real com X1 falhou antes do primeiro contexto. O minidump `Cyberpunk2077.exe.25356.dmp` mostra `InitializeASI` chamado pelo `DllMain` do OptiScaler durante `LdrpInitializeGraphRecurse`. A consulta de versão feita pela descoberta do layout chegou a código de `libxess_fg` antes de sua inicialização completar; `RtlpWaitOnCriticalSection` falhou com `c0000005`. O teste inicial chamava InitializeASI depois de `LoadLibrary` e não cobria essa ordem.
 
-A X1.1 separa captura e ativa??o. Durante o callback do loader, registra somente o gate p?blico de Create no SDK j? mapeado, ret?m os m?dulos necess?rios e agenda o worker sem esperar por ele. N?o chama GetVersion, n?o l? cat?logos do modelo e n?o carrega runtimes adicionais nessa fronteira. O worker realiza a admiss?o depois da inicializa??o de DLLs; o primeiro Create real tamb?m pode completar/aguardar essa etapa antes de consumir a feature. Uma chamada a Create ainda dentro do callback do loader ? recusada. A aus?ncia do entrypoint inicial mant?m o startup nativo, com motivo expl?cito. O port, contagens, pacing e shaders n?o foram ajustados para mascarar o crash.
+A X1.1 separou captura e ativação. Durante o callback do loader, registra somente o gate público de Create no SDK já mapeado, retém os módulos e agenda o worker sem esperar. Não chama GetVersion, não lê catálogos do modelo e não carrega runtimes adicionais nessa fronteira. O worker realiza a admissão depois da inicialização de DLLs; o primeiro Create real pode completar essa etapa. Uma chamada a Create ainda dentro do loader é recusada.
 
-Foi acrescentado um execut?vel que importa estaticamente o SDK Intel, fazendo o SDK depender do OptiScaler real como dxgi.dll. Nessa ordem, a X1 encerrou com `0xc0000142`; a X1.1 chegou a main e confirmou os hooks prontos. Outro teste invoca InitializeASI dentro do DllMain de um host sint?tico e verifica, depois, o ciclo de vida real XeLL/XeFG e as contagens 2x?6x. Ambos s?o executados em diret?rios isolados, sem alterar o jogo. A su?te atual passa **42 testes, com 3 opcionais pulados, de 45 registrados**. Logs e contraste antes/depois est?o no diret?rio ignorado de evid?ncias. PDB local foi habilitado para pr?ximas an?lises.
+O executável de regressão importa estaticamente o SDK Intel, que depende do OptiScaler real como dxgi.dll. A X1 encerrou com `0xc0000142`; a X1.1 chegou a main e confirmou os hooks. Outro teste invoca InitializeASI dentro do DllMain de um host sintético e verifica posteriormente o ciclo de vida XeLL/XeFG e as contagens 2x–6x. Foram 42 testes aprovados e três opcionais pulados, de 45 registrados. Esses testes não faziam Present.
 
-A valida??o da abertura do Cyberpunk com a corre??o e a avalia??o da imagem continuam pendentes at? a nova tentativa do usu?rio. A falha observada da X1 n?o deve ser descrita como valida??o em jogo bem-sucedida, e o teste do loader n?o comprova frames gerados exibidos.
+Na tentativa real seguinte, a X1.1 **abriu e caiu depois**, com diálogo REDengine, cerca de dez segundos após iniciar. Portanto, a correção da falha de loader não resolveu toda a integração. A falha seguinte e seus limites estão abaixo.
+
+## X1.2 — ownership das APIs e duração dos contextos nativos
+
+### Segunda falha observada
+
+Relatório local `REDEngine/ReportQueue/Cyberpunk2077-20261019-130344-424-9084`, processo 424, exceção às 13:03:45. O minidump registra `c0000005`, operação de execução (`ExceptionInformation[0]=8`) em memória de dados. A pilha, reconstruída com as DLLs instaladas, passa por `libxell+0xcc61`, `libxess_fg+0x20fac4`, o proxy OptiScaler e `Present` do jogo. O dispatch da implementação XeLL tenta executar um ponteiro sem permissão de execução. Isso demonstra um contexto/dispatch inválido, **não determina por si qual operação anterior invalidou o contexto**.
+
+O log da X1.1 mostra `port_rejected: context_predates_port` e dois `context_create` com `mfg_model=false`. Logo, não há evidência de publicação do modelo, patches de shaders, rota CUDA ou pacing adicional nesta execução. A segunda falha não deve ser atribuída a uma inferência do modelo MFG que nem havia sido aplicada.
+
+Foram reexaminados os fontes do OptiScaler **na revisão instalada**, `024c4a1b79a6484a0ce4c56a8961a0fa03583203`, além da referência mais nova já registrada. Em `XeFGInputs::GameSetEnabled`, o host distingue chamadas do próprio output e chamadas do jogo pelo módulo do endereço de retorno. O gateway upstream MIT de MFG-Unlocker preserva entradas já redirecionadas pelo host; nosso adaptador inicial não preservava essa fronteira.
+
+### Correções implementadas
+
+1. **Não empilhar wrappers sobre redirecionamentos pertencentes ao OptiScaler.** O plano de hooks identifica o salto para código do host e mantém a entrada original. Em particular, o SetEnabled do output continua chegando ao host com o caller correto; não passa a parecer uma chamada do jogo. Nenhuma nova interceptação de XeLL ou segunda rotina de sleep foi adicionada.
+2. **Preservar chamadas internas do SDK.** Entradas vindas das próprias imagens Intel seguem para a implementação original, sem transformar um ciclo interno em contexto externo, reaplicar registro do pacing ou validar uma contagem interna como solicitação do usuário.
+3. **Trocar o bloqueio permanente por acompanhamento de contextos nativos vivos.** Um probe temporário criado e destruído antes do output deixa de impedir MFG por toda a sessão. A publicação global permanece bloqueada enquanto um contexto nativo observado estiver vivo, inclusive um contexto do host criado durante o adiamento. Uma destruição que falha não libera essa restrição. O log registra caller, handle, aposentadoria e motivo de adiamento.
+4. **Atualizar o estado observado por GetLastPresentStatus.** Quando SetEnabled pertence ao host e fica sem nosso wrapper, o painel usa o estado reportado pelo SDK para acompanhar enablement. Essa observação não converte contagem solicitada em frames gerados demonstrados.
+
+As fórmulas, programas, modelo, pacer e configurações de imagem não mudaram. O addon central conserva o mesmo SHA-256 da X1.1 (`8eb5b2a5…aad240`). A revisão do companion passa a `1.4.5.3`, identidade local X1.2. A 1.4.5 publicada e as árvores antigas continuam preservadas.
+
+### Regressões reproduzidas e cobertura nova
+
+| Teste | X1.1 | X1.2 / limite |
+|---|---|---|
+| Host sintético com SetEnabled redirecionado e verificação do caller | Falha: o wrapper muda o caller; SetEnabled retorna -4 | Passa; dois forwards preservam o caller, com SDK/dispositivo reais e ciclo de vida 2x–6x |
+| Probe nativo encerrado antes do output, com loader OptiScaler instalado | MFG permanece recusado por `context_predates_port` | Port admitido; swapchain MFG inicializado, resize e 24 Presents com FG desabilitado passam |
+| Probe nativo mantido vivo antes do output | Comportamento anterior conservador | Port continua recusado; resize e 24 Presents no caminho nativo passam |
+| Loader frio e InitializeASI no DllMain | Já corrigidos pela X1.1 | Permanecem aprovados |
+| Patch/restore do conjunto Intel | Já aprovado offline | Continua aprovado |
+
+Suíte final: **45 aprovados, três opcionais pulados, de 48 registrados**, comando `ctest --test-dir build/tests -C Release --output-on-failure`. Skips: identidade NVIDIA sem entradas explícitas e manifests de dois targets históricos que não compõem este pacote. Os novos testes rodam em pastas próprias e não alteram o jogo. Os Presents são de um swapchain oculto e sem geração habilitada; não demonstram pixels interpolados, scanout, FPS ou qualidade.
+
+As duas regressões offline estão confirmadas por contraste com a X1.1. **Não foi reproduzida fora do jogo a mesma exceção DEP do minidump**, e o dump não captura toda a história de criação/destruição XeLL. Portanto, o nexo exato entre o caller incorreto e aquele contexto inválido permanece uma hipótese fundamentada. A eliminação do crash no Cyberpunk e a execução real do MFG precisam ser verificadas na próxima abertura. Não há alegação de estabilidade em jogo nesta entrega.
+
+Evidências locais: `out/xemfg-second-failure/crash-images.txt`, `crash-latency-context.txt` e `crash-latency-native.txt` na árvore principal; `build/redirect-regression-old`, `build/native-probe-regression-old`, `build/tests/xemfg-checks` e `build/host-ownership-regression-results.json` nesta worktree. O pacote incorpora resultados, hashes e logs dos casos correspondentes ao companion final, sem redistribuir minidumps que possam conter dados do processo.

@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 
 namespace {
 using Handle = xefg_swapchain_handle_t;
@@ -49,10 +50,11 @@ struct Context {
 struct State {
   mfgunlock::xemfg::Status status;
   std::map<Handle, Context> contexts;
+  std::set<Handle> nativeContexts;
   std::unique_ptr<ShaderPort> shaders;
   std::unique_ptr<ModelPort> model;
   std::unique_ptr<xess_host_unlock::Unlock> unlock;
-  bool attempted{}, foreignSeen{}, rejected{};
+  bool attempted{}, deferred{}, rejected{};
   uint64_t generation{};
 };
 // Once hooks exist, callbacks, payloads and provider stay alive until exit.
@@ -81,6 +83,18 @@ bool HostAddress(const void* p) noexcept {
   return host && p && VirtualQuery(p,&m,sizeof(m))==sizeof(m)
       && m.AllocationBase==host && m.Type==MEM_IMAGE;
 }
+bool SdkAddress(const void* p) noexcept {
+  MEMORY_BASIC_INFORMATION m{};
+  return p && VirtualQuery(p,&m,sizeof(m))==sizeof(m) && m.Type==MEM_IMAGE
+      && (m.AllocationBase==fg || m.AllocationBase==ll);
+}
+std::string CallerName(const void* p) noexcept {
+  try {
+    MEMORY_BASIC_INFORMATION m{};
+    if(!p || VirtualQuery(p,&m,sizeof(m))!=sizeof(m) || m.Type!=MEM_IMAGE) return "unknown";
+    return ModulePath(static_cast<HMODULE>(m.AllocationBase)).filename().string();
+  } catch(...) { return "unknown"; }
+}
 // Respect XeLL entry redirects that belong to OptiScaler; no second sleep hook.
 bool HostRedirect(const void* entry) noexcept {
   auto* p=static_cast<const unsigned char*>(entry);
@@ -89,7 +103,7 @@ bool HostRedirect(const void* entry) noexcept {
     if (!ReadProcessMemory(GetCurrentProcess(),p,bytes,6,&n) || n!=6) return false;
     int32_t rel{};
     if (bytes[0]==0xe9) { memcpy(&rel,bytes+1,4); p+=5+rel; }
-    else if (i && bytes[0]==0xff && bytes[1]==0x25) {
+    else if (bytes[0]==0xff && bytes[1]==0x25) {
       memcpy(&rel,bytes+2,4); uintptr_t target{};
       if (!ReadProcessMemory(GetCurrentProcess(),p+6+rel,&target,8,&n) || n!=8) return false;
       p=reinterpret_cast<const unsigned char*>(target);
@@ -131,9 +145,17 @@ void Pin(HMODULE module) {
       reinterpret_cast<LPCWSTR>(module),&pinned) || pinned!=module) throw std::runtime_error("module_pin");
 }
 void Prepare(ID3D12Device* device) {
-  auto& s=Get(); if (s.attempted) return; s.attempted=true;
+  auto& s=Get(); if (s.attempted) return;
+  // Native capability probes are often created and destroyed before the real
+  // output context. Only live native contexts forbid process-wide publication.
+  // Include host contexts created during a deferred attempt in this lifetime.
+  if(!s.nativeContexts.empty()) {
+    Detail("Native XeFG 2x: waiting for earlier native contexts to retire");
+    if(!s.deferred) xess_mod::WriteLog("port_deferred","\"reason\":\"native_contexts_live\",\"contexts\":"+std::to_string(s.nativeContexts.size()));
+    s.deferred=true; return;
+  }
+  s.attempted=true; s.deferred=false;
   try {
-    if (s.foreignSeen) throw std::runtime_error("context_predates_port");
     if (Vendor(device)!=0x10de) throw std::runtime_error("first_build_targets_nvidia_only");
     if (!xess_layout::Pair(fg,ll)) throw std::runtime_error("provider_layout_rejected");
     const auto fatbin=xess_payload::Read(self,xefg_cuda::embedded::fatbin);
@@ -199,18 +221,23 @@ API(xefgSwapChainSetEnabled);
 API(xefgSwapChainSetNumInterpolatedFrames);
 API(xefgSwapChainGetLastPresentStatus);
 #undef API
-Result Create(ID3D12Device* device, Handle* output) {
+__declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   // The public entry is captured early, but SDK code/metadata is never called
   // from an OptiScaler DllMain callback. The first real client call can join
   // the worker here before a context consumes the model or count settings.
   if (InsideLoader()) return unsupported;
+  const auto caller=_ReturnAddress();
   CompleteStartup();
   std::lock_guard lock(mutex); auto& s=Get();
   if (!s.status.hooks) return original_xefgSwapChainD3D12CreateContext(device,output);
-  if (!HostAddress(_ReturnAddress())) {
-    s.foreignSeen=true;
+  // SDK self-calls retain their original forwarding/lifecycle semantics.
+  if(SdkAddress(caller)) return original_xefgSwapChainD3D12CreateContext(device,output);
+  if (!HostAddress(caller)) {
     if (s.model) return unsupported;
-    return original_xefgSwapChainD3D12CreateContext(device,output);
+    const auto r=original_xefgSwapChainD3D12CreateContext(device,output);
+    if(r==success && output && *output) s.nativeContexts.insert(*output);
+    xess_mod::WriteLog("native_context_create","\"result\":"+std::to_string(r)+",\"caller\":\""+escape(CallerName(caller))+"\",\"handle\":"+std::to_string(output&&r==success?uintptr_t(*output):0));
+    return r;
   }
   if (!device || !output) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
   Prepare(device);
@@ -220,7 +247,8 @@ Result Create(ID3D12Device* device, Handle* output) {
     s.contexts.emplace(*output,Context{device,++s.generation});
     s.status.contexts=uint32_t(s.contexts.size());
   }
-  xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false"));
+  else if(r==success && *output) s.nativeContexts.insert(*output);
+  xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false")+",\"handle\":"+std::to_string(r==success?uintptr_t(*output):0));
   return r;
 }
 template<class Init> Result Initialize(Handle handle, Init call) {
@@ -245,14 +273,17 @@ template<class Init> Result Initialize(Handle handle, Init call) {
   xess_mod::WriteLog("context_initialized","\"paced\":true,\"generation\":"+std::to_string(c.generation));
   return r;
 }
-Result InitChain(Handle h, ID3D12CommandQueue* q,const xefg_swapchain_d3d12_init_params_t* p) {
+__declspec(noinline) Result InitChain(Handle h, ID3D12CommandQueue* q,const xefg_swapchain_d3d12_init_params_t* p) {
+  if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainD3D12InitFromSwapChain(h,q,p);
   return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChain(h,q,p); });
 }
-Result InitDesc(Handle h,HWND w,const DXGI_SWAP_CHAIN_DESC1* d,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* f,
+__declspec(noinline) Result InitDesc(Handle h,HWND w,const DXGI_SWAP_CHAIN_DESC1* d,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* f,
                 ID3D12CommandQueue* q,IDXGIFactory2* factory,const xefg_swapchain_d3d12_init_params_t* p) {
+  if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainD3D12InitFromSwapChainDesc(h,w,d,f,q,factory,p);
   return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChainDesc(h,w,d,f,q,factory,p); });
 }
-Result Enable(Handle h,uint32_t enabled) {
+__declspec(noinline) Result Enable(Handle h,uint32_t enabled) {
+  if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainSetEnabled(h,enabled);
   std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
   if (it!=s.contexts.end() && enabled && !it->second.initialized) return unsupported;
   auto r=original_xefgSwapChainSetEnabled(h,enabled);
@@ -262,7 +293,8 @@ Result Enable(Handle h,uint32_t enabled) {
   }
   s.status.result=r; return r;
 }
-Result Count(Handle h,uint32_t count) {
+__declspec(noinline) Result Count(Handle h,uint32_t count) {
+  if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainSetNumInterpolatedFrames(h,count);
   std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
   if (it!=s.contexts.end() && (!count || count>5 || !it->second.initialized)) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
   const auto r=original_xefgSwapChainSetNumInterpolatedFrames(h,count);
@@ -276,13 +308,20 @@ Result LastStatus(Handle h,xefg_swapchain_present_status_t* p) {
   const auto r=original_xefgSwapChainGetLastPresentStatus(h,p);
   if (r==success && p) {
     std::lock_guard lock(mutex); auto& s=Get();
-    if (s.contexts.contains(h)) { s.status.presented=p->framesPresented; s.status.result=p->frameGenResult; }
+    if (s.contexts.contains(h)) {
+      s.status.presented=p->framesPresented; s.status.result=p->frameGenResult;
+      s.status.enabled=p->isFrameGenEnabled;
+    }
   }
   return r;
 }
-Result Destroy(Handle h) {
+__declspec(noinline) Result Destroy(Handle h) {
+  if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainDestroy(h);
   std::lock_guard lock(mutex); auto& s=Get(); const auto it=s.contexts.find(h);
   const auto r=original_xefgSwapChainDestroy(h); // SDK joins its workers first.
+  if(r==success && s.nativeContexts.erase(h)) {
+    xess_mod::WriteLog("native_context_destroy","\"handle\":"+std::to_string(uintptr_t(h))+",\"remaining\":"+std::to_string(s.nativeContexts.size()));
+  }
   if (r==success && it!=s.contexts.end()) {
     sdk_pacing::Unregister(h,it->second.generation); s.contexts.erase(it);
     s.status.contexts=uint32_t(s.contexts.size());
@@ -333,6 +372,14 @@ void Start() {
   for (const auto& h:hooks) {
     if (bootstrapCreate && h.original==reinterpret_cast<void**>(&original_xefgSwapChainD3D12CreateContext)) continue;
     void* target=reinterpret_cast<void*>(GetProcAddress(fg,h.name));
+    // OptiScaler's GameSetEnabled (among others) branches on its caller.
+    // Chaining through our wrapper turns a host output call into a game call.
+    // Keep the host's entry untouched, as with its XeLL redirects.
+    if(target && HostRedirect(target)) {
+      *h.original=target;
+      xess_mod::WriteLog("host_entry_preserved","\"api\":\""+std::string(h.name)+"\"");
+      continue;
+    }
     if (!target || MH_CreateHook(target,h.target,h.original)!=MH_OK) {
       for (void* t:targets) MH_RemoveHook(t);
       throw std::runtime_error("SDK_hook_preflight");

@@ -51,7 +51,9 @@ set(XEMFG_OFFLINE_LL "" CACHE FILEPATH "Explicit local XeLL provider to probe")
 if(XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   add_test(NAME xemfg_provider_patch_restore COMMAND xemfg_provider_probe "${XEMFG_OFFLINE_FG}" "${XEMFG_OFFLINE_LL}")
 endif()
-add_library(xemfg_host_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_host_fixture.cpp" "${CMAKE_SOURCE_DIR}/xemfg_host_fixture.rc")
+add_library(xemfg_host_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_host_fixture.cpp" "${CMAKE_SOURCE_DIR}/xemfg_host_fixture.rc"
+  vendor/third_party/minhook/src/buffer.c vendor/third_party/minhook/src/hook.c
+  vendor/third_party/minhook/src/trampoline.c vendor/third_party/minhook/src/hde/hde64.c)
 target_compile_definitions(xemfg_host_fixture PRIVATE UNICODE _UNICODE NOMINMAX)
 target_include_directories(xemfg_host_fixture PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell")
 target_link_libraries(xemfg_host_fixture PRIVATE d3d12 dxgi user32)
@@ -60,6 +62,10 @@ add_executable(xemfg_loader_smoke "${CMAKE_SOURCE_DIR}/xemfg_loader_smoke.cpp")
 target_compile_definitions(xemfg_loader_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_loader_smoke PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg")
 target_link_libraries(xemfg_loader_smoke PRIVATE "${XEMFG_SDK_ROOT}/lib/libxess_fg.lib")
+add_executable(xemfg_optiscaler_present_smoke "${CMAKE_SOURCE_DIR}/xemfg_optiscaler_present_smoke.cpp")
+target_compile_definitions(xemfg_optiscaler_present_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_optiscaler_present_smoke PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg")
+target_link_libraries(xemfg_optiscaler_present_smoke PRIVATE "${XEMFG_SDK_ROOT}/lib/libxess_fg.lib" d3d12 dxgi user32)
 set(XEMFG_OFFLINE_HOST "" CACHE FILEPATH "Explicit OptiScaler 10 loader for the cold-start regression test")
 if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
@@ -71,5 +77,17 @@ if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --mode early-lifecycle --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
     --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_runtime_smoke>
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host $<TARGET_FILE:xemfg_host_fixture>)
-  set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle PROPERTIES TIMEOUT 45)
+  add_test(NAME xemfg_host_redirect_lifecycle COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode redirect-lifecycle --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_runtime_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host $<TARGET_FILE:xemfg_host_fixture>)
+  add_test(NAME xemfg_optiscaler_present COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode optiscaler-present --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_optiscaler_present_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}")
+  add_test(NAME xemfg_native_context_publication_guard COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_startup_tests.py"
+    --mode optiscaler-live-native --directory "${CMAKE_BINARY_DIR}/xemfg-checks"
+    --plugin $<TARGET_FILE:mfgunlock_xemfg> --executable $<TARGET_FILE:xemfg_optiscaler_present_smoke>
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}")
+  set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle xemfg_host_redirect_lifecycle xemfg_optiscaler_present xemfg_native_context_publication_guard PROPERTIES TIMEOUT 45)
 endif()
