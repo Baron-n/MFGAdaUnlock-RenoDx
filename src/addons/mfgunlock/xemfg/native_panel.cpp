@@ -36,6 +36,6 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.7");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.7.1");
 }
 }

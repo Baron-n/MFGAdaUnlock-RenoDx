@@ -4,6 +4,7 @@
 #include <atomic>
 #include <memory>
 #include <mutex>
+#include "overlay_shortcut.hpp"
 
 namespace mfgunlock::xemfg::native {
 struct WindowStatus {
@@ -19,9 +20,13 @@ public:
   void Request(bool force);
   void Retire();
   WindowStatus Snapshot();
+  void OverlayKey(OverlayChord chord);
+  void OverlayNative();
+  uint32_t OverlayTaps(bool blocked,uint64_t& dropped);
 private:
   HWND hwnd{};
   std::atomic<HHOOK> hook{};
+  std::atomic<bool> rawKeyboard{};
   DWORD thread{};
   uintptr_t generation{};
   std::mutex lock;
@@ -30,6 +35,7 @@ private:
   LONG_PTR originalStyle{}, originalEx{}, appliedStyle{}, appliedEx{};
   WINDOWPLACEMENT placement{sizeof(WINDOWPLACEMENT)};
   RECT appliedRect{};
+  OverlayShortcut shortcut;
   void Apply();
 };
 }

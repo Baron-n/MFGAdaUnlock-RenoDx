@@ -187,6 +187,7 @@ void DrawControls(PanelPage page) {
   if(page==PanelPage::Diagnostics) {
     const auto bridge=Snapshot();
     const auto overlay=OverlaySnapshot();
+    const auto overlayInput=OverlayInputSnapshot();
     ui::Section("System status","Use Copy diagnostic report when reporting a problem.");
     ui::Card card("##xe_model_details");
     ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
@@ -203,13 +204,14 @@ void DrawControls(PanelPage page) {
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.7\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.7.1\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
           <<"\nsdk_deadlines_requested="<<status.sdkDeadlinesRequested<<" active="<<status.sdkDeadlinesActive
           <<"\nhud_inputs="<<status.hudInputs<<" issues="<<status.hudIssues<<" filtered_tags="<<status.hudRejected
           <<"\noverlay_created="<<overlay.created<<" destroyed="<<overlay.destroyed<<" updates="<<overlay.updates<<" failed="<<overlay.failed
+          <<"\noverlay_requests="<<overlayInput.requests<<" recovered_taps="<<overlayInput.recovered<<" dropped_taps="<<overlayInput.dropped
           <<"\nwindow="<<window<<" error="<<w.error<<" managed="<<w.managed
           <<"\nnative_reflex_disabled="<<status.nativeReflexDisabled<<" game_reflex_mode="<<status.gameReflexMode
           <<"\nsleeps="<<status.sleeps<<" markers="<<status.markers<<" mode_changes="<<status.modeUpdates<<" last_sleep_us="<<status.lastSleepUs

@@ -3,8 +3,8 @@
 9002 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/third_party/minhook/LICENSE.txt"
 9003 RCDATA "@CMAKE_CURRENT_SOURCE_DIR@/vendor/XEFG-PROGRAMS-NOTICE.txt"
 1 VERSIONINFO
- FILEVERSION 1,4,5,12
- PRODUCTVERSION 1,4,5,12
+ FILEVERSION 1,4,5,13
+ PRODUCTVERSION 1,4,5,13
  FILEOS VOS_NT_WINDOWS32
  FILETYPE VFT_DLL
 BEGIN
@@ -13,9 +13,9 @@ BEGIN
   BLOCK "040904b0"
   BEGIN
    VALUE "ProductName", "MFGAdaUnlock Native ReShade\0"
-   VALUE "FileVersion", "1.4.5.12\0"
-   VALUE "FileDescription", "XeMFG R1.7 - final-output ReShade runtime, HUD input guard and optional SDK pacing\0"
-   VALUE "ProductVersion", "1.4.5-XeMFG-R1.7\0"
+   VALUE "FileVersion", "1.4.5.13\0"
+   VALUE "FileDescription", "XeMFG R1.7.1 - final-output ReShade runtime, HUD input guard and optional SDK pacing\0"
+   VALUE "ProductVersion", "1.4.5-XeMFG-R1.7.1\0"
    VALUE "LegalCopyright", "MIT: MFGAdaUnlock contributors; Michael Robles; MinHook authors. Intel program data retains Intel terms.\0"
   END
  END

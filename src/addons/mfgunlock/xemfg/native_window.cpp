@@ -52,6 +52,24 @@ void WindowControl::Request(bool force) {
   requested=force; pending=true; error=0;
   if(!PostMessageW(hwnd,ControlMessage(),generation,0)) { error=GetLastError(); pending=false; }
 }
+void WindowControl::OverlayKey(OverlayChord chord) {
+  // Read registration; never register/redirect the game's input devices.
+  RAWINPUTDEVICE devices[64]{}; UINT count=64; bool raw{};
+  const auto n=GetRegisteredRawInputDevices(devices,&count,sizeof(RAWINPUTDEVICE));
+  if(n!=UINT(-1)) for(UINT i=0;i<n;++i)
+    if(devices[i].usUsagePage==1 && devices[i].usUsage==6
+        && (devices[i].dwFlags&RIDEV_NOLEGACY)==RIDEV_NOLEGACY) raw=true;
+  rawKeyboard=raw && chord.key!=0;
+  std::lock_guard guard(lock); shortcut.Configure(chord);
+}
+void WindowControl::OverlayNative() { std::lock_guard guard(lock); shortcut.ObservedNative(); }
+uint32_t WindowControl::OverlayTaps(bool blocked,uint64_t& dropped) {
+  const bool unfocused=IsWindowVisible(hwnd) && (IsIconic(hwnd)
+      || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(hwnd,GA_ROOT));
+  std::lock_guard guard(lock); dropped=shortcut.Dropped();
+  if(unfocused) shortcut.Cancel();
+  return shortcut.Take(blocked || retiring);
+}
 WindowStatus WindowControl::Snapshot() {
   std::lock_guard guard(lock);
   WindowStatus status{};
@@ -140,6 +158,31 @@ void WindowControl::Retire() {
 LRESULT CALLBACK WindowControl::MessageHook(int code,WPARAM w,LPARAM l) {
   if(code>=0 && w==PM_REMOVE) {
     auto* message=reinterpret_cast<MSG*>(l);
+    if(message && (message->message==WM_KEYDOWN || message->message==WM_SYSKEYDOWN
+        || message->message==WM_KEYUP || message->message==WM_SYSKEYUP || message->message==WM_INPUT)) {
+      std::shared_ptr<WindowControl> value;
+      { std::lock_guard guard(registryLock);
+        if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
+      }
+      if(value && (message->message!=WM_INPUT || value->rawKeyboard)) {
+        uint32_t key=uint32_t(message->wParam);
+        bool down=message->message==WM_KEYDOWN || message->message==WM_SYSKEYDOWN;
+        bool repeat=(uintptr_t(message->lParam)&(uintptr_t(1)<<30))!=0;
+        if(message->message==WM_INPUT) {
+          RAWINPUT raw{}; UINT bytes=sizeof(raw);
+          if(GET_RAWINPUT_CODE_WPARAM(message->wParam)!=RIM_INPUT
+              || GetRawInputData(reinterpret_cast<HRAWINPUT>(message->lParam),RID_INPUT,&raw,&bytes,sizeof(RAWINPUTHEADER))==UINT(-1)
+              || raw.header.dwType!=RIM_TYPEKEYBOARD) return CallNextHookEx(nullptr,code,w,l);
+          key=raw.data.keyboard.VKey; down=!(raw.data.keyboard.Flags&RI_KEY_BREAK); repeat=false;
+        }
+        const bool unfocused=IsWindowVisible(value->hwnd) && (IsIconic(value->hwnd)
+            || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(value->hwnd,GA_ROOT));
+        std::lock_guard guard(value->lock);
+        if(unfocused) value->shortcut.Cancel();
+        else if(!value->retiring) value->shortcut.Key(key,down,repeat);
+      }
+      // Observe only. ReShade and the game still receive the original message.
+    }
     if(message && message->message==ControlMessage()) {
       std::shared_ptr<WindowControl> value;
       { std::lock_guard guard(registryLock);

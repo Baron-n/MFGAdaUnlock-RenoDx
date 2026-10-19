@@ -9,6 +9,7 @@
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <sl_pcl.h>
+#include <reshade.hpp>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_bridge.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_controls.hpp"
@@ -17,6 +18,12 @@
 #include <stdexcept>
 #include <vector>
 using Microsoft::WRL::ComPtr;
+static bool keyTest{};
+static unsigned overlayOpens{},overlayCloses{};
+static bool OverlayChange(reshade::api::effect_runtime*,bool open,reshade::api::input_source) {
+  if(open) ++overlayOpens; else ++overlayCloses;
+  return false;
+}
 static void Check(HRESULT code,const char* where) { if(FAILED(code)) { std::cerr<<where<<" 0x"<<std::hex<<code<<std::endl; throw std::runtime_error(where); } }
 static void Require(bool value,const char* what) { if(!value) throw std::runtime_error(what); }
 struct Token : sl::FrameToken { uint32_t id{}; operator uint32_t() const override {return id;} };
@@ -31,6 +38,11 @@ int main(int argc,char** argv) {
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
+    keyTest=argc>2 && std::string(argv[2])=="--overlay-keys";
+    if(keyTest) {
+      Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
+      reshade::register_event<reshade::addon_event::reshade_open_overlay>(&OverlayChange);
+    }
     auto factoryCreate=Import<HRESULT(WINAPI*)(REFIID,void**)>(reshade,"CreateDXGIFactory1");
     ComPtr<IDXGIFactory4> factory; Check(factoryCreate(IID_PPV_ARGS(&factory)),"factory");
     ComPtr<ID3D12Device> device;
@@ -52,6 +64,7 @@ int main(int argc,char** argv) {
     auto timingEnable=Import<void(*)(bool)>(addon,"MFGAXeTimingEnable");
     auto timingReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeTimingReport");
     auto overlayStatus=Import<bool(*)(mfgunlock::xemfg::native::OverlayStatus*,uint32_t)>(addon,"MFGAXeOverlayStatus");
+    auto overlayInput=Import<bool(*)(mfgunlock::xemfg::native::OverlayInputStatus*,uint32_t)>(addon,"MFGAXeOverlayInputStatus");
     timingEnable(true);
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
@@ -164,6 +177,13 @@ int main(int argc,char** argv) {
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(keyTest && (frame==3 || frame==7 || frame==11 || frame==15)) {
+        PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1);
+        // The second pair is a complete tap between two output updates.
+        if(frame>=11) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      }
+      if(keyTest && (frame==4 || frame==8)) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      if(keyTest) { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
       if(frame==36 || frame==42) {
         settings.sdkDeadlines=frame==36; Require(configure(&settings,sizeof(settings)),"deadline comparison request");
       }
@@ -238,6 +258,12 @@ int main(int argc,char** argv) {
     Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
     Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
     Require(overlayStatus(&os,sizeof(os)) && os.updates>=48 && os.failed==0,"ReShade did not render final outputs");
+    if(keyTest) {
+      std::cout<<"Overlay key transitions: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
+      Require(overlayOpens==2 && overlayCloses==2,"Home tap lost between output updates");
+      mfgunlock::xemfg::native::OverlayInputStatus input;
+      Require(overlayInput(&input,sizeof(input)) && input.recovered==2 && input.dropped==0,"native shortcut was replayed or recovery count is not exact");
+    }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
     Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
@@ -258,6 +284,17 @@ int main(int argc,char** argv) {
     sl::DLSSGOptions off; off.mode=sl::DLSSGMode::eOff; options(viewport,off);
     Check(chain->Present(0,0),"disabled Present");
     Check(chain->ResizeBuffers(3,800,450,DXGI_FORMAT_UNKNOWN,0),"ResizeBuffers");
+    if(keyTest) {
+      for(unsigned i=0;i<2;++i) {
+        // Configure the rebound runtime before sending a new completed tap.
+        Check(chain->Present(0,0),"resized runtime warmup");
+        PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1); PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+        MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+        Check(chain->Present(0,0),"resized runtime Home tap"); wait();
+      }
+      Require(overlayOpens==3 && overlayCloses==3,"Home recovery did not survive resize or FG-off output");
+      std::cout<<"Overlay keys after resize/FG-off: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
+    }
     chain.Reset();
     Require(overlayStatus(&os,sizeof(os)) && os.created>=2 && os.created==os.destroyed && os.failed==0,"manual ReShade runtime resize/teardown leaked");
     sl::ViewportHandle replacementViewport{7};

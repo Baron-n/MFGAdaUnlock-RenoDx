@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.7
+MFGAdaUnlock - Native ReShade XeMFG R1.7.1
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. R1.7 full suite: 63 passed,
+bypass, FG disable, resize and context destruction. R1.7.1 full suite: 64 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -147,3 +147,16 @@ experimental A/B option; no displayed-cadence gain is claimed yet. See
 pacing-overlay-hud.md for sources, tests, limitations and the validation protocol.
 Native control ABI is version 3. The current package includes R1.6 rollback;
 historical R1.6 engineering reports are under history/r1.6/.
+
+R1.7.1 recovers complete overlay-shortcut taps that occur between output
+updates. It observes this game's existing window message thread and uses
+ReShade's configured binding and public open_overlay API. Native requests
+consume their own taps, avoiding double toggle. Text/widget capture, disabled
+bindings, focus loss, resize and bounded-queue overflow are handled. No global
+hotkey or input-device registration is added. See overlay-input-fix.md.
+Real-SDK tests now require normal and short Home taps, including FG-off/resize.
+The R1.7 package and its user-reported Home failure remain a separate baseline.
+Gameplay Home/focus confirmation remains pending; this is not a pacing or
+HUD-quality change. Callback GUI bookkeeping can add CPU work and needs the
+same controlled benchmark before a performance claim. R1.7 and R1.6 rollbacks
+are included; retain the exact installation backup for the preceding setup.
