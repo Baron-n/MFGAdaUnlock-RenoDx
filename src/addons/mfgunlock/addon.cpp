@@ -98,6 +98,7 @@
 
 #include "binary_patch.hpp"
 #include "backend_selection.hpp"
+#include "panel_ui.hpp"
 #include "xemfg/backend_api.hpp"
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 #include "xemfg/native_bridge.hpp"
@@ -5219,13 +5220,7 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
 }
 
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
-#if defined(MFGUNLOCK_NATIVE_XEMFG)
-  const auto selected=mfgunlock::backend::Read();
-  int backend_index=selected==mfgunlock::backend::Kind::XeMfg?1:0;
-  if(ImGui::Combo("Frame generation backend",&backend_index,"DLSS-G\0XeMFG\0"))
-    mfgunlock::backend::Select(backend_index?mfgunlock::backend::Kind::XeMfg:mfgunlock::backend::Kind::DlssG);
-  if(selected!=mfgunlock::backend::active) ImGui::TextUnformatted("Restart the game to apply the backend change.");
-#endif
+  mfgunlock::ui::Theme panel_theme;
   if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
     ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG (1.4.5 base)");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
@@ -5487,131 +5482,23 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
   }
 
-  ImGui::TextUnformatted("MFG Unlock");
-  ImGui::Separator();
-  if (validation_stage == mfgunlock::validation::Stage::kRuntimeError) {
-    ImGui::TextColored(kUiError, "Compatibility issue");
-  } else if (!enabled) {
-    ImGui::TextColored(kUiMuted, "Inactive this session");
-  } else if (dynamic_enabled && dynamic_hard_unavailable) {
-    ImGui::TextColored(kUiWarning,
-                       "Dynamic MFG unavailable - fixed fallback remains active");
-  } else if (validation_stage ==
-             mfgunlock::validation::Stage::kProviderOutputConfirmed) {
-    ImGui::TextColored(kUiPositive, "Working correctly");
-  } else if (validation_stage ==
-             mfgunlock::validation::Stage::kDriverMultiplierActive) {
-    ImGui::TextColored(kUiPositive, "%ux live reported by driver",
-                       driver_multiplier);
-  } else if (validation_stage ==
-             mfgunlock::validation::Stage::kRequestAccepted) {
-    ImGui::TextColored(kUiPositive, "%s", validation_text.c_str());
-  } else if (validation_stage ==
-             mfgunlock::validation::Stage::kRequestRejected) {
-    ImGui::TextColored(kUiWarning,
-                       "Override rejected - game fallback remains active");
-  } else if (validation_stage ==
-             mfgunlock::validation::Stage::kNativeRequestObserved) {
-    ImGui::TextColored(kUiWarning,
-                       "Game request observed - waiting for runtime result");
-  } else if (provider_ready) {
-    ImGui::TextColored(kUiWarning, "Ready - waiting for game request");
-  } else {
-    ImGui::TextColored(kUiWarning, "Waiting for DLSS Frame Generation");
-  }
-
-  if (ImGui::BeginTable("##mfg_overview", 2,
-                        ImGuiTableFlags_SizingStretchProp |
-                            ImGuiTableFlags_RowBg)) {
-    ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthStretch, 0.45f);
-    ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.55f);
-    const bool dynamic_applied =
-        mfgunlock::framecount::g_dynamic_applied.load(
-            std::memory_order_relaxed);
-    const std::string multiplier_text =
-        dynamic_applied
-            ? DynamicMultiplierText(nvapi_status, dynamic_max_generated)
-            : (effective_seen ? std::to_string(effective_multiplier) + "x"
-                              : (game_request_seen
-                                     ? std::to_string(game_multiplier) + "x (game)"
-                                     : "Not observed"));
-    const std::string sync_text =
-        !sleep_status_available
-            ? "Not reported by NVAPI"
-            : (driver_vsync_active && gsync_active
-                   ? "Driver VSync + G-SYNC active"
-                   : (driver_vsync_active
-                          ? "Driver VSync active"
-                          : (gsync_active ? "G-SYNC active; driver VSync off"
-                                          : "Driver VSync/G-SYNC inactive")));
-    StatusRow("MFG", multiplier_text.c_str(),
-              mfg_live || mfg_request_accepted
-                  ? kUiPositive
-                  : (runtime_error || request_rejected ? kUiWarning
-                                                       : kUiMuted));
-    StatusRow("Renderer", RenderApiName(render_api),
-              render_api == DetectedRenderApi::kUnknown ? kUiMuted
-                                                        : kUiPositive);
-    StatusRow("DLSS-G", dlssg_text.c_str(),
-              dlssg_seen ? kUiPositive : kUiMuted);
-    StatusRow("Streamline", streamline_text.c_str(),
-              streamline_seen ? kUiPositive : kUiMuted);
-    const char* dynamic_status =
-        dynamic_game_blocked
-            ? "Blocked for this game"
-            : (dynamic_available
-            ? (mfgunlock::framecount::g_dynamic_applied.load(
-                   std::memory_order_relaxed)
-                   ? "Active"
-                   : "Available")
-            : (dynamic_hard_unavailable ? "Unavailable" : "Checking"));
-    StatusRow("Dynamic MFG", dynamic_status,
-              dynamic_available
-                  ? kUiPositive
-                  : (dynamic_hard_unavailable ? kUiError : kUiWarning));
-    const auto overview_source_cap =
-        mfgunlock::framecount::internal::ResolveUserSourceCapState();
-    if (overview_source_cap.configured_fps != 0) {
-      const std::string cap_overview =
-          std::to_string(overview_source_cap.configured_fps) +
-          " final/output FPS; " +
-          UserSourceCapStatusText(overview_source_cap.status);
-      StatusRow("Output FPS cap", cap_overview.c_str(),
-                UserSourceCapColor(overview_source_cap.status));
-    }
-    StatusRow("Display sync", sync_text.c_str(),
-              driver_vsync_active ? kUiWarning : kUiMuted);
-    StatusRow("HDR", hdr_seen ? (hdr_active ? "Detected" : "Off")
-                              : "Not observed",
-              hdr_active ? kUiPositive : kUiMuted);
-    ImGui::EndTable();
-  }
-
+  const bool dynamic_applied=mfgunlock::framecount::g_dynamic_applied.load();
+  const std::string multiplier_text=dynamic_applied?(sleep_status_available && driver_multiplier>=2?std::to_string(driver_multiplier)+"x":"Auto"):
+      effective_seen?std::to_string(effective_multiplier)+"x":game_request_seen?std::to_string(game_multiplier)+"x":"Waiting";
+  const char* player_state=runtime_error?"Compatibility issue":!enabled?"Disabled this session":mfg_confirmed?"Generating frames":
+      mfg_live?"Driver reports MFG active":mfg_request_accepted?"Multiplier requested":provider_ready?"Ready - enable FG in the game":"Waiting for frame generation";
+  mfgunlock::ui::Hero(multiplier_text.c_str(),"DLSS-G",RenderApiName(render_api),player_state,mfg_live);
+  if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
+  if(sleep_status_available && (driver_vsync_active || gsync_active))
+    mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");
   if (restart_pending) {
     ImGui::Spacing();
     ImGui::TextColored(kUiWarning, "Restart required");
     ImGui::TextWrapped(
         "One or more saved changes will take effect after restarting the game.");
   }
-  if (dynamic_game_blocked) {
-    ImGui::TextColored(
-        kUiWarning,
-        "Dynamic MFG is disabled for Star Wars Outlaws compatibility.");
-    ImGui::TextWrapped(
-        "Fixed and game-controlled MFG remain available. The saved Dynamic "
-        "preference is preserved for other games.");
-  } else if (dynamic_hard_unavailable) {
-    ImGui::TextColored(
-        kUiWarning,
-        "Dynamic MFG requires DLSS-G 310.9.1/310.9.16 + Streamline 2.14.1/2.14.16.");
-    ImGui::TextDisabled("Detected: DLSS-G %s | Streamline %s",
-                        dlssg_text.c_str(), streamline_text.c_str());
-    HelpMarker(
-        "Dynamic MFG additionally requires D3D12 and NVIDIA driver 595.41 or newer. The fixed/game-controlled MFG path remains available when Dynamic cannot activate.");
-  } else if (!dynamic_available) {
-    ImGui::TextDisabled(
-        "Dynamic MFG requirements are checked after the game loads DLSS Frame Generation.");
-  }
+  if(dynamic_enabled && dynamic_hard_unavailable)
+    mfgunlock::ui::Notice("Dynamic MFG is unavailable for this game or runtime. Fixed multipliers remain available.");
   if (mfgunlock::framecount::g_dynamic_change_pending.load(
           std::memory_order_acquire) ||
       mfgunlock::framecount::g_quality_mode_change_pending.load(
@@ -5621,28 +5508,31 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
         "Toggle Frame Generation off and on in the game to apply the latest runtime change.");
   }
 
-  enum class UiPage { General, DlssInfo, Latency, Support };
-  static UiPage page = UiPage::General;
-  if (ImGui::BeginTabBar("##mfg_unlock_pages")) {
-    if (ImGui::BeginTabItem("General")) {
-      page = UiPage::General;
-      ImGui::EndTabItem();
+  enum class UiPage { General, Quality, DlssInfo, Latency, Support };
+  static UiPage page=UiPage::General;
+  static bool show_runtime_info=false;
+  if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
+    int selected=page==UiPage::General?0:page==UiPage::Quality?1:page==UiPage::Latency?2:3;
+    ImGui::SetNextItemWidth(-1);
+    if(ImGui::Combo("##dlssg_page",&selected,"General\0Quality\0Latency\0Diagnostics\0"))
+      page=selected==0?UiPage::General:selected==1?UiPage::Quality:selected==2?UiPage::Latency:UiPage::Support;
+    if(selected==3) {
+      if(ImGui::RadioButton("Status",!show_runtime_info)) show_runtime_info=false;
+      ImGui::SameLine(); if(ImGui::RadioButton("Runtime information",show_runtime_info)) show_runtime_info=true;
+      page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
     }
-    if (ImGui::BeginTabItem("DLSS Info")) {
-      page = UiPage::DlssInfo;
-      ImGui::EndTabItem();
-    }
-    if (ImGui::BeginTabItem("Latency")) {
-      page = UiPage::Latency;
-      ImGui::EndTabItem();
-    }
-    if (ImGui::BeginTabItem("Support")) {
-      page = UiPage::Support;
+  } else if(ImGui::BeginTabBar("##mfg_unlock_pages")) {
+    if(ImGui::BeginTabItem("General")) { page=UiPage::General; ImGui::EndTabItem(); }
+    if(ImGui::BeginTabItem("Quality")) { page=UiPage::Quality; ImGui::EndTabItem(); }
+    if(ImGui::BeginTabItem("Latency")) { page=UiPage::Latency; ImGui::EndTabItem(); }
+    if(ImGui::BeginTabItem("Diagnostics")) {
+      if(ImGui::RadioButton("Status",!show_runtime_info)) show_runtime_info=false;
+      ImGui::SameLine(); if(ImGui::RadioButton("Runtime information",show_runtime_info)) show_runtime_info=true;
+      page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();
   }
-
   if (page == UiPage::DlssInfo) {
     g_vram_ui_heartbeat_ms.store(GetTickCount64(),
                                  std::memory_order_release);
@@ -5819,8 +5709,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   if (page == UiPage::General) {
     ImGui::Spacing();
-    ImGui::TextDisabled("FRAME GENERATION");
-    ImGui::Separator();
+    mfgunlock::ui::Section("Frame generation","Enable Frame Generation in the game, then choose how many frames to generate.");
+    mfgunlock::ui::Card generation_card("##dlssg_general_card");
+    mfgunlock::ui::BackendSelector();
     if (ImGui::BeginTable("##frame_generation_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
@@ -5983,13 +5874,13 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   if (page == UiPage::Latency) {
     ImGui::Spacing();
-    ImGui::TextDisabled("REFLEX / PACING LAB");
-    ImGui::Separator();
-    DrawReflexPacingLabControl();
+    mfgunlock::ui::Section("Responsiveness","NVIDIA Reflex controls the timing of real frames. Generated FPS does not replace a healthy base frame rate.");
+    if(ImGui::CollapsingHeader("Advanced pacing (testing)")) DrawReflexPacingLabControl();
     ImGui::Spacing();
     ImGui::TextDisabled("LATENCY GUARD");
     ImGui::Separator();
     DrawLatencyGuardControl();
+    if(ImGui::CollapsingHeader("Latency details")) {
     const auto latency_guard_mode =
         static_cast<mfgunlock::pacing::LatencyGuardMode>(
             mfgunlock::framecount::g_latency_guard_mode.load(
@@ -6347,10 +6238,10 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
   }
 
-  if (page == UiPage::General) {
-    ImGui::Spacing();
-    ImGui::TextDisabled("IMAGE QUALITY");
-    ImGui::Separator();
+  } // Latency details
+  if (page == UiPage::Quality) {
+    mfgunlock::ui::Section("Image quality","Choose a stable quality profile. Changes marked for restart are saved for the next launch.");
+    mfgunlock::ui::Card quality_card("##dlssg_quality_card");
     if (ImGui::BeginTable("##image_quality_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
@@ -6395,7 +6286,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::TableNextColumn();
     SettingLabel(
         "Adaptive Quality Suite",
-        "Unified quality profile for silhouettes, warping and inpaint.",
+        "Coordinates the existing improvements for edges and fine detail.",
         "Coordinates silhouette confidence, motion-direction scatter coverage, warp validation, candidate arbitration and inpaint decisions as one quality path. Standalone legacy experiments remain saved but do not stack on top of it. Exact kernel/provider validation is mandatory and unavailable components fall back independently. Requires a full game restart.",
         "Recommended", kUiPositive);
     ImGui::TableNextColumn();
@@ -6414,19 +6305,19 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
     if (adaptive_quality) {
       constexpr const char* kAdaptiveProfiles[] = {
-          "Stable V1 (Compatibility)",
-          "Flicker-Reduced V2",
-          "Luminance + Directional V3 (Recommended)"};
+          "Stable (compatibility)",
+          "Smooth transitions",
+          "Balanced (recommended)"};
       int adaptive_profile = static_cast<int>(
           mfgunlock::adaptivequality::NormalizeProfile(
               g_configured_adaptive_quality_profile.load(
                   std::memory_order_relaxed))) - 1;
       const char* profile_summary =
           adaptive_profile == 2
-              ? "Exposure-relative color confidence and motion-oriented edges."
+              ? "Balanced handling of moving edges and lighting differences."
               : adaptive_profile == 1
                     ? "Smoother confidence transitions for fine detail and silhouettes."
-                    : "Released 1.1.5 behavior for compatibility.";
+                    : "Original compatibility profile.";
       ImGui::TableNextRow();
       ImGui::TableNextColumn();
       SettingLabel(
@@ -6454,13 +6345,13 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     }
     ImGui::EndTable();
   }
-  if (page == UiPage::General &&
+  if (page == UiPage::Quality &&
       g_configured_adaptive_quality.load(std::memory_order_relaxed)) {
     ImGui::TextDisabled(
         "Adaptive Quality manages geometry, boundary handling, warp validation and inpaint as one profile.");
   }
 
-  if (page == UiPage::General && ImGui::CollapsingHeader("Advanced")) {
+  if (page == UiPage::Support && ImGui::CollapsingHeader("Advanced compatibility controls")) {
     constexpr const char* kRuntimeModes[] = {
         "Game default", "Prefer local runtime - disable OTA",
         "Force NVIDIA OTA runtime"};
@@ -8056,7 +7947,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "Native ReShade XeMFG R1.2 - runtime controls and status; independent MIT Streamline D3D12 bridge; official DLSS-G 1.4.5 base";
+    "Native ReShade XeMFG R1.3 - player control center and concurrent latency markers; official DLSS-G 1.4.5 base";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

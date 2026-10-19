@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.2
+MFGAdaUnlock - Native ReShade XeMFG R1.3
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -23,6 +23,9 @@ ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27
 XeLL: libxell.dll 1.3.0.5 or validated 1.3.2.10 (manifest lists identities).
 
 In ReShade's MFG Unlock panel:
+- General, Quality, Latency and Diagnostics are shared across the two backends.
+  Technical codes/counters are on Diagnostics; common controls have short
+  explanations. Narrow windows use a page selector and compact summary.
 - Select DLSS-G or XeMFG. Restart the game after changing the backend.
 - XeMFG multiplier is 2x-6x. Enable frame generation in the game's menu.
 - The panel reports the effective FG state, model port, CUDA compute capability,
@@ -75,6 +78,15 @@ output rejection, live flip requests and window apply/restore. A separate
 Win32 test covers cross-thread requests, reentrant resize/retirement, hidden
 window visibility and foreign ownership. R1.1 gameplay approval does not by
 itself validate the new window controls in every game.
+
+R1.3 redesigns the player-facing panels and corrects marker locking in the
+native latency bridge. Late markers from another frame/thread can arrive
+while XeLL sleeps, and identical sleep settings are no longer sent every
+frame. Context ownership and reset epochs protect outstanding sleep calls.
+These are tested code changes, not a measured input-to-photon improvement.
+The source comparison and remaining differences versus dashdogy/OptiScaler
+are in interface-and-latency.md. The package includes synthetic-status PNG
+renders of the actual XeMFG widgets; they are layout evidence only.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"

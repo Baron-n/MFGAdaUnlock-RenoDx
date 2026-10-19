@@ -23,15 +23,6 @@ bool SelectViewport(uint32_t v) {
   s.viewport.compare_exchange_strong(expected,v);
   return s.viewport.load()==v;
 }
-Frame* FindFrame(Output& o,uint32_t id) {
-  if(!id) return nullptr;
-  if(!o.frames.contains(id)) {
-    // Reject a far future frame without silently evicting a live older token.
-    if(o.frames.size()>=16) return nullptr;
-    o.frames[id].id=id;
-  }
-  return &o.frames[id];
-}
 bool Finite(float value) { return std::isfinite(value) && std::abs(value)<1.e30f; }
 bool Constants(const sl::Constants& c,Output& o,Frame& frame) {
   if(c.structType!=sl::Constants::s_structType || c.structVersion<1 || c.structVersion>2) return false;
@@ -171,45 +162,15 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
 sl::Result SleepHook(const sl::FrameToken& f) {
   auto o=Active(); if(!o) return reflexSleep(f);
   State().inputTick=GetTickCount64();
-  std::lock_guard lock(o->io); const auto id=FrameId(uint32_t(f));
-  auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
-  if(frame->sleeping) return sl::Result::eOk;
-  xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=1; sleep.minimumIntervalUs=State().limitUs;
-  auto& a=State().api;
-  if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS || a.xellSleep(o->ll,id)!=XELL_RESULT_SUCCESS)
-    return sl::Result::eErrorReflexAPI;
-  frame->sleeping=true;
-  ++State().latencySleeps; State().outputTick=GetTickCount64();
-  return sl::Result::eOk;
+  return SleepSourceFrame(o,FrameId(uint32_t(f)));
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   const auto id=FrameId(uint32_t(f)); auto& s=State(); const auto value=uint32_t(marker);
   if(marker==sl::PCLMarker::eRenderSubmitStart) s.recording=id;
   if(marker==sl::PCLMarker::ePresentStart) s.presenting=id;
   if(auto o=Active()) {
-    std::lock_guard lock(o->io);
-    if(auto* frame=FindFrame(*o,id)) {
-      uint32_t mapped=value;
-      if(marker==sl::PCLMarker::eControllerInputSample) mapped=XELL_INPUT_SAMPLE;
-      if(mapped<=6) {
-        if(!(frame->markers&(1u<<mapped))) {
-          const auto r=s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(mapped));
-          if(r!=XELL_RESULT_SUCCESS) frame->failed=true;
-          else {
-            ++s.latencyMarkers;
-            frame->markers|=1u<<mapped;
-            if(mapped==XELL_RENDERSUBMIT_END && id<=o->last) {
-              // XeLL explicitly allows RenderSubmit and Present to overlap.
-              // Keep the real timestamp; do not fabricate an early END.
-              auto& state=State(); std::lock_guard guard(state.lock);
-              if(++state.status.lateSubmitEnds<=4)
-                xess_mod::WriteLog("native_late_submit_end","\"id\":"+std::to_string(id)
-                    +",\"markers\":"+std::to_string(frame->markers));
-            }
-          }
-        }
-      }
-    }
+    const auto mapped=marker==sl::PCLMarker::eControllerInputSample?uint32_t(XELL_INPUT_SAMPLE):value;
+    ForwardSourceMarker(o,id,mapped);
   }
 }
 sl::Result MarkerHook(sl::PCLMarker marker,const sl::FrameToken& f) {

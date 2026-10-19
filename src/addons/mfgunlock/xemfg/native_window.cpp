@@ -21,7 +21,7 @@ bool SameRect(const RECT& a,const RECT& b) {
 }
 std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
   DWORD pid{}; const DWORD tid=GetWindowThreadProcessId(hwnd,&pid);
-  if(!tid || pid!=GetCurrentProcessId() || !ControlMessage()) return {};
+  if(!tid || pid!=GetCurrentProcessId() || !ControlMessage()) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return {}; }
   auto value=std::shared_ptr<WindowControl>(new WindowControl);
   value->hwnd=hwnd; value->thread=tid; value->generation=nextGeneration++;
   HMODULE module{};
@@ -31,11 +31,14 @@ std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
     std::lock_guard guard(registryLock);
     // Never replace a still-owned/restoring generation of the same HWND.
     if(auto it=windows.find(hwnd); it!=windows.end()) {
-      if(GetPropW(hwnd,property)==it->second.get()) return {};
+      if(GetPropW(hwnd,property)==it->second.get()) { SetLastError(ERROR_ALREADY_EXISTS); return {}; }
       if(it->second->hook) UnhookWindowsHookEx(it->second->hook);
       windows.erase(it); // The old HWND was destroyed; its property is gone.
     }
-    value->hook=SetWindowsHookExW(WH_GETMESSAGE,&MessageHook,module,tid);
+    // This thread belongs to our own process (validated above). A local hook
+    // needs no DLL-name lookup/injection. Keep the explicit module pin for
+    // lifetime, but do not ask User32 to resolve the addon's custom extension.
+    value->hook=SetWindowsHookExW(WH_GETMESSAGE,&MessageHook,nullptr,tid);
     if(!value->hook) return {};
     if(!SetPropW(hwnd,property,value.get())) { UnhookWindowsHookEx(value->hook); return {}; }
     windows.emplace(hwnd,value);

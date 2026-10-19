@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -73,6 +73,28 @@ target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
 add_test(NAME xemfg_window_controls COMMAND xemfg_window_tests)
 set_tests_properties(xemfg_window_controls PROPERTIES TIMEOUT 20)
+add_executable(xemfg_latency_tests "${CMAKE_SOURCE_DIR}/xemfg_latency_tests.cpp" native_latency.cpp)
+target_compile_definitions(xemfg_latency_tests PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_latency_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
+  "${RENODX_SOURCE_DIR}/external/Streamline/include")
+target_link_libraries(xemfg_latency_tests PRIVATE d3d12 dxgi)
+add_test(NAME xemfg_latency_translation COMMAND xemfg_latency_tests)
+set_tests_properties(xemfg_latency_translation PROPERTIES TIMEOUT 20)
+add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp
+  "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui.cpp"
+  "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_draw.cpp"
+  "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_tables.cpp"
+  "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_widgets.cpp")
+target_compile_definitions(xemfg_panel_preview PRIVATE NOMINMAX UNICODE _UNICODE MFGUNLOCK_NATIVE_XEMFG MFGUNLOCK_UI_PREVIEW)
+target_include_directories(xemfg_panel_preview PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
+  "${RENODX_SOURCE_DIR}/external/Streamline/include" "${RENODX_SOURCE_DIR}/external/reshade")
+target_link_libraries(xemfg_panel_preview PRIVATE d3d12 dxgi user32 ole32 windowscodecs)
+foreach(page RANGE 0 3)
+  add_test(NAME xemfg_panel_page_${page} COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/page-${page}.png" ${page} 800)
+  set_tests_properties(xemfg_panel_page_${page} PROPERTIES RUN_SERIAL TRUE)
+endforeach()
+add_test(NAME xemfg_panel_large_font COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/large-font.png" 0 460 22)
+set_tests_properties(xemfg_panel_large_font PROPERTIES RUN_SERIAL TRUE)
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)

@@ -14,7 +14,7 @@ class Swapchain final : public IDXGISwapChain4 {
     owner->width=desc.Width; owner->height=desc.Height;
     owner->compatible=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM
         || desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM;
-    owner->frames.clear(); owner->last=0; owner->enabled=false;
+    ++owner->epoch; owner->frames.clear(); owner->last=0; owner->enabled=false;
     State().api.xefgSwapChainSetEnabled(owner->fg,0);
   }
 public:
@@ -45,7 +45,7 @@ public:
   HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return chain->GetDevice(a,b); }
   HRESULT STDMETHODCALLTYPE Present(UINT sync,UINT flags) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present(sync,flags);
-    std::lock_guard lock(owner->io);
+    std::lock_guard lock(owner->presents);
     BeforePresent(owner); auto hr=chain->Present(sync,flags); AfterPresent(owner); return hr;
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
@@ -78,7 +78,7 @@ public:
   HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return chain->GetCoreWindow(a,b); }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present1(sync,flags,params);
-    std::lock_guard lock(owner->io);
+    std::lock_guard lock(owner->presents);
     BeforePresent(owner); auto hr=chain->Present1(sync,flags,params); AfterPresent(owner); return hr;
   }
   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }

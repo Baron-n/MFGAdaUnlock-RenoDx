@@ -74,7 +74,22 @@ int main(int argc,char** argv) {
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
     settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
-    controlStatus(&cs,sizeof(cs)); Require(cs.window.borderless && cs.window.coversMonitor,"overlay borderless not applied");
+    // The owner-thread controller is asynchronous; SDK/ReShade startup may
+    // still post window notifications after CreateSwapChain returns.
+    const auto windowDeadline=GetTickCount64()+2000;
+    do {
+      MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+      controlStatus(&cs,sizeof(cs));
+      if(cs.window.borderless && cs.window.coversMonitor && !cs.window.pending) break;
+      Sleep(2);
+    } while(GetTickCount64()<windowDeadline);
+    if(!cs.window.borderless || !cs.window.coversMonitor) {
+      RECT rect{}; GetWindowRect(hwnd,&rect);
+      std::cerr<<"borderless available="<<cs.window.available<<" pending="<<cs.window.pending<<" managed="<<cs.window.managed
+          <<" error="<<cs.window.error<<" borders="<<cs.window.borderless<<" monitor="<<cs.window.coversMonitor
+          <<" rect="<<rect.left<<','<<rect.top<<','<<rect.right<<','<<rect.bottom<<std::endl;
+    }
+    Require(cs.window.borderless && cs.window.coversMonitor,"overlay borderless not applied");
     Check(chain->SetFullscreenState(TRUE,nullptr),"exclusive request redirected to borderless");
     settings.forceBorderless=false; Require(configure(&settings,sizeof(settings)),"window restore request");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
@@ -189,6 +204,7 @@ int main(int argc,char** argv) {
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
     Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
         "observed latency route/counters missing");
+    Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
     settings.flipMetering=false; Require(configure(&settings,sizeof(settings)),"flip toggle off");
     controlStatus(&cs,sizeof(cs)); Require(!cs.flipRequested,"flip request did not reach pacer");
     settings.flipMetering=true; Require(configure(&settings,sizeof(settings)),"flip toggle on");

@@ -6,7 +6,8 @@
 #include "../backend_selection.hpp"
 #include "vendor/cuda/cuda_route.h"
 #include "vendor/sdk_pacing.h"
-#include <deps/imgui/imgui.h>
+#include "../panel_ui.hpp"
+#include <sstream>
 
 namespace mfgunlock::xemfg::native {
 namespace {
@@ -58,6 +59,7 @@ ControlStatus ControlsSnapshot() {
   if(!result.modelUpdating) { result.modelPort=model.model!=0; result.modelInitialized=model.initialized!=0; }
   auto& s=State(); const auto now=GetTickCount64();
   result.sleeps=s.latencySleeps; result.markers=s.latencyMarkers;
+  result.modeUpdates=s.latencyModeUpdates; result.lastSleepUs=s.lastSleepUs;
   result.reflexObserved=s.inputTick && now-s.inputTick.load()<2000;
   result.xellObserved=s.outputTick && now-s.outputTick.load()<2000;
   result.nativeReflexDisabled=s.reflexOff; result.gameReflexMode=s.gameReflexMode;
@@ -69,6 +71,7 @@ ControlStatus ControlsSnapshot() {
   strncpy_s(result.cudaReason,cuda.reason.c_str(),_TRUNCATE);
   auto output=Active();
   if(output && output->window) result.window=output->window->Snapshot();
+  else if(output) result.window.error=output->windowBindError;
   const auto flip=sdk_pacing::Snapshot(output?output->fg:nullptr);
   result.flipAvailable=flip.available; result.flipInstalled=flip.installed;
   result.flipRegistered=flip.registered; result.flipQueue=flip.queue; result.flipBusy=flip.busy;
@@ -77,47 +80,82 @@ ControlStatus ControlsSnapshot() {
   result.flipOutputs=flip.outputs; result.flipFeedback=flip.feedback; result.flipResult=flip.status; result.flipCalls=flip.calls;
   return result;
 }
-void DrawControls() {
+void DrawControls(PanelPage page) {
   const auto status=ControlsSnapshot(); auto value=status.settings;
-  ImGui::Separator();
-  ImGui::TextUnformatted("Model and presentation");
-  const char* model=status.modelUpdating || status.cudaUpdating?"updating":!status.modelInitialized?"waiting for initialized output":!status.modelPort?"Native XeFG (model port unavailable)":
-      status.cudaState==1 && status.cudaLaunches?"MFG CUDA-port / Tensor Cores":
-      status.cudaState==1?"MFG port / CUDA ready (no launches yet)":"MFG port / DXIL";
-  ImGui::Text("XeFG model: %s",model);
-  ImGui::Text("CUDA: %s | Compute %d.%d | Layers: %u",status.cudaUpdating?"updating":status.cudaState==1?"ready":
-      status.cudaState==2?"unavailable":status.cudaState==3?"disabled":"waiting",status.cudaMajor,status.cudaMinor,status.cudaLayers);
-  ImGui::Text("Tensor launches: %llu | Dispatch fallbacks: %llu",status.cudaLaunches,status.cudaFallbacks);
-  if(status.cudaReason[0]) ImGui::TextWrapped("CUDA detail: %s",status.cudaReason);
-  if(ImGui::Checkbox("Driver flip metering",&value.flipMetering)) ConfigureControls(value);
-  const char* flip=status.flipBusy?"updating":!status.flipAvailable?"unavailable (SDK pacing)":
-      !status.flipRegistered || !status.flipQueue?"waiting for presentation queue":
-      status.flipRefused?"driver refused (SDK pacing)":status.flipMetered?"accepted by driver":
-      status.flipConfigured?"configured; independent flip unavailable":
-      !status.flipEnabled?"off":!Snapshot().enabled?"waiting for frame generation":"waiting for cadence / SDK pacing";
-  ImGui::Text("Flip metering: %s",flip);
-  if(status.flipRequested!=status.flipEnabled) ImGui::TextUnformatted("Flip request pending until next generated batch");
-  if(status.flipCalls) ImGui::Text("Driver result: %d | Feedback: 0x%X | Batch: %u",status.flipResult,status.flipFeedback,status.flipOutputs);
-  if(ImGui::Checkbox("Force Borderless",&value.forceBorderless)) ConfigureControls(value);
+  const bool metering=status.flipMetered && !status.flipBusy;
+  const char* flip=status.flipBusy?"Checking...":!status.flipAvailable?"Unavailable - using XeFG pacing":
+      !status.flipRegistered || !status.flipQueue?"Waiting for frame generation":
+      status.flipRefused?"Driver declined - using XeFG pacing":metering?"Active - accepted by the driver":
+      status.flipConfigured?"Using XeFG pacing in this display mode":!status.flipEnabled?"Off":"Waiting for a stable frame rate";
   const auto& w=status.window;
-  ImGui::Text("Window: %s%s",!w.available?"unavailable":w.borderless?(w.coversMonitor?"borderless fullscreen":"borderless window"):
-      "windowed with borders",w.pending?" (change pending)":"");
-  if(w.error) ImGui::Text("Window change error: %lu (game/another addon may own this state)",static_cast<unsigned long>(w.error));
-  if(value.forceBorderless && w.available && !w.pending && (!w.borderless || !w.coversMonitor || w.error)) {
-    if(ImGui::Button("Reapply borderless")) if(auto output=Active(); output && output->window) output->window->Request(true);
+  const char* window=!w.available?"Window not available":w.borderless?(w.coversMonitor?"Borderless fullscreen":"Borderless window"):"Windowed";
+  if(page==PanelPage::General) {
+    ui::Section("Smoothness and display");
+    ui::Card card("##xe_presentation");
+    ui::Setting("##xe_flip_row","Driver frame pacing","Let the NVIDIA driver space the generated frames. XeFG pacing remains available if the driver cannot use this mode.",[&] {
+      if(ImGui::Checkbox("##xe_flip",&value.flipMetering)) ConfigureControls(value);
+    });
+    ImGui::TextColored(metering?ui::Accent:ui::Muted,"%s",flip);
+    if(status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
+    ImGui::Separator();
+    ui::Setting("##xe_window_row","Force Borderless","Fill the current monitor without window borders. Use this if the game requests exclusive fullscreen.",[&] {
+      if(ImGui::Checkbox("##xe_borderless",&value.forceBorderless)) ConfigureControls(value);
+    });
+    ImGui::Text("Display mode: %s%s",window,w.pending?" (change pending)":"");
+    if(w.error==ERROR_BUSY) ui::Notice("The game or another addon changed the window. The current window state was preserved.");
+    else if(w.error) ui::Notice("The window mode could not be changed. Diagnostics has the reported error.");
+    if(value.forceBorderless && w.available && !w.pending && (!w.borderless || !w.coversMonitor || w.error))
+      if(ImGui::Button("Apply borderless again")) if(auto output=Active(); output && output->window) output->window->Request(true);
   }
-  ImGui::Separator();
-  ImGui::TextUnformatted("Low latency");
-  ImGui::Text("Active input: %s | Active output: %s",status.reflexObserved?"Reflex / Streamline":"waiting for Reflex",
-      status.xellObserved?"XeLL":"waiting for XeLL sleep");
-  int input=int(value.input), output=int(value.output);
-  if(ImGui::Combo("Latency input",&input,"Auto\0Reflex (Streamline)\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
-  if(ImGui::Combo("Latency output",&output,"Auto\0XeLL\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
-  ImGui::TextWrapped("Auto uses the detected Reflex/Streamline input and XeLL output. This bridge currently supports this route. XeMFG requires XeLL; Reflex output belongs to the DLSS-G backend.");
-  ImGui::Text("Native Reflex sleep: %s | Game Reflex request: %s",status.nativeReflexDisabled?"disabled":"not acknowledged",
-      status.gameReflexMode==0?"off":status.gameReflexMode==1?"on":"on + boost");
-  ImGui::Text("XeLL sleep calls: %llu | Markers forwarded: %llu",status.sleeps,status.markers);
-  if(!status.settingsSaved) ImGui::TextWrapped("Settings are active, but writing MFGAdaUnlock.ini failed. Check directory permissions.");
+  if(page==PanelPage::Quality) {
+    ui::Section("Image quality","XeMFG reconstructs frames with Intel's multi-frame model.");
+    ui::Card card("##xe_quality");
+    ImGui::TextUnformatted("XeMFG reconstruction");
+    ui::Description("The model is selected automatically. DLSS-G quality profiles belong to the NVIDIA backend and are not applied to XeMFG.");
+    ImGui::Separator();
+    const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking acceleration...":!status.modelInitialized?"Waiting for the model":!status.modelPort?"Native XeFG compatibility model":
+        status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Core acceleration active":
+        status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shader route";
+    ImGui::TextColored(ui::Accent,"%s",acceleration);
+    ui::Description("A higher rendered frame rate gives frame generation more recent motion information. Extra generated frames improve smoothness; they do not add new input samples.");
+  }
+  if(page==PanelPage::Latency) {
+    ui::Section("Mouse and input response","XeLL schedules the game's real frames. It is active alongside XeMFG; native Reflex sleeping is replaced to avoid two competing waits.");
+    ui::Card card("##xe_latency");
+    ImGui::TextColored(status.xellObserved?ui::Accent:ui::Warning,"XeLL: %s",status.xellObserved?"receiving game frames":"waiting for game timing");
+    ImGui::Text("Timing source: %s",status.reflexObserved?"Game Reflex / Streamline":"not observed yet");
+    ui::Description("Keep the game's low-latency option enabled when available. Avoid stacking external FPS limiters while comparing responsiveness.");
+    if(ImGui::CollapsingHeader("Advanced latency routing")) {
+      int input=int(value.input),output=int(value.output);
+      ImGui::SetNextItemWidth(-1);
+      if(ImGui::Combo("Timing input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
+      ImGui::SetNextItemWidth(-1);
+      if(ImGui::Combo("Latency output",&output,"Auto (recommended)\0XeLL\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
+      ui::Description("Auto uses Reflex timing from the game and XeLL for the output. This bridge currently supports that route. To use native Reflex output, select the DLSS-G backend and restart.");
+    }
+  }
+  if(page==PanelPage::Diagnostics) {
+    ui::Section("Model and timing details");
+    ui::Card card("##xe_model_details");
+    ImGui::Text("Model port: %s | Initialized: %s",status.modelUpdating?"updating":status.modelPort?"MFG":"native XeFG",status.modelInitialized?"yes":"no");
+    ImGui::Text("CUDA state: %u | Compute: %d.%d | Layers: %u",status.cudaState,status.cudaMajor,status.cudaMinor,status.cudaLayers);
+    ImGui::Text("Tensor launches: %llu | Dispatch fallbacks: %llu",status.cudaLaunches,status.cudaFallbacks);
+    if(status.cudaReason[0]) ImGui::TextWrapped("CUDA detail: %s",status.cudaReason);
+    ImGui::TextWrapped("Flip metering: %s",flip);
+    ImGui::Text("NVAPI result: %d | Feedback: 0x%X | Outputs: %u",status.flipResult,status.flipFeedback,status.flipOutputs);
+    ImGui::Text("Window error: %lu | Managed: %s",static_cast<unsigned long>(w.error),w.managed?"yes":"no");
+    ImGui::Text("Native Reflex disabled: %s | Game request: %u",status.nativeReflexDisabled?"yes":"no",status.gameReflexMode);
+    ImGui::Text("XeLL sleeps: %llu | Markers: %llu",status.sleeps,status.markers);
+    ImGui::Text("Sleep-mode changes: %llu | Last CPU sleep: %llu us",status.modeUpdates,status.lastSleepUs);
+    ui::Description("Driver acceptance is not a scanout measurement. Counters are accumulated for this process.");
+    if(ImGui::Button("Copy XeMFG diagnostics")) {
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.3\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor
+          <<" launches="<<status.cudaLaunches<<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback
+          <<"\nwindow="<<window<<" error="<<w.error<<"\nsleeps="<<status.sleeps<<" markers="<<status.markers;
+      ImGui::SetClipboardText(report.str().c_str());
+    }
+  }
+  if(!status.settingsSaved) ui::Notice("Settings are active but could not be saved. Check write access to the game folder.");
 }
 }
 extern "C" __declspec(dllexport) bool MFGAXeControlsStatus(mfgunlock::xemfg::native::ControlStatus* out,uint32_t size) {

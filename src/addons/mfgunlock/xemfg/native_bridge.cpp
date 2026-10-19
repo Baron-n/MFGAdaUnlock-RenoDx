@@ -98,6 +98,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   }
   xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=1;
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS) return E_NOINTERFACE;
+  o->sleepConfigured=true; ++s.latencyModeUpdates;
   if(a.xefgSwapChainD3D12CreateContext(device.Get(),&o->fg)!=0) return E_NOINTERFACE;
   a.xefgSwapChainSetLoggingCallback(o->fg,XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING,
       [](const char* message,xefg_swapchain_logging_level_t level,void*) {
@@ -124,7 +125,11 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     debug(o->fg,0,0,nullptr);
   a.xefgSwapChainSetUiCompositionState(o->fg,XEFG_SWAPCHAIN_UI_COMPOSITION_STATE_ENABLED);
   a.xefgSwapChainSetEnabled(o->fg,0);
-  o->window=WindowControl::Bind(hwnd,forceBorderless);
+  SetLastError(0); o->window=WindowControl::Bind(hwnd,forceBorderless);
+  if(!o->window) o->windowBindError=GetLastError();
+  xess_mod::WriteLog("native_window_bind","\"hwnd\":"+std::to_string(uintptr_t(hwnd))
+      +",\"thread\":"+std::to_string(GetCurrentThreadId())+",\"available\":"+(o->window?"true":"false")
+      +",\"error\":"+std::to_string(o->windowBindError));
   *result=Wrap(std::move(chain),o);
   { std::lock_guard guard(s.lock); s.output=o; s.status.output=true; s.status.xell=true; }
   Report("XeMFG swapchain ready; waiting for Streamline inputs and XeLL markers");
@@ -188,25 +193,7 @@ void Attach(HMODULE module) {
       reinterpret_cast<LPCWSTR>(module),&pin);
   if(auto worker=CreateThread(nullptr,0,&DiscoverWorker,nullptr,0,nullptr)) CloseHandle(worker);
 }
-void Draw() {
-  auto& s=State(); const auto status=Snapshot();
-  ImGui::TextUnformatted("XeMFG - native ReShade / Streamline D3D12 bridge");
-  ImGui::TextUnformatted("FG input: DLSS-G via Streamline | FG output: XeMFG");
-  int count=int(s.multiplier.load());
-  if(ImGui::SliderInt("Frame multiplier",&count,2,6,"%dx")) {
-    s.multiplier=uint32_t(count);
-    auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
-    WritePrivateProfileStringW(L"XeFG",L"Multiplier",std::to_wstring(count).c_str(),ini.c_str());
-  }
-  ImGui::TextWrapped("%s",status.detail);
-  ImGui::Text("Current XeFG state: %s",status.enabled?"ON":status.output?"OFF / waiting for valid inputs":"not initialized");
-  ImGui::Text("Streamline: %s | Output: %s | XeLL: %s",status.streamline?"hooked":"waiting",
-      status.output?"ready":"waiting",status.xell?"ready":"waiting");
-  ImGui::Text("Inputs admitted: %s | Source presents: %u | Incomplete: %u",
-      status.enabled?"yes":"no",status.frames,status.rejected);
-  ImGui::Text("SDK submissions: %u | Interpolation result: %d",status.submitted,status.sdkResult);
-  DrawControls();
-}
+
 }
 extern "C" __declspec(dllexport) bool MFGAXeNativeStatus(mfgunlock::xemfg::native::Status* out,uint32_t size) {
   if(!out || size!=sizeof(*out)) return false;

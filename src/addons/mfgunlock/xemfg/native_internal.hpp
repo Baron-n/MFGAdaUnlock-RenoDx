@@ -32,21 +32,26 @@ struct Api {
 };
 struct Frame {
   uint32_t id{}, viewport{}, resources{}, markers{};
-  bool constants{}, valid{}, sleeping{}, failed{};
+  bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
   xefg_swapchain_frame_constant_data_t data{};
 };
 struct Output {
   std::recursive_mutex io;
+  std::recursive_mutex presents;
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12CommandQueue> queue;
   std::shared_ptr<WindowControl> window;
+  DWORD windowBindError{};
   xefg_swapchain_handle_t fg{};
   xell_context_handle_t ll{};
   std::map<uint32_t,Frame> frames;
   uint32_t last{}, appliedCount{}, width{}, height{};
   uint32_t lastAdmission{UINT32_MAX};
   uint64_t admissionTick{};
+  uint64_t epoch{};
+  uint32_t sleepInterval{};
+  bool sleepConfigured{}, sleepActive{};
   bool invert{}, jitter{}, enabled{}, compatible{true};
   ~Output();
 };
@@ -60,10 +65,21 @@ struct Bridge {
   std::atomic<uint32_t> multiplier{4}, limitUs{0};
   std::atomic<uint64_t> outputPresents{0};
   std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
+  std::atomic<uint64_t> latencyModeUpdates{0}, lastSleepUs{0};
   std::atomic<uint32_t> gameReflexMode{0};
   bool lowLatency{true}, invert{true}, jitter{false};
 };
 Bridge& State();
+inline Frame* FindFrame(Output& o,uint32_t id) {
+  if(!id) return nullptr;
+  if(!o.frames.contains(id)) {
+    if(o.frames.size()>=16) return nullptr;
+    o.frames[id].id=id;
+  }
+  return &o.frames[id];
+}
+sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id);
+bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
 void Report(const char* reason);
 bool Hook(void* entry,void* replacement,void** trampoline);
 void DiscoverStreamline();

@@ -43,13 +43,21 @@ def main():
         'evidence/ctest.log':root/'build/ctest-native.log',
         'evidence/ctest-r1.1.log':root/'build/ctest-native-r1.1.log',
         'evidence/ctest-r1.2.log':root/'build/ctest-native-r1.2.log',
+        'evidence/ctest-r1.3.log':root/'build/ctest-native-r1.3.log',
+        'evidence/ctest-r1.3-before-hook-fix.log':root/'build/ctest-native-r1.3-before-hook-fix.log',
         'overlay-controls.md':root/'docs/research/native-xemfg-overlay-r1.2-2026-10-19.md',
+        'interface-and-latency.md':root/'docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md',
     }
     game_validation=None
     if args.previous_addon:
-        if sha(args.previous_addon)!='66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac':
-            raise ValueError('Previous native rollback must be sealed R1.1')
-        assets['rollback/renodx-mfgunlock-native-r1.1.addon64']=args.previous_addon
+        previous={'66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac':'r1.1',
+            '18bfb21b9d9b1da4006aac06adb77c9a1dc20b5313f5525fe263e1470da6eaf7':'r1.2'}
+        revision=previous.get(sha(args.previous_addon))
+        if revision is None: raise ValueError('Previous native rollback must be a sealed known build')
+        assets[f'rollback/renodx-mfgunlock-native-{revision}.addon64']=args.previous_addon
+    for page in range(4):
+        assets[f'evidence/ui/page-{page}-synthetic-status.png']=root/f'build/tests/ui-preview/page-{page}.png'
+    assets['evidence/ui/large-font-synthetic-status.png']=root/'build/tests/ui-preview/large-font.png'
     if args.game_validation:
         game_validation=json.loads(args.game_validation.read_text(encoding='utf-8'))
         if game_validation['input_identity']['renodx-mfgunlock.addon64']!=sha(addon):
@@ -84,7 +92,7 @@ def main():
                 source[path.relative_to(root).as_posix()]=sha(path)
     manifest={
         'identity':'Native ReShade XeMFG R1',
-        'revision':'R1.2',
+        'revision':'R1.3',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
         'official_1_4_5_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
@@ -97,7 +105,7 @@ def main():
         'source_inputs_sha256':source,
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'R1.2: full suite, plus native real-SDK inference at 2x/3x/4x/6x with latency preferences, unsupported-output rejection, live metering requests and window apply/restore. Separate owner-thread Win32 tests include hidden visibility, foreign ownership and reentrant retirement. Exact counts in ctest-r1.2.log. Synthetic/occluded output; no gameplay/display cadence/physical latency claim for R1.2.',
+        'test_scope':'R1.3: full suite; real-SDK inference at 2x/3x/4x/6x; concurrent late-marker delivery during sleep, mode-cache/retry and epoch invalidation; four production-widget preview pages plus large-font layout, with synthetic status. Exact counts in ctest-r1.3.log. No gameplay/display cadence/physical latency claim for R1.3.',
         'gameplay_validated':bool(game_validation and game_validation.get('functional_and_initial_user_validation_complete')),
         'gameplay_validation_scope':None if not game_validation else {
             'game':'Cyberpunk 2077','sdk_outputs_observed':[2,3,4,6],

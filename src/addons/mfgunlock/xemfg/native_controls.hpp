@@ -18,6 +18,7 @@ struct ControlStatus {
   bool reflexObserved{}, xellObserved{}, nativeReflexDisabled{};
   uint32_t gameReflexMode{};
   uint64_t sleeps{}, markers{};
+  uint64_t modeUpdates{}, lastSleepUs{};
   bool modelPort{}, modelInitialized{}, modelUpdating{}, cudaUpdating{}, settingsSaved{true};
   uint32_t cudaState{}, cudaLayers{};
   int cudaMajor{}, cudaMinor{};
@@ -33,5 +34,6 @@ void LoadControls();
 ControlSettings ControlsSettings();
 bool ConfigureControls(const ControlSettings& settings);
 ControlStatus ControlsSnapshot();
-void DrawControls();
+enum class PanelPage { General, Quality, Latency, Diagnostics };
+void DrawControls(PanelPage page);
 }

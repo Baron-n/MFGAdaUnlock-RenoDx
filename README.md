@@ -1,6 +1,6 @@
 # MFG Unlock
 
-**Native ReShade XeMFG R1.2 candidate:** this branch adds an independent MIT
+**Native ReShade XeMFG R1.3 candidate:** this branch adds an independent MIT
 Streamline/D3D12 bridge, combining DLSS-G and XeMFG in one `.addon64` without
 OptiScaler or an ASI loader. Intel runtime DLLs remain required. Model/Tensor
 execution, XeLL and lifecycle checks passed isolated tests at 2x/3x/4x/6x;
@@ -15,6 +15,14 @@ latency preferences. XeMFG requires XeLL; these controls do not introduce an
 unsupported Reflex-output route. See the
 [implementation and limits](docs/research/native-reshade-xemfg-2026-10-19.md)
 and [installation/rollback](docs/native-xemfg-readme.txt).
+
+R1.3 reorganizes both panels into General, Quality, Latency and Diagnostics,
+with player-facing cards, scoped styling and compact navigation for narrow
+panels. XeMFG no longer holds its marker-bookkeeping lock across sleep or
+Present, and unchanged sleep settings are not sent again every frame. A new
+concurrency test covers late markers during sleep; the effect on physical
+mouse latency is still to be verified. See the [comparison with the previous
+transport](docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md).
 
 > Release **1.4.5** strengthens kernel and binary-patch identity, rollback,
 > allocation lifetime, hook error handling and latency-trial measurements.
