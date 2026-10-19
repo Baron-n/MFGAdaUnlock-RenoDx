@@ -9,6 +9,11 @@ struct OverlayChord {
   bool exact{true};
   bool operator==(const OverlayChord&) const = default;
 };
+struct OverlayTapResult {
+  uint64_t activity{},presses{},releases{},matched{},native{},canceled{},dropped{};
+  uint32_t queued{},handled{},blocked{},ready{},modifiers{};
+  bool down{};
+};
 // Serialized by WindowControl. Stores completed taps, not text or a keyboard
 // history. ReShade's normal down/pressed state can lose an entire tap between
 // output updates. Native requests consume their own tap to avoid double toggle.
@@ -20,13 +25,17 @@ class OverlayShortcut {
   uint8_t modifiers{};
   bool down{},armed{},consumed{};
   uint64_t serial{},dropped{};
+  OverlayTapResult totals;
 public:
   OverlayChord Chord() const { return chord; }
   void Configure(OverlayChord value) {
     if(value==chord) return;
     chord=value; size=0; down=armed=consumed=false;
   }
-  void Cancel() { size=0; down=armed=consumed=false; modifiers=0; }
+  void Cancel() {
+    if(size || down) { ++totals.canceled; ++totals.activity; }
+    size=0; down=armed=consumed=false; modifiers=0;
+  }
   void Key(uint32_t key,bool pressed,bool repeat=false) {
     uint8_t mask{};
     if(key==VK_CONTROL || key==VK_LCONTROL || key==VK_RCONTROL) mask=1;
@@ -36,11 +45,14 @@ public:
     if(!chord.key || key!=chord.key) return;
     if(pressed) {
       if(!down && !repeat) {
+        ++totals.presses; ++totals.activity;
         ++serial; consumed=false;
         armed=chord.exact?modifiers==chord.modifiers:(modifiers&chord.modifiers)==chord.modifiers;
+        if(armed) ++totals.matched;
       }
       down=true;
     } else {
+      ++totals.releases; ++totals.activity;
       if(down && armed) {
         if(size<taps.size()) taps[size++]={serial,consumed}; else ++dropped;
       }
@@ -48,16 +60,23 @@ public:
     }
   }
   void ObservedNative() {
+    ++totals.native; ++totals.activity;
     if(down) consumed=true;
     else for(size_t i=0;i<size;++i) if(taps[i].serial==serial) taps[i].consumed=true;
   }
-  uint32_t Take(bool blocked=false) {
-    uint32_t count{};
-    if(!blocked) for(size_t i=0;i<size;++i) if(!taps[i].consumed) ++count;
+  OverlayTapResult Drain(bool blocked=false) {
+    auto result=totals;
+    result.dropped=dropped; result.queued=uint32_t(size); result.down=down; result.modifiers=modifiers;
+    for(size_t i=0;i<size;++i) {
+      if(taps[i].consumed) ++result.handled;
+      else if(blocked) ++result.blocked;
+      else ++result.ready;
+    }
     size=0;
     if(blocked) consumed=true;
-    return count;
+    return result;
   }
+  uint32_t Take(bool blocked=false) { return Drain(blocked).ready; }
   uint64_t Dropped() const { return dropped; }
 };
 }

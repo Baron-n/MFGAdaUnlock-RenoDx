@@ -63,12 +63,16 @@ void WindowControl::OverlayKey(OverlayChord chord) {
   std::lock_guard guard(lock); shortcut.Configure(chord);
 }
 void WindowControl::OverlayNative() { std::lock_guard guard(lock); shortcut.ObservedNative(); }
-uint32_t WindowControl::OverlayTaps(bool blocked,uint64_t& dropped) {
+uint32_t WindowControl::OverlayTaps(uint32_t blockers,uint64_t& dropped,OverlayReceipt* receipt) {
   const bool unfocused=IsWindowVisible(hwnd) && (IsIconic(hwnd)
       || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(hwnd,GA_ROOT));
   std::lock_guard guard(lock); dropped=shortcut.Dropped();
   if(unfocused) shortcut.Cancel();
-  return shortcut.Take(blocked || retiring);
+  if(unfocused) blockers|=8;
+  if(retiring) blockers|=16;
+  const auto taps=shortcut.Drain(blockers!=0);
+  if(receipt) *receipt={taps,childMessages,blockers};
+  return taps.ready;
 }
 WindowStatus WindowControl::Snapshot() {
   std::lock_guard guard(lock);
@@ -163,6 +167,15 @@ LRESULT CALLBACK WindowControl::MessageHook(int code,WPARAM w,LPARAM l) {
       std::shared_ptr<WindowControl> value;
       { std::lock_guard guard(registryLock);
         if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
+        else {
+          // ReShade also accepts input from a child of the render window.
+          // Restrict recovery to this owner thread and one unambiguous host.
+          for(const auto& [host,candidate]:windows) {
+            if(candidate->thread!=GetCurrentThreadId() || !IsChild(host,message->hwnd)) continue;
+            if(value) { value.reset(); break; }
+            value=candidate;
+          }
+        }
       }
       if(value && (message->message!=WM_INPUT || value->rawKeyboard)) {
         uint32_t key=uint32_t(message->wParam);
@@ -179,7 +192,10 @@ LRESULT CALLBACK WindowControl::MessageHook(int code,WPARAM w,LPARAM l) {
             || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(value->hwnd,GA_ROOT));
         std::lock_guard guard(value->lock);
         if(unfocused) value->shortcut.Cancel();
-        else if(!value->retiring) value->shortcut.Key(key,down,repeat);
+        else if(!value->retiring) {
+          if(message->hwnd!=value->hwnd && key==value->shortcut.Chord().key) ++value->childMessages;
+          value->shortcut.Key(key,down,repeat);
+        }
       }
       // Observe only. ReShade and the game still receive the original message.
     }

@@ -11,6 +11,11 @@ struct WindowStatus {
   bool available{}, requested{}, pending{}, borderless{}, coversMonitor{}, managed{};
   uint32_t error{};
 };
+struct OverlayReceipt {
+  OverlayTapResult taps;
+  uint64_t childMessages{};
+  uint32_t blockers{}; // Escape=1, active widget=2, text=4, unfocused=8, retiring=16.
+};
 // Window changes run on the HWND's owning thread, through its message pump.
 // Neither the overlay nor Intel's presentation worker calls SetWindowPos.
 class WindowControl : public std::enable_shared_from_this<WindowControl> {
@@ -22,7 +27,7 @@ public:
   WindowStatus Snapshot();
   void OverlayKey(OverlayChord chord);
   void OverlayNative();
-  uint32_t OverlayTaps(bool blocked,uint64_t& dropped);
+  uint32_t OverlayTaps(uint32_t blockers,uint64_t& dropped,OverlayReceipt* receipt=nullptr);
 private:
   HWND hwnd{};
   std::atomic<HHOOK> hook{};
@@ -36,6 +41,7 @@ private:
   WINDOWPLACEMENT placement{sizeof(WINDOWPLACEMENT)};
   RECT appliedRect{};
   OverlayShortcut shortcut;
+  uint64_t childMessages{};
   void Apply();
 };
 }

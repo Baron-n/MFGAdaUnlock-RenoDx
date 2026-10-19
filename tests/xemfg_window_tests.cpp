@@ -26,6 +26,23 @@ int main() {
     Require(hwnd,"create window");
     const DWORD originalStyle=DWORD(GetWindowLongPtrW(hwnd,GWL_STYLE)); RECT before{}; GetWindowRect(hwnd,&before);
     auto controller=WindowControl::Bind(hwnd,false); Require(bool(controller),"bind hook");
+    controller->OverlayKey({VK_HOME,0,true});
+    const auto child=CreateWindowW(wc.lpszClassName,L"input child",WS_CHILD,0,0,20,20,hwnd,nullptr,wc.hInstance,nullptr);
+    const auto unrelated=CreateWindowW(wc.lpszClassName,L"unrelated",WS_OVERLAPPEDWINDOW,0,0,20,20,nullptr,nullptr,wc.hInstance,nullptr);
+    Require(child && unrelated,"input routing windows");
+    auto tap=[&](HWND target) {
+      PostMessageW(target,WM_KEYDOWN,VK_HOME,1); PostMessageW(target,WM_KEYUP,VK_HOME,LPARAM(1u<<31)); Pump();
+    };
+    uint64_t dropped{}; OverlayReceipt receipt;
+    tap(child);
+    Require(controller->OverlayTaps(0,dropped,&receipt)==1 && receipt.childMessages==2
+        && receipt.taps.presses==1 && receipt.taps.releases==1,"child shortcut not observed once");
+    tap(unrelated);
+    Require(controller->OverlayTaps(0,dropped,&receipt)==0 && receipt.taps.presses==1,"unrelated window hijacked shortcut");
+    tap(hwnd);
+    Require(!controller->OverlayTaps(2,dropped,&receipt) && receipt.blockers==2 && receipt.taps.blocked==1,
+        "widget-capture reason not retained");
+    DestroyWindow(child); DestroyWindow(unrelated);
     // Request from another thread. It must remain pending and unchanged until
     // the owning thread dispatches its queued message.
     std::thread render([&]{controller->Request(true);}); render.join();

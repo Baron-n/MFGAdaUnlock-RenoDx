@@ -34,6 +34,18 @@ int main() { try {
   for(unsigned i=0;i<20;++i) tap();
   Require(key.Take()==16 && key.Dropped()==4,"tap queue is unbounded or overflow is hidden");
   tap(); key.Cancel(); Require(!key.Take(),"cancel retained old input");
+  OverlayShortcut receipt;
+  receipt.Key(VK_HOME,true); receipt.ObservedNative(); receipt.Key(VK_HOME,false);
+  auto seen=receipt.Drain();
+  Require(seen.presses==1 && seen.releases==1 && seen.matched==1 && seen.native==1
+      && seen.queued==1 && seen.handled==1 && !seen.ready && !seen.blocked,"receipt lost native deduplication reason");
+  receipt.Key(VK_HOME,true); receipt.Key(VK_HOME,false); seen=receipt.Drain(true);
+  Require(seen.queued==1 && seen.blocked==1 && !seen.handled && !seen.ready,"blocked receipt claims recovery");
+  receipt.Key(VK_CONTROL,true); receipt.Key(VK_HOME,true); receipt.Key(VK_HOME,false); seen=receipt.Drain();
+  Require(seen.presses==3 && seen.releases==3 && seen.matched==2 && !seen.queued && seen.modifiers==1,
+      "modifier mismatch not distinguishable from missing input");
+  receipt.Cancel(); const auto canceled=receipt.Drain().activity;
+  receipt.Cancel(); Require(receipt.Drain().activity==canceled,"unfocused idle produces unbounded log activity");
   std::cout<<"PASS: lost taps, native deduplication, modifier/rebind/disabled policies, capture and bounded queue\n";
   return 0;
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

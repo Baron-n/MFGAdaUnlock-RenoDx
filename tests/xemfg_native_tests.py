@@ -39,6 +39,9 @@ passthrough=all(e['deadline_ns']==e['sdk_deadline_ns'] and not e['flip_metered']
 hud_filter=len([e for e in events if e.get('event')=='native_hud_filtered'])>=2
 key_recovery=(('Overlay key transitions: opens=2 closes=2' in result.stdout
     and 'Overlay keys after resize/FG-off: opens=3 closes=3' in result.stdout) if args.overlay_keys else None)
+child_recovery=(('Overlay keys with child input: opens=4 closes=4' in result.stdout) if args.overlay_keys else None)
+input_receipts=(any(e.get('event')=='native_overlay_input' and e.get('child_messages')==4
+    and e.get('recover')==1 and not e.get('blockers') for e in events) if args.overlay_keys else None)
 persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('Latency','Output',fallback='')=='XeLL'
     and prefs.get('XeFG','ForceBorderless',fallback='')=='0'
@@ -49,6 +52,7 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted,
     'sdk_policy_activation_verified':policy_activation,'sdk_deadline_records':len(sdk_deadlines),
     'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,
-    'overlay_key_recovery_verified':key_recovery},indent=2),encoding='utf-8')
+    'overlay_key_recovery_verified':key_recovery,'overlay_child_recovery_verified':child_recovery,
+    'overlay_input_receipts_verified':input_receipts},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and persisted and policy_activation and passthrough is not False and hud_filter and key_recovery is not False else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and persisted and policy_activation and passthrough is not False and hud_filter and key_recovery is not False and child_recovery is not False and input_receipts is not False else 1)

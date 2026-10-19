@@ -294,6 +294,25 @@ int main(int argc,char** argv) {
       }
       Require(overlayOpens==3 && overlayCloses==3,"Home recovery did not survive resize or FG-off output");
       std::cout<<"Overlay keys after resize/FG-off: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
+      // ReShade routes keyboard input from children to their render window.
+      // Cover both a held press (native handling) and a full inter-update tap.
+      const auto child=CreateWindowW(wc.lpszClassName,L"input child",WS_CHILD,0,0,32,32,hwnd,nullptr,wc.hInstance,nullptr);
+      Require(child,"input child");
+      PostMessageW(child,WM_KEYDOWN,VK_HOME,1);
+      { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+      Check(chain->Present(0,0),"child held Home"); wait();
+      PostMessageW(child,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+      Check(chain->Present(0,0),"child Home release"); wait();
+      PostMessageW(child,WM_KEYDOWN,VK_HOME,1); PostMessageW(child,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+      Check(chain->Present(0,0),"child completed Home"); wait();
+      std::cout<<"Overlay keys with child input: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
+      Require(overlayOpens==4 && overlayCloses==4,"Home tap from render-window child was lost");
+      mfgunlock::xemfg::native::OverlayInputStatus childStatus;
+      Require(overlayInput(&childStatus,sizeof(childStatus)) && childStatus.recovered==5 && !childStatus.dropped,
+          "child native press recovered twice or child tap not recovered");
+      DestroyWindow(child);
     }
     chain.Reset();
     Require(overlayStatus(&os,sizeof(os)) && os.created>=2 && os.created==os.destroyed && os.failed==0,"manual ReShade runtime resize/teardown leaked");

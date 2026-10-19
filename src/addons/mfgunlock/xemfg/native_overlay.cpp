@@ -24,7 +24,10 @@ class FinalOutput final:public IDXGISwapChain4 {
   OverlayChord chord;
   uint64_t nextConfig{};
   unsigned keyLogs{};
-  bool overlayOpen{},shortcutBlocked{},recovering{};
+  unsigned inputLogs{};
+  uint64_t inputActivity{};
+  uint32_t shortcutBlockers{};
+  bool overlayOpen{},recovering{};
   static thread_local FinalOutput* rendering;
   void Shortcut() {
     auto input=window.lock();
@@ -76,11 +79,25 @@ class FinalOutput final:public IDXGISwapChain4 {
   void Render(UINT flags) {
     if(runtime && !(flags&DXGI_PRESENT_TEST)) {
       struct Scope { FinalOutput* previous; Scope(FinalOutput* value):previous(rendering){rendering=value;} ~Scope(){rendering=previous;} } scope(this);
-      Shortcut(); shortcutBlocked=runtime->is_key_pressed(VK_ESCAPE);
+      Shortcut(); shortcutBlockers=runtime->is_key_pressed(VK_ESCAPE)?1:0;
+      const bool nativePressed=chord.key && runtime->is_key_pressed(chord.key);
       reshade::update_and_present_effect_runtime(runtime); ++updates;
       if(auto input=window.lock()) {
-        uint64_t dropped{}; const auto taps=input->OverlayTaps(shortcutBlocked,dropped);
+        OverlayReceipt receipt;
+        uint64_t dropped{}; const auto taps=input->OverlayTaps(shortcutBlockers,dropped,&receipt);
         keyDropped.store(dropped);
+        if(receipt.taps.activity!=inputActivity || nativePressed) {
+          inputActivity=receipt.taps.activity;
+          if(inputLogs++<64) xess_mod::WriteLog("native_overlay_input","\"key\":"+std::to_string(chord.key)
+              +",\"presses\":"+std::to_string(receipt.taps.presses)+",\"releases\":"+std::to_string(receipt.taps.releases)
+              +",\"matched\":"+std::to_string(receipt.taps.matched)+",\"native\":"+std::to_string(receipt.taps.native)
+              +",\"queued\":"+std::to_string(receipt.taps.queued)+",\"handled\":"+std::to_string(receipt.taps.handled)
+              +",\"blocked\":"+std::to_string(receipt.taps.blocked)+",\"recover\":"+std::to_string(taps)
+              +",\"blockers\":"+std::to_string(receipt.blockers)+",\"modifiers\":"+std::to_string(receipt.taps.modifiers)
+              +",\"canceled\":"+std::to_string(receipt.taps.canceled)+",\"child_messages\":"+std::to_string(receipt.childMessages)
+              +",\"down\":"+(receipt.taps.down?"true":"false")+",\"native_pressed\":"+(nativePressed?"true":"false")
+              +",\"requested_open\":"+(overlayOpen?"true":"false"));
+        }
         for(uint32_t i=0;i<taps;++i) {
           const bool previous=overlayOpen; recovering=true;
           const bool accepted=runtime->open_overlay(!previous,reshade::api::input_source::keyboard);
@@ -107,8 +124,10 @@ public:
     return false; // Respect ReShade and any other addon's veto.
   }
   static void OverlayGui(reshade::api::effect_runtime* value) {
-    if(rendering && rendering->runtime==value)
-      rendering->shortcutBlocked|=ImGui::IsAnyItemActive() || ImGui::GetIO().WantTextInput;
+    if(rendering && rendering->runtime==value) {
+      if(ImGui::IsAnyItemActive()) rendering->shortcutBlockers|=2;
+      if(ImGui::GetIO().WantTextInput) rendering->shortcutBlockers|=4;
+    }
   }
   FinalOutput(ComPtr<IDXGISwapChain4> value,ComPtr<ID3D12Device> d,ComPtr<ID3D12CommandQueue> q)
       :chain(std::move(value)),device(std::move(d)),queue(std::move(q)) { Create(); }

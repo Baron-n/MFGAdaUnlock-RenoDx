@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.7.2
+MFGAdaUnlock - Native ReShade XeMFG R1.7.3
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. R1.7.2 full suite: 66 passed,
+bypass, FG disable, resize and context destruction. R1.7.3 full suite: 66 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -168,3 +168,15 @@ Wide/compact tests navigate into actual controls and exclude the readouts.
 This fixes the blue navigation highlight shown in the user screenshot; it
 does not establish that all intermittent Home failures have the same cause.
 See passive-card-focus.md. R1.7.1 is also included for exact rollback.
+
+R1.7.3 extends lost-tap recovery to children of the render window on its own
+message thread. A real-ReShade/Intel test reproduced one missing transition
+in sealed R1.7.2 and now requires held and complete child taps without double
+toggle. An unrelated top-level window remains excluded. Shortcut-specific
+receipts (64 bounded records per runtime) distinguish missing delivery,
+modifier mismatch, native handling, widget/text capture and focus loss. No
+typed text or other-key history is recorded. The user confirmed passive cards
+fixed in R1.7.2, but Home still sometimes failed. Child routing is a proven
+coverage defect; it is not yet established as the cause of every game failure.
+See overlay-routing.md. R1.7.2 is included for rollback. Pacing, models,
+latency routing, HUD and input-device registrations are unchanged.
