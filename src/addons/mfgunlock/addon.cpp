@@ -99,6 +99,9 @@
 #include "binary_patch.hpp"
 #include "backend_selection.hpp"
 #include "xemfg/backend_api.hpp"
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+#include "xemfg/native_bridge.hpp"
+#endif
 
 #define ImTextureID ImU64
 
@@ -5216,12 +5219,24 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
 }
 
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+  const auto selected=mfgunlock::backend::Read();
+  int backend_index=selected==mfgunlock::backend::Kind::XeMfg?1:0;
+  if(ImGui::Combo("Frame generation backend",&backend_index,"DLSS-G\0XeMFG\0"))
+    mfgunlock::backend::Select(backend_index?mfgunlock::backend::Kind::XeMfg:mfgunlock::backend::Kind::DlssG);
+  if(selected!=mfgunlock::backend::active) ImGui::TextUnformatted("Restart the game to apply the backend change.");
+#endif
   if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
     ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG (1.4.5 base)");
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    mfgunlock::xemfg::native::Draw();
+    if (auto module = g_self_module) {
+#else
     ImGui::TextUnformatted("XeMFG uses OptiScaler's Frame Generation controls and XeLL.");
     ImGui::TextUnformatted("Change backend with Switch-MFGBackend.ps1 while the game is closed.");
     ImGui::TextUnformatted("DLSS-G patches and Reflex controller are inactive in this mode.");
     if (auto module = GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi")) {
+#endif
       auto get_status = reinterpret_cast<mfgunlock::xemfg::GetStatus>(
           GetProcAddress(module, "MFGAXeGetStatus"));
       mfgunlock::xemfg::Status status;
@@ -8040,7 +8055,9 @@ void LoadConfig() {
 
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
-#if defined(MFGUNLOCK_DUAL_BACKEND)
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    "Native ReShade XeMFG R1 - independent MIT Streamline D3D12 bridge; official DLSS-G 1.4.5 base";
+#elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)
     "Release 1.4.5 - Engineering & Reliability; Local Stable; V2 Compatibility; in-game validation pending";
@@ -8067,6 +8084,10 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       if (!reshade::register_addon(h_module)) return FALSE;
       mfgunlock::backend::active = mfgunlock::backend::Read();
       if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        if(mfgunlock::backend::active==mfgunlock::backend::Kind::XeMfg)
+          mfgunlock::xemfg::native::Attach(h_module);
+#endif
         reshade::register_overlay("MFG Unlock", OnRegisterOverlay);
         reshade::log::message(reshade::log::level::info,
             "mfgunlock: XeMFG/disabled startup; DLSS-G writers, discovery and Reflex controls bypassed.");

@@ -1,5 +1,13 @@
 # MFG Unlock
 
+**Native ReShade XeMFG R1 candidate:** this branch adds an independent MIT
+Streamline/D3D12 bridge, combining DLSS-G and XeMFG in one `.addon64` without
+OptiScaler or an ASI loader. Intel runtime DLLs remain required. Model/Tensor
+execution, XeLL and lifecycle checks passed isolated tests at 2x/3x/4x/6x;
+native-bridge gameplay validation remains pending. See the
+[implementation and limits](docs/research/native-reshade-xemfg-2026-10-19.md)
+and [installation/rollback](docs/native-xemfg-readme.txt).
+
 > Release **1.4.5** strengthens kernel and binary-patch identity, rollback,
 > allocation lifetime, hook error handling and latency-trial measurements.
 > **Local Stable geometry + V2 Compatibility inpaint**, native pacing and the

@@ -1,0 +1,97 @@
+// SPDX-License-Identifier: MIT
+// Own COM identity outside the Intel proxy. ReShade wraps the inner DXGI
+// chain, so its effects/overlay run on the final output, after interpolation.
+#include "native_internal.hpp"
+namespace mfgunlock::xemfg::native {
+class Swapchain final : public IDXGISwapChain4 {
+  std::atomic<ULONG> references{1};
+  ComPtr<IDXGISwapChain4> chain;
+  std::shared_ptr<Output> owner;
+  void Resized(HRESULT hr) {
+    if(FAILED(hr)) return;
+    std::lock_guard lock(owner->io);
+    DXGI_SWAP_CHAIN_DESC1 desc{}; chain->GetDesc1(&desc);
+    owner->width=desc.Width; owner->height=desc.Height;
+    owner->compatible=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM
+        || desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM;
+    owner->frames.clear(); owner->last=0; owner->enabled=false;
+    State().api.xefgSwapChainSetEnabled(owner->fg,0);
+  }
+public:
+  Swapchain(ComPtr<IDXGISwapChain4> value,std::shared_ptr<Output> o):chain(std::move(value)),owner(std::move(o)){}
+  ~Swapchain() {
+    { auto& s=State(); std::lock_guard lock(s.lock);
+      if(s.output.lock()==owner) { s.output.reset(); s.status.output=s.status.xell=s.status.enabled=false; }
+    }
+    chain.Reset(); // Release the public Intel proxy before destroying its context.
+    owner.reset();
+  }
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
+    if(!out) return E_POINTER; *out=nullptr;
+    if(id==__uuidof(IUnknown)||id==__uuidof(IDXGIObject)||id==__uuidof(IDXGIDeviceSubObject)
+        ||id==__uuidof(IDXGISwapChain)||id==__uuidof(IDXGISwapChain1)||id==__uuidof(IDXGISwapChain2)
+        ||id==__uuidof(IDXGISwapChain3)||id==__uuidof(IDXGISwapChain4)) {
+      *out=static_cast<IDXGISwapChain4*>(this); AddRef(); return S_OK;
+    }
+    // Do not leak an interface that bypasses Present and lifetime ownership.
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
+  ULONG STDMETHODCALLTYPE Release() override { auto n=--references; if(!n) delete this; return n; }
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID a,UINT b,const void* c) override { return chain->SetPrivateData(a,b,c); }
+  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID a,const IUnknown* b) override { return chain->SetPrivateDataInterface(a,b); }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID a,UINT* b,void* c) override { return chain->GetPrivateData(a,b,c); }
+  HRESULT STDMETHODCALLTYPE GetParent(REFIID a,void** b) override { return chain->GetParent(a,b); }
+  HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return chain->GetDevice(a,b); }
+  HRESULT STDMETHODCALLTYPE Present(UINT sync,UINT flags) override {
+    if(flags&DXGI_PRESENT_TEST) return chain->Present(sync,flags);
+    std::lock_guard lock(owner->io);
+    BeforePresent(owner); auto hr=chain->Present(sync,flags); AfterPresent(owner); return hr;
+  }
+  HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
+  HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
+    if(a) return DXGI_ERROR_UNSUPPORTED; return chain->SetFullscreenState(a,b);
+  }
+  HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* a,IDXGIOutput** b) override { return chain->GetFullscreenState(a,b); }
+  HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC* a) override { return chain->GetDesc(a); }
+  HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e) override {
+    auto hr=chain->ResizeBuffers(a,b,c,d,e); Resized(hr); return hr;
+  }
+  HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* a) override { return chain->ResizeTarget(a); }
+  HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** a) override { return chain->GetContainingOutput(a); }
+  HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS* a) override { return chain->GetFrameStatistics(a); }
+  HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT* a) override { return chain->GetLastPresentCount(a); }
+  HRESULT STDMETHODCALLTYPE GetDesc1(DXGI_SWAP_CHAIN_DESC1* a) override { return chain->GetDesc1(a); }
+  HRESULT STDMETHODCALLTYPE GetFullscreenDesc(DXGI_SWAP_CHAIN_FULLSCREEN_DESC* a) override { return chain->GetFullscreenDesc(a); }
+  HRESULT STDMETHODCALLTYPE GetHwnd(HWND* a) override { return chain->GetHwnd(a); }
+  HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return chain->GetCoreWindow(a,b); }
+  HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params) override {
+    if(flags&DXGI_PRESENT_TEST) return chain->Present1(sync,flags,params);
+    std::lock_guard lock(owner->io);
+    BeforePresent(owner); auto hr=chain->Present1(sync,flags,params); AfterPresent(owner); return hr;
+  }
+  BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }
+  HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** a) override { return chain->GetRestrictToOutput(a); }
+  HRESULT STDMETHODCALLTYPE SetBackgroundColor(const DXGI_RGBA* a) override { return chain->SetBackgroundColor(a); }
+  HRESULT STDMETHODCALLTYPE GetBackgroundColor(DXGI_RGBA* a) override { return chain->GetBackgroundColor(a); }
+  HRESULT STDMETHODCALLTYPE SetRotation(DXGI_MODE_ROTATION a) override { return chain->SetRotation(a); }
+  HRESULT STDMETHODCALLTYPE GetRotation(DXGI_MODE_ROTATION* a) override { return chain->GetRotation(a); }
+  HRESULT STDMETHODCALLTYPE SetSourceSize(UINT a,UINT b) override { return chain->SetSourceSize(a,b); }
+  HRESULT STDMETHODCALLTYPE GetSourceSize(UINT* a,UINT* b) override { return chain->GetSourceSize(a,b); }
+  HRESULT STDMETHODCALLTYPE SetMaximumFrameLatency(UINT a) override { return chain->SetMaximumFrameLatency(a); }
+  HRESULT STDMETHODCALLTYPE GetMaximumFrameLatency(UINT* a) override { return chain->GetMaximumFrameLatency(a); }
+  HANDLE STDMETHODCALLTYPE GetFrameLatencyWaitableObject() override { return chain->GetFrameLatencyWaitableObject(); }
+  HRESULT STDMETHODCALLTYPE SetMatrixTransform(const DXGI_MATRIX_3X2_F* a) override { return chain->SetMatrixTransform(a); }
+  HRESULT STDMETHODCALLTYPE GetMatrixTransform(DXGI_MATRIX_3X2_F* a) override { return chain->GetMatrixTransform(a); }
+  UINT STDMETHODCALLTYPE GetCurrentBackBufferIndex() override { return chain->GetCurrentBackBufferIndex(); }
+  HRESULT STDMETHODCALLTYPE CheckColorSpaceSupport(DXGI_COLOR_SPACE_TYPE a,UINT* b) override { return chain->CheckColorSpaceSupport(a,b); }
+  HRESULT STDMETHODCALLTYPE SetColorSpace1(DXGI_COLOR_SPACE_TYPE a) override { return chain->SetColorSpace1(a); }
+  HRESULT STDMETHODCALLTYPE ResizeBuffers1(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e,const UINT* f,IUnknown*const* g) override {
+    auto hr=chain->ResizeBuffers1(a,b,c,d,e,f,g); Resized(hr); return hr;
+  }
+  HRESULT STDMETHODCALLTYPE SetHDRMetaData(DXGI_HDR_METADATA_TYPE a,UINT b,void* c) override { return chain->SetHDRMetaData(a,b,c); }
+};
+IDXGISwapChain1* Wrap(ComPtr<IDXGISwapChain4> chain,std::shared_ptr<Output> owner) {
+  return new Swapchain(std::move(chain),std::move(owner));
+}
+}

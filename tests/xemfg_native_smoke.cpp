@@ -1,0 +1,163 @@
+// SPDX-License-Identifier: MIT
+// Real ReShade loader, real Intel SDK/model/pacer, synthetic Streamline caller.
+#include <windows.h>
+#include <d3d12.h>
+#include <dxgi1_6.h>
+#include <wrl/client.h>
+#include <DirectXMath.h>
+#include <sl.h>
+#include <sl_dlss_g.h>
+#include <sl_reflex.h>
+#include <sl_pcl.h>
+#include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_bridge.hpp"
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+using Microsoft::WRL::ComPtr;
+static void Check(HRESULT code,const char* where) { if(FAILED(code)) { std::cerr<<where<<" 0x"<<std::hex<<code<<std::endl; throw std::runtime_error(where); } }
+static void Require(bool value,const char* what) { if(!value) throw std::runtime_error(what); }
+struct Token : sl::FrameToken { uint32_t id{}; operator uint32_t() const override {return id;} };
+template<class T> T Import(HMODULE m,const char* name) { auto p=reinterpret_cast<T>(GetProcAddress(m,name)); Require(p!=nullptr,name); return p; }
+static void Barrier(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after) {
+  D3D12_RESOURCE_BARRIER b{}; b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+  b.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,before,after}; list->ResourceBarrier(1,&b);
+}
+int main(int argc,char** argv) {
+  try {
+    const unsigned multiplier=argc>1?unsigned(std::stoul(argv[1])):4;
+    Require(multiplier>=2 && multiplier<=6,"test multiplier");
+    auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
+    auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
+    auto factoryCreate=Import<HRESULT(WINAPI*)(REFIID,void**)>(reshade,"CreateDXGIFactory1");
+    ComPtr<IDXGIFactory4> factory; Check(factoryCreate(IID_PPV_ARGS(&factory)),"factory");
+    ComPtr<ID3D12Device> device;
+    for(UINT i=0;!device;++i) {
+      ComPtr<IDXGIAdapter1> adapter;
+      if(factory->EnumAdapters1(i,&adapter)==DXGI_ERROR_NOT_FOUND) break;
+      DXGI_ADAPTER_DESC1 desc{}; adapter->GetDesc1(&desc);
+      if(desc.VendorId==0x10de) D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&device));
+    }
+    Require(device!=nullptr,"NVIDIA device");
+    auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addon,"ReShade did not load the addon");
+    auto modelStatus=Import<mfgunlock::xemfg::GetStatus>(addon,"MFGAXeGetStatus");
+    using BridgeStatus=bool(*)(mfgunlock::xemfg::native::Status*,uint32_t);
+    auto bridgeStatus=Import<BridgeStatus>(addon,"MFGAXeNativeStatus");
+    ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
+    Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"queue");
+    WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.lpszClassName=L"XeMFGNativeSmoke"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
+    HWND hwnd=CreateWindowW(wc.lpszClassName,L"XeMFG native bridge smoke",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
+    Require(hwnd,"window");
+    DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+    desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    ComPtr<IDXGISwapChain1> base;
+    Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"swapchain");
+    ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
+    mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
+    Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
+    auto resolve=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
+    auto feature=[&]<class T>(sl::Feature id,const char* name) { void* fn{}; Require(resolve(id,name,fn)==sl::Result::eOk,name); return reinterpret_cast<T>(fn); };
+    auto options=feature.operator()<PFun_slDLSSGSetOptions*>(sl::kFeatureDLSS_G,"slDLSSGSetOptions");
+    auto getState=feature.operator()<PFun_slDLSSGGetState*>(sl::kFeatureDLSS_G,"slDLSSGGetState");
+    auto reflex=feature.operator()<PFun_slReflexSetOptions*>(sl::kFeatureReflex,"slReflexSetOptions");
+    auto sleep=feature.operator()<PFun_slReflexSleep*>(sl::kFeatureReflex,"slReflexSleep");
+    auto marker=feature.operator()<PFun_slPCLSetMarker*>(sl::kFeaturePCL,"slPCLSetMarker");
+    auto constants=Import<PFun_slSetConstants*>(fixture,"slSetConstants");
+    auto tags=Import<PFun_slSetTagForFrame*>(fixture,"slSetTagForFrame");
+    auto legacyTags=Import<PFun_slSetTag*>(fixture,"slSetTag");
+    sl::ViewportHandle viewport{0}; sl::DLSSGOptions opt; opt.mode=sl::DLSSGMode::eOn; opt.numFramesToGenerate=3;
+    Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
+    sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
+    Require(reflex(ro)==sl::Result::eOk,"Reflex disable");
+    Require(Import<uint32_t(*)()>(fixture,"FixtureModes")()==0,"NVIDIA/Reflex generators still enabled");
+    ComPtr<ID3D12Fence> fence; Check(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"fence");
+    auto event=CreateEventW(nullptr,FALSE,FALSE,nullptr); uint64_t value=0;
+    auto wait=[&] { Check(queue->Signal(fence.Get(),++value),"signal"); if(fence->GetCompletedValue()<value) {Check(fence->SetEventOnCompletion(value,event),"event"); Require(WaitForSingleObject(event,30000)==WAIT_OBJECT_0,"GPU timeout");} };
+    ComPtr<ID3D12CommandAllocator> allocator; Check(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator)),"allocator");
+    ComPtr<ID3D12GraphicsCommandList> list; Check(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&list)),"list"); list->Close();
+    auto texture=[&](DXGI_FORMAT format,D3D12_RESOURCE_FLAGS flags) {
+      D3D12_HEAP_PROPERTIES heap{}; heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+      D3D12_RESOURCE_DESC d{}; d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D; d.Width=640; d.Height=360;
+      d.DepthOrArraySize=1; d.MipLevels=1; d.Format=format; d.SampleDesc.Count=1; d.Flags=flags;
+      ComPtr<ID3D12Resource> r; Check(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COPY_DEST,nullptr,IID_PPV_ARGS(&r)),"texture"); return r;
+    };
+    auto depth=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
+    auto motion=texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_FLAG_NONE);
+    auto color=texture(DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    auto upload=[&](ID3D12Resource* resource,bool isDepth) {
+      auto d=resource->GetDesc(); D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{}; UINT rows{}; UINT64 rowBytes{},bytes{};
+      device->GetCopyableFootprints(&d,0,1,0,&fp,&rows,&rowBytes,&bytes);
+      D3D12_HEAP_PROPERTIES hp{}; hp.Type=D3D12_HEAP_TYPE_UPLOAD; D3D12_RESOURCE_DESC bd{};
+      bd.Dimension=D3D12_RESOURCE_DIMENSION_BUFFER; bd.Width=bytes; bd.Height=1; bd.DepthOrArraySize=1; bd.MipLevels=1; bd.SampleDesc.Count=1; bd.Layout=D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+      ComPtr<ID3D12Resource> buffer; Check(device->CreateCommittedResource(&hp,D3D12_HEAP_FLAG_NONE,&bd,D3D12_RESOURCE_STATE_GENERIC_READ,nullptr,IID_PPV_ARGS(&buffer)),"upload");
+      void* p{}; buffer->Map(0,nullptr,&p); memset(p,0,size_t(bytes));
+      if(isDepth) for(UINT y=0;y<rows;++y) for(UINT x=0;x<640;++x) reinterpret_cast<float*>(static_cast<char*>(p)+y*fp.Footprint.RowPitch)[x]=0.5f;
+      buffer->Unmap(0,nullptr); allocator->Reset(); list->Reset(allocator.Get(),nullptr);
+      D3D12_TEXTURE_COPY_LOCATION src{}; src.pResource=buffer.Get(); src.Type=D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT; src.PlacedFootprint=fp;
+      D3D12_TEXTURE_COPY_LOCATION dst{}; dst.pResource=resource; dst.Type=D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+      list->CopyTextureRegion(&dst,0,0,0,&src,nullptr); Barrier(list.Get(),resource,D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw); wait();
+    };
+    upload(depth.Get(),true); upload(motion.Get(),false);
+    D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV; hd.NumDescriptors=2;
+    ComPtr<ID3D12DescriptorHeap> rtvs; Check(device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rtvs)),"rtvs");
+    auto rtv=rtvs->GetCPUDescriptorHandleForHeapStart(); auto second=rtv; second.ptr+=device->GetDescriptorHandleIncrementSize(hd.Type);
+    device->CreateRenderTargetView(color.Get(),nullptr,second);
+    sl::Constants c; DirectX::XMFLOAT4X4 projection;
+    DirectX::XMStoreFloat4x4(&projection,DirectX::XMMatrixPerspectiveFovLH(1.0f,640.f/360.f,.1f,1000.f)); memcpy(&c.cameraViewToClip,&projection,64);
+    c.cameraRight={1,0,0}; c.cameraUp={0,1,0}; c.cameraFwd={0,0,1}; c.cameraPos={0,0,0};
+    c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
+    c.motionVectors3D=sl::eFalse; c.reset=sl::eFalse;
+    sl::Resource rd(sl::ResourceType::eTex2d,depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rm(sl::ResourceType::eTex2d,motion.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::Resource rc(sl::ResourceType::eTex2d,color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    sl::ResourceTag tagged[]={ {&rd,sl::kBufferTypeDepth,sl::eValidUntilPresent},
+      {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
+    bool first=true;
+    for(uint32_t frame=1;frame<=48;++frame) {
+      Token token; token.id=frame;
+      Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
+      marker(sl::PCLMarker::eSimulationStart,token); marker(sl::PCLMarker::eSimulationEnd,token);
+      marker(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
+      allocator->Reset(); list->Reset(allocator.Get(),nullptr);
+      ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"backbuffer");
+      device->CreateRenderTargetView(back.Get(),nullptr,rtv);
+      Barrier(list.Get(),back.Get(),D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_RENDER_TARGET);
+      Barrier(list.Get(),color.Get(),first?D3D12_RESOURCE_STATE_COPY_DEST:D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_RENDER_TARGET); first=false;
+      const float rgba[]={.1f,.2f,.3f,1.f}; list->ClearRenderTargetView(rtv,rgba,0,nullptr); list->ClearRenderTargetView(second,rgba,0,nullptr);
+      Barrier(list.Get(),color.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      Barrier(list.Get(),back.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PRESENT);
+      // Cover both tag APIs and both lifetime contracts with real SDK copies.
+      const bool volatileInputs=frame>=17 && frame<=32;
+      for(auto& tag:tagged) tag.lifecycle=volatileInputs?sl::eOnlyValidNow:sl::eValidUntilPresent;
+      const uint32_t tagCount=frame==34?1:3; // Missing MV must bypass safely.
+      if(frame%2) tags(token,viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
+      else legacyTags(viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
+      list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
+      marker(sl::PCLMarker::eRenderSubmitEnd,token); marker(sl::PCLMarker::ePresentStart,token);
+      Check(chain->Present(0,0),"Present"); marker(sl::PCLMarker::ePresentEnd,token); wait();
+      if(frame==34) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV did not disable FG"); }
+      MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+    }
+    mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms)); bridgeStatus(&bs,sizeof(bs));
+    Sleep(100);
+    auto refresh=Import<void(*)()>(addon,"MFGAXeNativeRefresh"); refresh();
+    modelStatus(&ms,sizeof(ms));
+    std::cout<<"model="<<ms.model<<" initialized="<<ms.initialized<<" frames="<<ms.presented<<" tensor="<<ms.tensor_launches<<" result="<<ms.result<<" rejected="<<bs.rejected<<" outputPresents="<<bs.outputPresents<<std::endl;
+    // An occluded window can report only its generated submissions. Do not
+    // turn this into a claim about four displayed frames or scanout cadence.
+    Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
+    sl::DLSSGState live; Require(getState(viewport,live,nullptr)==sl::Result::eOk,"GetState bridge");
+    Require(live.numFramesActuallyPresented==ms.presented && live.numFramesToGenerateMax==5,"requested and submitted counts confused");
+    live.structVersion=1; live.numFramesToGenerateMax=0xdeadbeef;
+    Require(getState(viewport,live,nullptr)==sl::Result::eOk && live.numFramesToGenerateMax==0xdeadbeef,"V1 state extension overwritten");
+    sl::DLSSGOptions off; off.mode=sl::DLSSGMode::eOff; options(viewport,off);
+    Check(chain->Present(0,0),"disabled Present");
+    Check(chain->ResizeBuffers(3,800,450,DXGI_FORMAT_UNKNOWN,0),"ResizeBuffers");
+    chain.Reset(); CloseHandle(event); DestroyWindow(hwnd);
+    modelStatus(&ms,sizeof(ms)); Require(ms.contexts==0,"context/COM lifetime leaked");
+    Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");
+    std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
+    return 0;
+  } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl; return 1; }
+}

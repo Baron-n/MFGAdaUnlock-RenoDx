@@ -180,7 +180,7 @@ void Prepare(ID3D12Device* device) {
     s.shaders=std::move(shaders); s.model=std::move(model); s.unlock=std::move(unlock);
     s.cudaFatbin=std::move(fatbin);
     s.status.model=1;
-    Detail("Intel multi-frame model ready; OptiScaler owns inputs and XeLL");
+    Detail("Intel multi-frame model ready");
   } catch (const std::exception& e) {
     s.rejected=true; Detail(std::string("Native XeFG 2x fallback: ")+e.what());
     xess_mod::WriteLog("port_rejected","\"reason\":\""+escape(e.what())+"\"");
@@ -190,7 +190,12 @@ void ConfigureFlip() noexcept {
   static std::once_flag once;
   std::call_once(once,[] {
     try {
-      const auto ini=ModulePath(host).parent_path()/L"OptiScaler.ini";
+      const auto ini=ModulePath(host).parent_path()/
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+          L"MFGAdaUnlock.ini";
+#else
+          L"OptiScaler.ini";
+#endif
       wchar_t setting[32]{};
       GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",setting,32,ini.c_str());
       const bool enabled=_wcsicmp(setting,L"off") && _wcsicmp(setting,L"false") && wcscmp(setting,L"0");
@@ -293,7 +298,7 @@ template<class Init> Result Initialize(Handle handle, Init call) {
     return unsupported;
   }
   c.initialized=true; s.status.initialized=1;
-  Detail("XeMFG ready (2x-6x); use OptiScaler Frame Generation controls");
+  Detail("XeMFG ready (2x-6x)");
   xess_mod::WriteLog("context_initialized","\"paced\":true,\"owner\":\""+std::string(c.hostOwner?"host":"game")+"\",\"generation\":"+std::to_string(c.generation));
   return r;
 }
@@ -375,15 +380,30 @@ void Start() {
   std::lock_guard lock(mutex);
   if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg) { Detail("DLSS-G selected; XeMFG companion inactive"); return; }
   if (GetModuleHandleW(L"MFGUnlocker.asi")) throw std::runtime_error("other_mfg_plugin_present");
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+  host=self; // Explicitly admitted in-process transport, never an OptiScaler impersonation.
+  if(GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi")) throw std::runtime_error("remove_companion_before_native_bridge");
+  std::array<HMODULE,2048> modules{}; DWORD bytes{};
+  if(!EnumProcessModules(GetCurrentProcess(),modules.data(),DWORD(sizeof(modules)),&bytes)
+      || bytes>sizeof(modules)) throw std::runtime_error("module_inventory");
+  for(size_t i=0;i<bytes/sizeof(HMODULE);++i)
+    if(IsOptiScaler10(modules[i])) throw std::runtime_error("remove_OptiScaler_loader_before_native_bridge");
+#else
   std::array<HMODULE,2048> modules{}; DWORD bytes{};
   if (!EnumProcessModules(GetCurrentProcess(),modules.data(),DWORD(sizeof(modules)),&bytes) || bytes>sizeof(modules)) throw std::runtime_error("module_inventory");
   for (size_t i=0;i<bytes/sizeof(HMODULE);++i) if (IsOptiScaler10(modules[i])) {
     if (host && host!=modules[i]) throw std::runtime_error("multiple_optiscaler_hosts"); host=modules[i];
   }
   if (!host) throw std::runtime_error("OptiScaler_10_required");
+#endif
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+  const auto dir=mfgunlock::backend::Directory();
+  const auto fgPath=dir/L"libxess_fg.dll", llPath=dir/L"libxell.dll";
+#else
   const auto dir=ModulePath(host).parent_path();
   const auto fgPath=std::filesystem::exists(dir/L"OptiScaler/libxess_fg.dll")?dir/L"OptiScaler/libxess_fg.dll":dir/L"libxess_fg.dll";
   const auto llPath=std::filesystem::exists(dir/L"OptiScaler/libxell.dll")?dir/L"OptiScaler/libxell.dll":dir/L"libxell.dll";
+#endif
   const auto fh=HashFile(fgPath), lh=HashFile(llPath);
   if (fh!="ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27"
       || (lh!="61aeeab7fdcfb6d1742f86c14c68c663d759607d01a6132645c857291eaebb86"
@@ -428,7 +448,7 @@ void Start() {
   for (void* t:targets) if (MH_QueueEnableHook(t)!=MH_OK) throw std::runtime_error("SDK_hook_queue");
   if (MH_ApplyQueued()!=MH_OK) throw std::runtime_error("SDK_hook_commit");
   Get().status.hooks=1;
-  Detail("SDK hooks ready; waiting for OptiScaler XeFG context");
+  Detail("SDK hooks ready; waiting for XeFG output context");
   xess_mod::WriteLog("ready","\"provider_sha256\":\""+fh+"\",\"xell_sha256\":\""+lh+"\"");
 }
 void CompleteStartup() noexcept {
@@ -488,7 +508,10 @@ extern "C" __declspec(dllexport) void InitializeASI() {
       std::lock_guard lock(mutex); Detail("DLSS-G selected; XeMFG companion inactive"); return;
     }
     if (!CaptureEarlyCreate()) {
-      std::lock_guard lock(mutex); Detail("Early XeFG Create entry unavailable; native startup retained"); return;
+      std::lock_guard lock(mutex); Detail("Early XeFG Create entry unavailable; native startup retained");
+#ifndef MFGUNLOCK_NATIVE_XEMFG
+      return;
+#endif
     }
     { std::lock_guard lock(mutex); Detail("Waiting for DLL initialization to finish"); }
     HMODULE reference{};
@@ -504,7 +527,21 @@ extern "C" __declspec(dllexport) bool MFGAXeGetStatus(mfgunlock::xemfg::Status* 
   std::lock_guard lock(mutex); auto& s=Get();
   s.status.tensor_launches=xefg_cuda::Snapshot().launches; *out=s.status; return true;
 }
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+namespace mfgunlock::xemfg {
+void AttachModel(HMODULE module) {
+  self=module;
+  InitializeASI();
+}
+bool EnsureModel() {
+  CompleteStartup();
+  std::lock_guard lock(mutex);
+  return Get().status.hooks!=0;
+}
+}
+#else
 BOOL WINAPI DllMain(HMODULE module,DWORD reason,LPVOID) {
   if (reason==DLL_PROCESS_ATTACH) { self=module; DisableThreadLibraryCalls(module); }
   return TRUE;
 }
+#endif
