@@ -30,7 +30,10 @@ sintetico, caller dos redirects, Present/resize, jogo criando o primeiro
 contexto MFG e protecao contra publicacao sobre contexto estrangeiro vivo.
 A X1.1 passou do startup e caiu durante Present no XeLL no Cyberpunk.
 A X1.2 abriu e carregou a cena no teste do usuario, mas ficou em XeFG nativo.
-A X1.3 corrige o bloqueio de ativacao reproduzido. Sua abertura, geracao real
-e qualidade ainda aguardam verificacao no jogo; o log inclui estado do SDK.
+A X1.3 abriu e carregou a cena no teste do usuario. O log confirmou modelo MFG,
+interpolacao 4x/6x com sucesso, rota Tensor em uso e metering aceito pelo driver.
+O usuario relatou cerca, asfalto e resposta com XeLL perfeitos nessa cena.
+Ha tambem recusas de inputs no log; isso nao e certificacao geral,
+benchmark de desempenho, medicao de scanout ou de latencia fisica.
 Veja engineering-report.md, manifest.json, evidence/, PROVENANCE.md e notices/.
 Este e um pacote local; nenhuma nova release foi publicada.

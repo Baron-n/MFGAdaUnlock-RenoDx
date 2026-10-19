@@ -2,7 +2,7 @@
 
 ## Base e resultado
 
-Estado atual: **candidata local X1.3, sem validação de gameplay concluída**. A X1 falhou no loader; a X1.1 abriu e sofreu uma segunda falha durante Present/XeLL. A X1.2 carregou a cena no teste do usuário, mas o log confirmou fallback nativo, sem modelo MFG. As seções finais registram essas diferenças e a correção de ativação da X1.3. Os resultados iniciais abaixo são históricos, não uma declaração de estabilidade dessas builds.
+Estado atual: **X1.3 com validação funcional inicial no Cyberpunk**: abertura/cena sem crash relatadas pelo usuário, modelo MFG ativo, sucesso de interpolação 4x/6x no SDK, rota Tensor em uso e metering aceito pelo driver. O usuário avaliou cerca, asfalto e resposta com XeLL como perfeitos. Isso não é benchmark nem certificação geral; erros de entrada também aparecem nas amostras. A X1 falhou no loader, a X1.1 durante Present/XeLL e a X1.2 carregou sem ativar o modelo MFG. A seção final separa as evidências atuais dos resultados históricos.
 
 Branch `feature/1.4.5-xemfg`, criada diretamente da **1.4.5 oficial**, commit `0fe65579d287581107babe267ee3e48c9135bf8a`. As árvores antigas, a release publicada e os experimentos de reconstrução foram preservados. Nenhuma alteração de LMR/MR/CA/DR/TGL integra esta candidata.
 
@@ -135,3 +135,24 @@ Suíte da X1.3: **46 aprovados e três opcionais pulados, de 49 registrados**, p
 O log passa a distinguir o proprietário do contexto (`game`/`host`), `model_prepared_before_create`, resultado das contagens e `output_status`. O último registra os campos reportados pelo SDK e o contador de lançamentos da rota Tensor, no máximo uma vez por segundo nas primeiras 30 amostras, depois somente em mudanças. `frames_presented` significa frames enviados à apresentação segundo o SDK; não mede scanout. O contador de lançamentos identifica uso da rota, não duração nem conclusão física de cada kernel. Na próxima verificação, exigir `mfg_model=true`, inicialização com pacing e estado de interpolação coerente com a seleção; não usar apenas ausência de crash ou checkbox como sucesso.
 
 Evidências adicionais: snapshot do log real da X1.2 em `out/xemfg-activation-fix/X1.2-game.log` na árvore principal; contraste com a build anterior em `build/game-first-regression-old`; casos finais em `build/tests/xemfg-checks`; resumo em `build/game-first-regression-results.json`. A identidade local é `1.4.5-X1.3`/arquivo `1.4.5.4`. A candidata permanece na branch isolada; a release oficial não foi alterada nem republicada.
+
+## Validação funcional inicial da X1.3 no Cyberpunk
+
+Em 19/10/2026, o usuário confirmou abertura e carregamento do ManualSave-317 sem crash e, após a verificação do log, relatou: **“ficaram perfeitas, a latencia com xell tbm”**, referindo-se à cerca, ao asfalto e à resposta. Esse é o resultado perceptual do usuário nessa cena, sem nova captura de vídeo, comparação cega ou medição física de latência. A build instalada foi mantida como referência funcional; nenhum binário foi modificado ou recompilado para registrar este resultado.
+
+| Identidade / observação | Evidência e alcance |
+|---|---|
+| Fonte do binário | `306fe1c9d7eb6670837d4a5c0a4fdd050a2866cc`, derivada da 1.4.5 oficial na branch isolada |
+| Companion instalado | `1.4.5.4` / `1.4.5-X1.3`; SHA-256 `13365deb4b355c4f85f7ada54b0f8abbf1919a3db02071ff607b2360241a61c0` |
+| Ambiente | Cyberpunk 2.31, file version `3.0.5294808`; RTX 4070 SUPER, driver `617.42`; par Intel e OptiScaler com os hashes registrados anteriormente |
+| Modelo | `model_prepared_before_create` com caller do jogo; contextos de jogo e host com `mfg_model=true`, criação bem-sucedida e output inicializado com pacing |
+| Multiplicadores | Setters de três/cinco intermediários retornaram sucesso; 25 amostras com quatro frames e oito com seis frames reportados, FG habilitado e resultado de interpolação zero |
+| Rota Tensor | `cuda_route: active`, compute capability `8.9`, 16 kernels/17 layers; contador observado de lançamentos cresceu de zero até 312.888 |
+| Metering | Fila resolvida; sete amostras de configuração com `metered=true`, status e feedback zero; deadlines registraram uso em lotes 4x e 6x |
+| Estabilidade nesta passagem | Sem crash relatado; nenhum relatório REDengine mais novo que o da falha anterior foi encontrado. Isso não cobre sessões longas ou outros jogos |
+
+A cobertura do log da sessão vai do tick `54948203` ao `55114796`, **166,593 segundos**. Isso inclui inicialização e transições; não é uma passagem de benchmark. `frames_presented` é a contagem enviada à apresentação segundo o SDK, não observação de scanout. Os 50 registros de estado são amostras limitadas e mudanças: não permitem calcular taxa de falha, FPS, pacing exibido ou ganho percentual. O contador Tensor comprova uso da rota instrumentada, não tempo/ocupação ou conclusão física de cada kernel. A aceitação de metering não comprova menor latência física.
+
+Há também cinco amostras `-12` (inputs incompatíveis com o modo de composição), três `-14` (inputs insuficientes) e duas warning `4` (ordem/IDs de frames). Várias foram seguidas por retorno a 4x/6x com resultado zero; a última amostra é `-12`, sem retorno antes do fim do trecho salvo. Houve desativações e mudanças de multiplicador no log, mas não foi estabelecido que todas as recusas ocorreram apenas em menus/transições. O usuário não relatou um problema residual de imagem/resposta. Esses eventos permanecem registrados como limite da validação, sem inventar uma causa nem acrescentar alterações de HUD/UI.
+
+Evidências preservadas na árvore principal: `out/xemfg-game-validation-2026-10-19/X1.3-game.log`, `X1.3-session.jsonl` e `validation.json`. O JSON liga relato, amostras e hashes dos módulos ao binário exato; seu SHA-256 é `336fb0add720a7ed6fa4c61bab1976bc83be43a928086414827b09506d5b6758`. O pacote X1.3 original conserva seu manifesto de build e as verificações anteriores à abertura; esta seção e o suplemento de validação são posteriores, sem reescrever a proveniência do pacote nem publicar outra release.
