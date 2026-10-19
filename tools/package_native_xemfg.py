@@ -46,15 +46,18 @@ def main():
         'evidence/ctest-r1.3.log':root/'build/ctest-native-r1.3.log',
         'evidence/ctest-r1.3-before-hook-fix.log':root/'build/ctest-native-r1.3-before-hook-fix.log',
         'evidence/ctest-r1.4.log':root/'build/ctest-native-r1.4.log',
+        'evidence/ctest-r1.5.log':root/'build/ctest-native-r1.5.log',
         'overlay-controls.md':root/'docs/research/native-xemfg-overlay-r1.2-2026-10-19.md',
         'interface-and-latency.md':root/'docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md',
         'compact-interface.md':root/'docs/research/xemfg-r1.4-compact-interface-2026-10-19.md',
+        'ui-composition-and-pacing.md':root/'docs/research/xemfg-r1.5-ui-composition-and-pacing-2026-10-19.md',
     }
     game_validation=None
     if args.previous_addon:
         previous={'66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac':'r1.1',
             '18bfb21b9d9b1da4006aac06adb77c9a1dc20b5313f5525fe263e1470da6eaf7':'r1.2',
-            'f20a92b2ced415fbe8462b4cfb82f1f80b526e4a9b839bfbf6417e704bd7dcff':'r1.3'}
+            'f20a92b2ced415fbe8462b4cfb82f1f80b526e4a9b839bfbf6417e704bd7dcff':'r1.3',
+            'd6204480a38682c04a7e4c5fcafec6c0e087517dffc30c39d0a5738efba2e324':'r1.4'}
         revision=previous.get(sha(args.previous_addon))
         if revision is None: raise ValueError('Previous native rollback must be a sealed known build')
         assets[f'rollback/renodx-mfgunlock-native-{revision}.addon64']=args.previous_addon
@@ -97,7 +100,7 @@ def main():
                 source[path.relative_to(root).as_posix()]=sha(path)
     manifest={
         'identity':'Native ReShade XeMFG R1',
-        'revision':'R1.4',
+        'revision':'R1.5',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
         'official_1_4_5_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
@@ -110,7 +113,7 @@ def main():
         'source_inputs_sha256':source,
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'R1.4: existing full suite and real-SDK inference at 2x/3x/4x/6x; production-widget previews with synthetic status, including expanded latency routing, large font, control tooltip and open multiplier dropdown. Exact counts in ctest-r1.4.log. UI-only revision; no new gameplay/display cadence/physical latency claim.',
+        'test_scope':'R1.5: full suite and real-SDK inference at 2x/3x/4x/6x, including UI composition default/opt-in/off/missing-input and preference persistence; setter fault/retry/reset unit tests; numerical pacing contracts; production-widget previews with synthetic status. Exact counts in ctest-r1.5.log. No new gameplay/display cadence/physical latency claim.',
         'gameplay_validated':bool(game_validation and game_validation.get('functional_and_initial_user_validation_complete')),
         'gameplay_validation_scope':None if not game_validation else {
             'game':'Cyberpunk 2077','sdk_outputs_observed':[2,3,4,6],

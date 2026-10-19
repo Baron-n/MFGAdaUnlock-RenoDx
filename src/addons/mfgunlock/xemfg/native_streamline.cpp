@@ -238,8 +238,11 @@ void DiscoverStreamline() {
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
   const auto id=s.presenting.load(); auto it=o->frames.find(id);
+  const bool hudless=it!=o->frames.end() && !it->second.failed
+      && (it->second.resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
+  const bool compositionReady=ApplyUiComposition(*o,hudless);
   constexpr uint32_t required=(1u<<XEFG_SWAPCHAIN_RES_DEPTH)|(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR);
-  bool ready=it!=o->frames.end() && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
+  bool ready=compositionReady && it!=o->frames.end() && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
   if(ready) {
     auto& f=it->second;
     // RenderSubmit END can legally arrive after Present starts or returns.
@@ -287,7 +290,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   }
   { std::lock_guard guard(s.lock); s.status.inputs=ready; s.status.enabled=ready;
     s.status.multiplier=s.multiplier; ++s.status.frames; if(!ready) ++s.status.rejected; }
-  if(ready) Report("XeMFG active: Streamline inputs, XeLL, Tensor model and metered output");
+  if(ready) Report("XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
   else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
   o->last=id;
 }

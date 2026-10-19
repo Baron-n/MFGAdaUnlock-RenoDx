@@ -31,7 +31,8 @@ prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='asc
 persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('Latency','Output',fallback='')=='XeLL'
     and prefs.get('XeFG','ForceBorderless',fallback='')=='0'
-    and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on')
+    and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on'
+    and prefs.get('XeFG','UIComposition',fallback='')=='0')
 (d/'result.json').write_text(json.dumps({'inputs':manifest,'exit':result.returncode,
     'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)

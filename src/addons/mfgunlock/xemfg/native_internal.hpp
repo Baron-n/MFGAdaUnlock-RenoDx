@@ -52,6 +52,11 @@ struct Output {
   uint64_t epoch{};
   uint32_t sleepInterval{};
   bool sleepConfigured{}, sleepActive{};
+  // XeFG initializes with composition disabled. A live preference is applied
+  // only at the source Present boundary, with this frame's HUD-less input.
+  bool uiCompositionKnown{true}, uiCompositionApplied{}, uiCompositionAvailable{};
+  int uiCompositionResult{};
+  uint64_t uiCompositionUpdates{};
   bool invert{}, jitter{}, enabled{}, compatible{true};
   ~Output();
 };
@@ -80,6 +85,7 @@ inline Frame* FindFrame(Output& o,uint32_t id) {
 }
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id);
 bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
+bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);
 bool Hook(void* entry,void* replacement,void** trampoline);
 void DiscoverStreamline();

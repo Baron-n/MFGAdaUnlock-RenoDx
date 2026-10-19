@@ -15,6 +15,7 @@ class Swapchain final : public IDXGISwapChain4 {
     owner->compatible=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM
         || desc.Format==DXGI_FORMAT_B8G8R8A8_UNORM;
     ++owner->epoch; owner->frames.clear(); owner->last=0; owner->enabled=false;
+    owner->uiCompositionKnown=false; owner->uiCompositionAvailable=false;
     State().api.xefgSwapChainSetEnabled(owner->fg,0);
   }
 public:

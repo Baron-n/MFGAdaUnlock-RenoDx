@@ -50,12 +50,15 @@ int main(int argc,char** argv) {
     auto configure=Import<Configure>(addon,"MFGAXeConfigure");
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
+    Require(cs.version==2 && cs.settings.version==2 && !cs.settings.uiComposition,"UI composition default/ABI");
     auto settings=cs.settings; settings.input=mfgunlock::xemfg::native::LatencyInput::StreamlineReflex;
     settings.output=mfgunlock::xemfg::native::LatencyOutput::XeLL;
     settings.forceBorderless=true;
     Require(configure(&settings,sizeof(settings)),"explicit Reflex to XeLL preference");
     auto unsupported=settings; unsupported.output=static_cast<mfgunlock::xemfg::native::LatencyOutput>(2);
     Require(!configure(&unsupported,sizeof(unsupported)),"unsupported output accepted");
+    auto oldAbi=settings; oldAbi.version=1;
+    Require(!configure(&oldAbi,sizeof(oldAbi)),"old settings padding interpreted as UI composition");
     controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
     Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"queue");
@@ -154,6 +157,14 @@ int main(int argc,char** argv) {
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(frame==8) {
+        controlStatus(&cs,sizeof(cs));
+        Require(cs.uiCompositionKnown && !cs.uiCompositionApplied && cs.uiCompositionUpdates==0,"SDK default interpolation was overridden");
+      }
+      if(frame==9 || frame==25) {
+        settings.uiComposition=frame==9;
+        Require(configure(&settings,sizeof(settings)),"UI composition preference");
+      }
       if(frame==16 || frame==32) {
         settings.flipMetering=frame==32;
         Require(configure(&settings,sizeof(settings)),"live flip request during inference");
@@ -178,7 +189,7 @@ int main(int argc,char** argv) {
       // Cover both tag APIs and both lifetime contracts with real SDK copies.
       const bool volatileInputs=frame>=17 && frame<=32;
       for(auto& tag:tagged) tag.lifecycle=volatileInputs?sl::eOnlyValidNow:sl::eValidUntilPresent;
-      const uint32_t tagCount=frame==34?1:3; // Missing MV must bypass safely.
+      const uint32_t tagCount=frame==34?1:frame==17?2:3; // Missing MV bypass; missing HUD-less uses UI interpolation.
       if(frame%2) tags(token,viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       else legacyTags(viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
@@ -187,6 +198,12 @@ int main(int argc,char** argv) {
       marker(sl::PCLMarker::ePresentStart,token);
       Check(chain->Present(0,0),"Present"); marker(sl::PCLMarker::ePresentEnd,token); wait();
       if(lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
+      if(frame==9 || frame==17 || frame==18 || frame==25) {
+        controlStatus(&cs,sizeof(cs));
+        const bool composed=frame==9 || frame==18;
+        Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
+        Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
+      }
       if(frame==34) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV did not disable FG"); }
       else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,"valid overlapping RenderSubmit/Present was rejected"); }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
@@ -205,6 +222,7 @@ int main(int argc,char** argv) {
     Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
         "observed latency route/counters missing");
     Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
+    Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==4,"UI composition setter repeated or did not restore default");
     settings.flipMetering=false; Require(configure(&settings,sizeof(settings)),"flip toggle off");
     controlStatus(&cs,sizeof(cs)); Require(!cs.flipRequested,"flip request did not reach pacer");
     settings.flipMetering=true; Require(configure(&settings,sizeof(settings)),"flip toggle on");
@@ -218,7 +236,7 @@ int main(int argc,char** argv) {
     chain.Reset(); CloseHandle(event); DestroyWindow(hwnd);
     modelStatus(&ms,sizeof(ms)); Require(ms.contexts==0,"context/COM lifetime leaked");
     Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");
-    std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
+    std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl; return 1; }
 }

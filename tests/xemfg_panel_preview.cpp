@@ -21,6 +21,7 @@ Output::~Output()=default;
 std::shared_ptr<Output> Active() {
   static auto output=std::make_shared<Output>();
   if(!output->window) output->window=std::make_shared<WindowControl>();
+  output->uiCompositionAvailable=true;
   return output;
 }
 WindowStatus WindowControl::Snapshot() { WindowStatus value; value.available=value.borderless=value.coversMonitor=true; return value; }

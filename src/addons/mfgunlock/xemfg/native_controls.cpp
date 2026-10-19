@@ -26,13 +26,14 @@ void LoadControls() {
   settings.input=ReadChoice(L"Latency",L"Input",L"Reflex")?LatencyInput::StreamlineReflex:LatencyInput::Auto;
   settings.output=ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
   settings.forceBorderless=GetPrivateProfileIntW(L"XeFG",L"ForceBorderless",0,Ini().c_str())!=0;
+  settings.uiComposition=GetPrivateProfileIntW(L"XeFG",L"UIComposition",0,Ini().c_str())!=0;
   wchar_t flip[32]{}; GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",flip,32,Ini().c_str());
   settings.flipMetering=_wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0");
 }
 bool ConfigureControls(const ControlSettings& value) {
   // This transport has one implemented input and one compatible output. Never
   // persist unsupported enum values or silently combine Reflex sleep + XeLL.
-  if(value.version!=1 || uint32_t(value.input)>1 || uint32_t(value.output)>1) return false;
+  if(value.version!=2 || uint32_t(value.input)>1 || uint32_t(value.output)>1) return false;
   ControlSettings old;
   { std::lock_guard guard(settingsLock); old=settings; settings=value; }
   const auto ini=Ini();
@@ -40,13 +41,15 @@ bool ConfigureControls(const ControlSettings& value) {
   saved=WritePrivateProfileStringW(L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":L"XeLL",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0",ini.c_str()) && saved;
+  saved=WritePrivateProfileStringW(L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0",ini.c_str()) && saved;
   settingsSaved=saved;
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
   if(old.forceBorderless!=value.forceBorderless)
     if(auto output=Active(); output && output->window) output->window->Request(value.forceBorderless);
   xess_mod::WriteLog("native_controls","\"input\":"+std::to_string(uint32_t(value.input))
       +",\"output\":"+std::to_string(uint32_t(value.output))+",\"flip_requested\":"+(value.flipMetering?"true":"false")
-      +",\"borderless_requested\":"+(value.forceBorderless?"true":"false")+",\"saved\":"+(saved?"true":"false"));
+      +",\"borderless_requested\":"+(value.forceBorderless?"true":"false")
+      +",\"ui_composition_requested\":"+(value.uiComposition?"true":"false")+",\"saved\":"+(saved?"true":"false"));
   return saved;
 }
 ControlSettings ControlsSettings() { std::lock_guard guard(settingsLock); return settings; }
@@ -70,6 +73,16 @@ ControlStatus ControlsSnapshot() {
   result.cudaLaunches=cuda.launches; result.cudaFallbacks=cuda.fallbacks;
   strncpy_s(result.cudaReason,cuda.reason.c_str(),_TRUNCATE);
   auto output=Active();
+  if(output) {
+    std::unique_lock guard(output->io,std::try_to_lock);
+    if(guard.owns_lock()) {
+      result.uiCompositionAvailable=output->uiCompositionAvailable;
+      result.uiCompositionApplied=output->uiCompositionApplied;
+      result.uiCompositionKnown=output->uiCompositionKnown;
+      result.uiCompositionResult=output->uiCompositionResult;
+      result.uiCompositionUpdates=output->uiCompositionUpdates;
+    }
+  }
   if(output && output->window) result.window=output->window->Snapshot();
   else if(output) result.window.error=output->windowBindError;
   const auto flip=sdk_pacing::Snapshot(output?output->fg:nullptr);
@@ -93,6 +106,10 @@ void DrawControls(PanelPage page) {
       status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Cores (CUDA)":
       status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shaders";
   constexpr const char* flipHelp="Uses the NVIDIA driver to space generated frames evenly. Leave enabled for driver pacing when available; otherwise XeFG uses its own pacing. Changes apply at the next frame group. Active reports driver acceptance, not a monitor scanout measurement.";
+  constexpr const char* compositionHelp="Off by default: XeFG interpolates the HUD with the image. Enable only if HUD interpolation causes artifacts. Composition needs HUD-less color from the game and updates the HUD at the real frame rate, so moving HUD elements may look less smooth. Changes apply at the next source frame.";
+  const char* composition=!status.uiCompositionKnown?"Waiting for frame status":status.uiCompositionApplied?"UI composition":
+      value.uiComposition && !status.uiCompositionAvailable?"Waiting for HUD-less input":
+      value.uiComposition?"Change pending":"UI interpolation (default)";
   if(page==PanelPage::General) {
     ui::Section("Smoothness and display");
     ui::Card card("##xe_presentation");
@@ -119,6 +136,14 @@ void DrawControls(PanelPage page) {
         "The multi-frame model is selected automatically. DLSS-G quality profiles only affect the NVIDIA backend.");
     ui::Readout("##xe_acceleration_quality","Acceleration",acceleration,
         "CUDA runs the supported model layers on NVIDIA Tensor Cores. Compatibility shaders handle other dispatches. This is the execution route, not a different quality preset.",ui::Accent);
+    ImGui::Separator();
+    ui::Setting("##xe_composition_row","UI Composition",compositionHelp,[&] {
+      ImGui::BeginDisabled(!status.uiCompositionAvailable && !value.uiComposition);
+      if(ImGui::Checkbox("##xe_ui_composition",&value.uiComposition)) ConfigureControls(value);
+      ImGui::EndDisabled();
+    });
+    ui::Readout("##xe_composition_state","HUD handling",composition,compositionHelp);
+    if(status.uiCompositionResult<0) ui::Notice("UI composition could not be applied. Copy Diagnostics for details.");
     ui::Description("For best results, keep the game's rendered frame rate stable.");
     ui::Tooltip("A higher base frame rate supplies more recent motion information. Generated frames improve smoothness but do not add new input samples.");
   }
@@ -152,17 +177,20 @@ void DrawControls(PanelPage page) {
         "NVIDIA Tensor Core execution is observed through the CUDA route. Raw counters are included in the copied report.");
     ui::Readout("##xe_diag_flip","Flip metering",flip,flipHelp,metering?ui::Accent:ui::Muted);
     ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":"Waiting for game timing");
+    ui::Readout("##xe_diag_ui","HUD handling",composition,compositionHelp);
     ui::Readout("##xe_diag_window","Display mode",window);
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.4\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.5\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
           <<"\nwindow="<<window<<" error="<<w.error<<" managed="<<w.managed
           <<"\nnative_reflex_disabled="<<status.nativeReflexDisabled<<" game_reflex_mode="<<status.gameReflexMode
           <<"\nsleeps="<<status.sleeps<<" markers="<<status.markers<<" mode_changes="<<status.modeUpdates<<" last_sleep_us="<<status.lastSleepUs
+          <<"\nui_composition_requested="<<value.uiComposition<<" applied="<<status.uiCompositionApplied<<" known="<<status.uiCompositionKnown
+          <<" available="<<status.uiCompositionAvailable<<" result="<<status.uiCompositionResult<<" updates="<<status.uiCompositionUpdates
           <<"\nbridge="<<bridge.detail<<" source_presents="<<bridge.frames<<" incomplete_inputs="<<bridge.rejected
           <<" submissions="<<bridge.submitted<<" SDK_result="<<bridge.sdkResult;
       ImGui::SetClipboardText(report.str().c_str());

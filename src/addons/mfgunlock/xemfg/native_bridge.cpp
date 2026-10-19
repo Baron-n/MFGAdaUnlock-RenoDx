@@ -123,7 +123,8 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   using Debug=xefg_swapchain_result_t(*)(xefg_swapchain_handle_t,uint32_t,uint32_t,void*);
   if(auto debug=reinterpret_cast<Debug>(GetProcAddress(GetModuleHandleW(L"libxess_fg.dll"),"xefgSwapChainEnableDebugFeature")))
     debug(o->fg,0,0,nullptr);
-  a.xefgSwapChainSetUiCompositionState(o->fg,XEFG_SWAPCHAIN_UI_COMPOSITION_STATE_ENABLED);
+  // Keep Intel's default (composition disabled). The user's opt-in preference
+  // is consumed at Present, after the matching frame's inputs are known.
   a.xefgSwapChainSetEnabled(o->fg,0);
   SetLastError(0); o->window=WindowControl::Bind(hwnd,forceBorderless);
   if(!o->window) o->windowBindError=GetLastError();

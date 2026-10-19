@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.4
+MFGAdaUnlock - Native ReShade XeMFG R1.5
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -31,6 +31,11 @@ In ReShade's MFG Unlock panel:
 - XeMFG multiplier is 2x-6x. Enable frame generation in the game's menu.
 - The panel reports effective FG state, model and CUDA/Tensor acceleration.
   Compute capability, layer/launch counts and fallbacks remain in the copied report.
+- Quality > UI Composition is unchecked by default. Off lets XeFG interpolate
+  the HUD. Enable it only for HUD interpolation artifacts; composition requires
+  HUD-less input and updates the HUD at the real frame rate. The preference is
+  saved as [XeFG] UIComposition=0/1 and applied at the next source Present.
+  A missing HUD-less input keeps interpolation active without erasing the choice.
 - Driver flip metering can be toggled live. A request is committed by the
   presenter at the next generated batch, not in the middle of one. Status
   distinguishes NVAPI availability, queue readiness, driver acceptance,
@@ -95,6 +100,15 @@ Diagnostics. The ReShade font and other addons' styles are preserved. Frame
 generation, CUDA execution, XeLL scheduling and metering behavior are unchanged
 from R1.3. On NVIDIA, the metering used here and by dashdogy is NVIDIA driver
 flip metering; XeFG's own pacing remains the fallback. See compact-interface.md.
+
+R1.5 removes the unconditional UI-composition enable and adds the opt-in control
+above. Requested and SDK-acknowledged states are distinct; failed changes bypass
+that generated batch and retry instead of announcing success. Existing APIs for
+native control settings/status now use version 2, rejecting older layout padding.
+Pacing was audited against the pinned MIT source, saved game logs and numerical
+tests. No pacing formulas, GPU waits or driver deadlines were changed. The bridge
+log no longer labels all active output as metered. The detailed findings and
+measurement limits are in ui-composition-and-pacing.md.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"

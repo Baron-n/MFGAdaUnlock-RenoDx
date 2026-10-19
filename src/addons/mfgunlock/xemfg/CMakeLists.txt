@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -80,6 +80,14 @@ target_include_directories(xemfg_latency_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xe
 target_link_libraries(xemfg_latency_tests PRIVATE d3d12 dxgi)
 add_test(NAME xemfg_latency_translation COMMAND xemfg_latency_tests)
 set_tests_properties(xemfg_latency_translation PROPERTIES TIMEOUT 20)
+add_executable(xemfg_ui_tests "${CMAKE_SOURCE_DIR}/xemfg_ui_tests.cpp" native_ui.cpp)
+target_compile_definitions(xemfg_ui_tests PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_ui_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
+  "${RENODX_SOURCE_DIR}/external/Streamline/include")
+target_link_libraries(xemfg_ui_tests PRIVATE d3d12 dxgi)
+add_test(NAME xemfg_ui_composition COMMAND xemfg_ui_tests)
+add_executable(xemfg_cadence_tests "${CMAKE_SOURCE_DIR}/xemfg_cadence_tests.cpp")
+add_test(NAME xemfg_cadence COMMAND xemfg_cadence_tests)
 add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_draw.cpp"
