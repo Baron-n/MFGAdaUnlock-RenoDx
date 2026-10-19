@@ -1,5 +1,15 @@
 # XeMFG nativo no ReShade — R1
 
+## Correção R1.1 — ordem dos marcadores
+
+A R1 (`a5badabeb73a11abb34f540b1ad63076e9df3f69`, addon SHA-256 `36942e1d5d66a4747df86e8a3a0fbb4f632e1932ae1152927b7fc301a27e9adc`) abriu o Cyberpunk sem ativar FG. O log mostrou modelo/contexto prontos, pedido habilitado, recursos `7` (depth/MV/HUDless), constantes válidas, sleep XeLL bem-sucedido, mas máscara de marcadores `23` no instante de Present: simulação start/end, submissão start e apresentação start. O gate exigia também submissão end (`31`) e bloqueou a geração. Os lançamentos Tensor permaneceram em zero nessa sessão.
+
+O [contrato XeLL](https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/doc/xell_developer_guide_english.md#markers) permite sobreposição das fases; cada end deve suceder o seu start, sem exigir que RenderSubmitEnd anteceda Present. A R1.1 remove essa exigência prematura do gate, mantendo a transmissão do end quando realmente recebido. Não fabrica timestamps, não remove waits e não desativa validações de inputs, sleep ou exclusividade do gerador. Contabiliza e registra os primeiros ends recebidos depois de Present para verificar a integração real.
+
+Os quatro testes nativos foram executados novamente em 2x/3x/4x/6x e passaram. Agora enviam RenderSubmitEnd após Present nos últimos 32 frames e exigem admissão da geração e sucesso do encaminhamento tardio ao XeLL, preservando também o teste negativo de MV ausente. A suíte completa 50/3 pertence ao baseline R1; a revalidação desta mudança foi dirigida aos quatro testes afetados. Isso demonstra o cenário sintético permitido, **não prova ainda a ordem final dos marcadores no Cyberpunk**, que será conferida no novo log. A R1.1 usa FileVersion `1.4.5.6`; a validação em jogo continua pendente.
+
+Os logs originais foram preservados localmente em `out/native-reshade-r1-game-check/` na raiz da workspace, separados das evidências sintéticas do pacote.
+
 Data: 19/10/2026. Branch: `feature/1.4.5-xemfg-reshade`, derivada da X1.3 (`0d8dc0b6d9aff9aad9afaf57f6939e94fada93c5`), descendente da 1.4.5 oficial (`0fe65579d287581107babe267ee3e48c9135bf8a`). A árvore antiga modificada, a X1.3 e a release publicada foram preservadas.
 
 ## Entrega

@@ -10,6 +10,7 @@ struct Status {
   bool factoryHook{}, streamline{}, output{}, xell{}, inputs{}, enabled{};
   uint32_t multiplier{4}, frames{}, rejected{};
   uint32_t submitted{1};
+  uint32_t lateSubmitEnds{};
   int32_t sdkResult{};
   uint64_t outputPresents{};
   char detail[256]{"Waiting for a D3D12 device"};

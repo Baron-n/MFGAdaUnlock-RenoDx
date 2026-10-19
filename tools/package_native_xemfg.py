@@ -39,6 +39,7 @@ def main():
         'notices/Intel-SDK-LICENSE.txt':args.intel_sdk/'LICENSE.txt',
         'notices/PROVENANCE.md':root/'src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md',
         'evidence/ctest.log':root/'build/ctest-native.log',
+        'evidence/ctest-r1.1.log':root/'build/ctest-native-r1.1.log',
     }
     for count in (2,3,4,6):
         for case in sorted((root/'build/tests/native-checks').glob('native-*'),reverse=True):
@@ -62,6 +63,7 @@ def main():
                 source[path.relative_to(root).as_posix()]=sha(path)
     manifest={
         'identity':'Native ReShade XeMFG R1',
+        'revision':'R1.1',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
         'official_1_4_5_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
@@ -74,7 +76,7 @@ def main():
         'source_inputs_sha256':source,
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'50 passed, 3 optional skipped; real ReShade/Intel inference with synthetic Streamline inputs at 2x/3x/4x/6x; occluded output, no gameplay/display cadence/physical latency claim',
+        'test_scope':'R1 baseline: 50 passed, 3 optional skipped. R1.1: four native tests rerun and passed at 2x/3x/4x/6x, including RenderSubmitEnd after Present and successful forwarding of its real timestamp. Synthetic/occluded output; no gameplay/display cadence/physical latency claim.',
         'gameplay_validated':False,
         'assets':[{'name':name,'sha256':sha(output/name),'bytes':(output/name).stat().st_size} for name in assets],
     }

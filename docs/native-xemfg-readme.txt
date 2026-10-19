@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1
+MFGAdaUnlock - Native ReShade XeMFG R1.1
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -41,7 +41,11 @@ bypass, FG disable, resize and context destruction. Full suite: 50 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
-Native R1 gameplay validation remains pending.
+R1 opened Cyberpunk but did not activate generation: admission incorrectly
+required RenderSubmitEnd before Present. R1.1 allows these phases to overlap,
+as XeLL permits, and keeps forwarding the game's actual END timestamp.
+All four native inference tests passed again with END after Present, while
+still checking incomplete-input bypass. R1.1 gameplay validation is pending.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"

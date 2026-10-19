@@ -191,7 +191,17 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
         if(!(frame->markers&(1u<<mapped))) {
           const auto r=s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(mapped));
           if(r!=XELL_RESULT_SUCCESS) frame->failed=true;
-          else frame->markers|=1u<<mapped;
+          else {
+            frame->markers|=1u<<mapped;
+            if(mapped==XELL_RENDERSUBMIT_END && id<=o->last) {
+              // XeLL explicitly allows RenderSubmit and Present to overlap.
+              // Keep the real timestamp; do not fabricate an early END.
+              auto& state=State(); std::lock_guard guard(state.lock);
+              if(++state.status.lateSubmitEnds<=4)
+                xess_mod::WriteLog("native_late_submit_end","\"id\":"+std::to_string(id)
+                    +",\"markers\":"+std::to_string(frame->markers));
+            }
+          }
         }
       }
     }
@@ -266,7 +276,12 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   bool ready=it!=o->frames.end() && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
   if(ready) {
     auto& f=it->second;
-    ready=f.constants && f.valid && !f.failed && f.sleeping && (f.markers&0x1f)==0x1f
+    // RenderSubmit END can legally arrive after Present starts or returns.
+    // Admission requires the observed frame's starts, simulation and sleep;
+    // END continues to be forwarded at its actual arrival in CaptureMarker.
+    constexpr uint32_t beforePresent=(1u<<XELL_SIMULATION_START)|(1u<<XELL_SIMULATION_END)
+        |(1u<<XELL_RENDERSUBMIT_START)|(1u<<XELL_PRESENT_START);
+    ready=f.constants && f.valid && !f.failed && f.sleeping && (f.markers&beforePresent)==beforePresent
         && (f.resources&required)==required && f.motionWidth && f.motionHeight;
     if(ready) {
       auto data=f.data; data.motionVectorScaleX*=f.motionWidth; data.motionVectorScaleY*=f.motionHeight;
@@ -299,6 +314,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     o->lastAdmission=admission; o->admissionTick=tick;
     xess_mod::WriteLog("native_frame_admission","\"id\":"+std::to_string(id)
         +",\"native_off\":"+std::to_string(s.nativeOff.load())+",\"requested\":"+std::to_string(s.requested.load())
+        +",\"reflex_off\":"+std::to_string(s.reflexOff.load())
         +",\"resources\":"+std::to_string(f?f->resources:0)+",\"markers\":"+std::to_string(f?f->markers:0)
         +",\"constants\":"+std::to_string(f?f->constants:0)+",\"valid\":"+std::to_string(f?f->valid:0)
         +",\"failed\":"+std::to_string(f?f->failed:0)+",\"sleep\":"+std::to_string(f?f->sleeping:0));

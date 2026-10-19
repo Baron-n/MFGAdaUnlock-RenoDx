@@ -134,9 +134,13 @@ int main(int argc,char** argv) {
       if(frame%2) tags(token,viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       else legacyTags(viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
-      marker(sl::PCLMarker::eRenderSubmitEnd,token); marker(sl::PCLMarker::ePresentStart,token);
+      const bool lateSubmitEnd=frame>=17;
+      if(!lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
+      marker(sl::PCLMarker::ePresentStart,token);
       Check(chain->Present(0,0),"Present"); marker(sl::PCLMarker::ePresentEnd,token); wait();
+      if(lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
       if(frame==34) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV did not disable FG"); }
+      else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,"valid overlapping RenderSubmit/Present was rejected"); }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
     }
     mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms)); bridgeStatus(&bs,sizeof(bs));
@@ -147,6 +151,7 @@ int main(int argc,char** argv) {
     // An occluded window can report only its generated submissions. Do not
     // turn this into a claim about four displayed frames or scanout cadence.
     Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
+    Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
     sl::DLSSGState live; Require(getState(viewport,live,nullptr)==sl::Result::eOk,"GetState bridge");
     Require(live.numFramesActuallyPresented==ms.presented && live.numFramesToGenerateMax==5,"requested and submitted counts confused");
     live.structVersion=1; live.numFramesToGenerateMax=0xdeadbeef;
