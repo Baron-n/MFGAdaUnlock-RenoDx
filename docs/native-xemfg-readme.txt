@@ -45,7 +45,12 @@ R1 opened Cyberpunk but did not activate generation: admission incorrectly
 required RenderSubmitEnd before Present. R1.1 allows these phases to overlap,
 as XeLL permits, and keeps forwarding the game's actual END timestamp.
 All four native inference tests passed again with END after Present, while
-still checking incomplete-input bypass. R1.1 gameplay validation is pending.
+still checking incomplete-input bypass. A subsequent Cyberpunk session also
+confirmed the late END markers, 2x/3x/4x/6x SDK output, Tensor execution and
+accepted driver metering. The user also reports image and responsiveness
+remain good versus X1.3. This is initial functional and subjective approval;
+controlled performance, blind image equivalence, monitor cadence and physical
+latency have not been measured.
 
 ROLLBACK (game closed):
   powershell -NoProfile -ExecutionPolicy Bypass -File Restore-MFGBackup.ps1 -BackupDirectory "<backup printed by installer>"

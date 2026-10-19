@@ -6,9 +6,23 @@ A R1 (`a5badabeb73a11abb34f540b1ad63076e9df3f69`, addon SHA-256 `36942e1d5d66a47
 
 O [contrato XeLL](https://github.com/intel/xess/blob/de0fb9c1c510661c571164e1418ceca8101dab69/doc/xell_developer_guide_english.md#markers) permite sobreposição das fases; cada end deve suceder o seu start, sem exigir que RenderSubmitEnd anteceda Present. A R1.1 remove essa exigência prematura do gate, mantendo a transmissão do end quando realmente recebido. Não fabrica timestamps, não remove waits e não desativa validações de inputs, sleep ou exclusividade do gerador. Contabiliza e registra os primeiros ends recebidos depois de Present para verificar a integração real.
 
-Os quatro testes nativos foram executados novamente em 2x/3x/4x/6x e passaram. Agora enviam RenderSubmitEnd após Present nos últimos 32 frames e exigem admissão da geração e sucesso do encaminhamento tardio ao XeLL, preservando também o teste negativo de MV ausente. A suíte completa 50/3 pertence ao baseline R1; a revalidação desta mudança foi dirigida aos quatro testes afetados. Isso demonstra o cenário sintético permitido, **não prova ainda a ordem final dos marcadores no Cyberpunk**, que será conferida no novo log. A R1.1 usa FileVersion `1.4.5.6`; a validação em jogo continua pendente.
+Os quatro testes nativos foram executados novamente em 2x/3x/4x/6x e passaram. Agora enviam RenderSubmitEnd após Present nos últimos 32 frames e exigem admissão da geração e sucesso do encaminhamento tardio ao XeLL, preservando também o teste negativo de MV ausente. A suíte completa 50/3 pertence ao baseline R1; a revalidação desta mudança foi dirigida aos quatro testes afetados. Esses testes demonstraram o cenário sintético permitido; a verificação real posterior está abaixo. A R1.1 usa FileVersion `1.4.5.6`.
 
 Os logs originais foram preservados localmente em `out/native-reshade-r1-game-check/` na raiz da workspace, separados das evidências sintéticas do pacote.
+
+### R1.1 — ativação confirmada no Cyberpunk
+
+O usuário informou que a cena carregou em 4x. A sessão seguinte da R1.1, com fonte binária em `b8bf0031daf12fbf9d13bc1e8012f82934fc2654`, addon SHA-256 `66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac`, foi reexaminada pelos logs salvos, sem nova captura. ReShade 6.8.0.2155 foi carregado diretamente como `dxgi.dll` e registrou o addon 1.4.5.6. A instalação não contém o companion ASI ativo; os checks de startup do backend recusam um host OptiScaler 10 concorrente.
+
+No intervalo de ticks `66197250–66343109` (145,859 s de sessão, incluindo transições), o SDK apresentou **31 amostras bem-sucedidas de 4 outputs**, além de uma amostra de cada 2, 3 e 6 outputs após mudanças de multiplicador. São amostras esparsas de status, não contagem de todos os frames nem FPS exibido. A rota CUDA foi registrada ativa em compute 8.9 com 16 kernels/17 layers; o contador de lançamentos Tensor avançou de zero a **279.764**. Há registros de deadlines em 2x/3x/4x/6x com `flip_metered=true` e configurações aceitas pelo driver (`status=0`, `feedback=0`).
+
+Os primeiros quatro `native_late_submit_end` reais foram registrados para os IDs 450–453, todos com máscara final `63`: os seis marcadores obrigatórios foram encaminhados para esses frames. Isso confirma no jogo o cenário que a R1 bloqueava. As entradas admitidas também confirmam inputs/constantes válidos, sleep XeLL executado e desligamento confirmado do FG NVIDIA e do Reflex nativo.
+
+Foram amostrados três resultados `-14` (inputs insuficientes) nas reentradas da geração; cada um foi seguido por sucesso na próxima amostra, cerca de um segundo depois. Eles não foram omitidos da evidência. Há hitches registrados pelo pacer; este teste não é um benchmark e não permite atribuir esses eventos à ponte ou comparar sua frequência com a X1.3.
+
+**Conclusão sustentada:** a integração nativa executa MFG e pacing no Cyberpunk, e a correção de ativação R1.1 foi validada funcionalmente. Em seguida, o usuário confirmou que a imagem e a resposta continuam boas comparadas à X1.3 com OptiScaler. Isso fornece aprovação subjetiva inicial; equivalência visual cega, FPS comparativo, cadência efetivamente exibida e latência física não foram medidos. Não houve nova build nem mudança de configuração para produzir essa conclusão.
+
+Evidências locais preservadas em `out/native-reshade-r1.1-validation-2026-10-19/`: sessão JSONL, ReShade.log, INI e `validation.json` (SHA-256 `1a06879a855ff03655cd8fb52c283c5491c52d97a7a56d1221477d1376a10cee`). O ZIP/manifesto selado antes da validação continua representando seu estado pré-validação; este registro posterior não reescreve os artefatos publicados localmente.
 
 Data: 19/10/2026. Branch: `feature/1.4.5-xemfg-reshade`, derivada da X1.3 (`0d8dc0b6d9aff9aad9afaf57f6939e94fada93c5`), descendente da 1.4.5 oficial (`0fe65579d287581107babe267ee3e48c9135bf8a`). A árvore antiga modificada, a X1.3 e a release publicada foram preservadas.
 

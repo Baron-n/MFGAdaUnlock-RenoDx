@@ -15,6 +15,7 @@ def main():
     ap.add_argument('--output',type=Path,required=True)
     ap.add_argument('--official-addon',type=Path,required=True)
     ap.add_argument('--intel-sdk',type=Path,required=True)
+    ap.add_argument('--game-validation',type=Path)
     args=ap.parse_args()
     root=Path(__file__).resolve().parent.parent
     output=args.output.resolve(); output.mkdir(parents=True,exist_ok=True)
@@ -41,6 +42,19 @@ def main():
         'evidence/ctest.log':root/'build/ctest-native.log',
         'evidence/ctest-r1.1.log':root/'build/ctest-native-r1.1.log',
     }
+    game_validation=None
+    if args.game_validation:
+        game_validation=json.loads(args.game_validation.read_text(encoding='utf-8'))
+        if game_validation['input_identity']['renodx-mfgunlock.addon64']!=sha(addon):
+            raise ValueError('Gameplay evidence belongs to a different addon')
+        if not game_validation.get('functional_runtime_activation_confirmed'):
+            raise ValueError('Gameplay evidence did not confirm runtime activation')
+        assets['evidence/game/validation.json']=args.game_validation
+        for name in game_validation['artifacts']:
+            src=args.game_validation.parent/name
+            if src.resolve().parent!=args.game_validation.parent.resolve() or sha(src)!=game_validation['artifacts'][name]:
+                raise ValueError('Gameplay evidence file changed or escapes its directory: '+name)
+            assets['evidence/game/'+name]=src
     for count in (2,3,4,6):
         for case in sorted((root/'build/tests/native-checks').glob('native-*'),reverse=True):
             result=case/'result.json'; candidate=case/'renodx-mfgunlock-native.addon64'
@@ -77,7 +91,14 @@ def main():
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
         'test_scope':'R1 baseline: 50 passed, 3 optional skipped. R1.1: four native tests rerun and passed at 2x/3x/4x/6x, including RenderSubmitEnd after Present and successful forwarding of its real timestamp. Synthetic/occluded output; no gameplay/display cadence/physical latency claim.',
-        'gameplay_validated':False,
+        'gameplay_validated':bool(game_validation and game_validation.get('functional_and_initial_user_validation_complete')),
+        'gameplay_validation_scope':None if not game_validation else {
+            'game':'Cyberpunk 2077','sdk_outputs_observed':[2,3,4,6],
+            'functional_runtime_activation':game_validation['functional_runtime_activation_confirmed'],
+            'user_reports_image_and_response_good':game_validation.get('user_reports_image_and_response_good',False),
+            'limits':game_validation['limits'],
+            'evidence_source_commit':game_validation['source_commit'],
+        },
         'assets':[{'name':name,'sha256':sha(output/name),'bytes':(output/name).stat().st_size} for name in assets],
     }
     (output/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2),encoding='utf-8')
