@@ -4,6 +4,7 @@
 // count admission and the extra-output pacing for the admitted provider pair.
 #include "../backend_selection.hpp"
 #include "backend_api.hpp"
+#include "async_log.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/port/model_port.h"
 #include "vendor/port/shader_port.h"
@@ -30,7 +31,6 @@ constexpr auto success = XEFG_SWAPCHAIN_RESULT_SUCCESS;
 constexpr auto unsupported = XEFG_SWAPCHAIN_RESULT_ERROR_UNSUPPORTED;
 HMODULE self{}, host{}, fg{}, ll{};
 std::recursive_mutex mutex;
-std::mutex sinkMutex;
 std::once_flag initializeOnce;
 std::once_flag startupOnce;
 HMODULE bootstrapFg{};
@@ -42,6 +42,20 @@ bool InsideLoader() noexcept {
   return !query || query(); // Unknown context never authorizes SDK entry calls.
 }
 void CompleteStartup() noexcept;
+mfgunlock::xemfg::AsyncLog& LogQueue() { static auto* queue=new mfgunlock::xemfg::AsyncLog; return *queue; }
+void StartLog() {
+  // CompleteStartup is outside the loader. The same process-lifetime policy
+  // as the installed hooks protects the worker; no DllMain join or file I/O.
+  HMODULE pinned{};
+  if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+      reinterpret_cast<LPCWSTR>(&StartLog),&pinned)) return;
+  const auto path=mfgunlock::backend::Directory()/L"MFGAdaUnlock-XeMFG.log";
+  auto file=std::make_shared<std::ofstream>();
+  LogQueue().Start([file,path](const char* bytes,size_t count) {
+    if(!file->is_open()) file->open(path,std::ios::app|std::ios::binary);
+    file->write(bytes,std::streamsize(count)); file->flush(); return bool(*file);
+  });
+}
 struct Context {
   ComPtr<ID3D12Device> device;
   uint64_t generation{};
@@ -458,6 +472,9 @@ void CompleteStartup() noexcept {
     try { Start(); }
     catch (const std::exception& e) { std::lock_guard lock(mutex); Detail(e.what()); xess_mod::WriteLog("startup_rejected","\"reason\":\""+escape(e.what())+"\""); }
     catch (...) { std::lock_guard lock(mutex); Detail("unexpected_startup_failure"); }
+    // Start discovery/publication before creating an additional thread. Startup
+    // records already fit in the bounded queue; also drain a rejected startup.
+    try { StartLog(); } catch(...) {}
   });
 }
 bool CaptureEarlyCreate() noexcept {
@@ -493,12 +510,18 @@ DWORD WINAPI StartupWorker(void* reference) {
 namespace xess_mod {
 HMODULE Self() noexcept { return self; }
 void WriteLog(const char* stage,const std::string& fields) noexcept {
-  try {
-    std::lock_guard lock(sinkMutex);
-    std::ofstream f(mfgunlock::backend::Directory()/L"MFGAdaUnlock-XeMFG.log",std::ios::app);
-    f<<"{\"tick\":"<<GetTickCount64()<<",\"event\":\""<<stage<<"\""<<(fields.empty()?"":",")<<fields<<"}\n";
-  } catch (...) {}
+  try { LogQueue().Push(GetTickCount64(),GetCurrentProcessId(),stage,fields); } catch(...) {}
 }
+}
+namespace mfgunlock::xemfg {
+LogStatus LogSnapshot() noexcept {
+  const auto stats=LogQueue().Snapshot();
+  return {stats.pending,stats.dropped,stats.batches,stats.failed,stats.started};
+}
+}
+extern "C" __declspec(dllexport) bool MFGAXeLogFlush(uint32_t timeoutMs) {
+  // Explicit diagnostic/test boundary only; never called by frame hooks.
+  return LogQueue().Flush((std::min)(timeoutMs,2000u));
 }
 extern "C" __declspec(dllexport) void InitializeASI() {
   std::call_once(initializeOnce,[] {

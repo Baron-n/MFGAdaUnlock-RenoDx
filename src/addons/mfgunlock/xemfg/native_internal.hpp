@@ -2,6 +2,8 @@
 #pragma once
 #include "native_bridge.hpp"
 #include "native_controls.hpp"
+#include "frame_store.hpp"
+#include "native_diagnostics.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -11,7 +13,6 @@
 #include <sl_reflex.h>
 #include <sl_pcl.h>
 #include <atomic>
-#include <map>
 #include <memory>
 #include <optional>
 
@@ -31,6 +32,7 @@ struct Api {
   bool Load();
 };
 struct Frame {
+  uint64_t sleepUs{};
   uint32_t id{}, viewport{}, resources{}, markers{};
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
@@ -45,11 +47,12 @@ struct Output {
   DWORD windowBindError{};
   xefg_swapchain_handle_t fg{};
   xell_context_handle_t ll{};
-  std::map<uint32_t,Frame> frames;
+  FrameStore<Frame> frames;
   uint32_t last{}, appliedCount{}, width{}, height{};
   uint32_t lastAdmission{UINT32_MAX};
   uint64_t admissionTick{};
   uint64_t epoch{};
+  uint64_t diagnosticOutput{};
   uint32_t sleepInterval{};
   bool sleepConfigured{}, sleepActive{};
   // XeFG initializes with composition disabled. A live preference is applied
@@ -76,12 +79,7 @@ struct Bridge {
 };
 Bridge& State();
 inline Frame* FindFrame(Output& o,uint32_t id) {
-  if(!id) return nullptr;
-  if(!o.frames.contains(id)) {
-    if(o.frames.size()>=16) return nullptr;
-    o.frames[id].id=id;
-  }
-  return &o.frames[id];
+  return o.frames.Acquire(id);
 }
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id);
 bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
@@ -91,7 +89,7 @@ bool Hook(void* entry,void* replacement,void** trampoline);
 void DiscoverStreamline();
 std::shared_ptr<Output> Active();
 void BeforePresent(const std::shared_ptr<Output>& o);
-void AfterPresent(const std::shared_ptr<Output>& o);
+void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe=nullptr,HRESULT result=S_OK);
 HRESULT CreateOutput(IDXGIFactory2*,IUnknown*,HWND,const DXGI_SWAP_CHAIN_DESC1*,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
 IDXGISwapChain1* Wrap(ComPtr<IDXGISwapChain4> chain,std::shared_ptr<Output> owner);

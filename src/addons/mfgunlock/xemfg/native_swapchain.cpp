@@ -22,7 +22,11 @@ public:
   Swapchain(ComPtr<IDXGISwapChain4> value,std::shared_ptr<Output> o):chain(std::move(value)),owner(std::move(o)){}
   ~Swapchain() {
     { auto& s=State(); std::lock_guard lock(s.lock);
-      if(s.output.lock()==owner) { s.output.reset(); s.status.output=s.status.xell=s.status.enabled=false; }
+      if(s.output.lock()==owner) {
+        s.output.reset(); s.status.output=s.status.xell=s.status.enabled=s.status.inputs=false;
+        s.status.submitted=1; s.status.sdkResult=0;
+        s.viewport=UINT32_MAX; s.recording=0; s.presenting=0;
+      }
     }
     chain.Reset(); // Release the public Intel proxy before destroying its context.
     owner.reset();
@@ -46,8 +50,8 @@ public:
   HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return chain->GetDevice(a,b); }
   HRESULT STDMETHODCALLTYPE Present(UINT sync,UINT flags) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present(sync,flags);
-    std::lock_guard lock(owner->presents);
-    BeforePresent(owner); auto hr=chain->Present(sync,flags); AfterPresent(owner); return hr;
+    CpuProbe probe; std::lock_guard lock(owner->presents); probe.Locked();
+    BeforePresent(owner); probe.Prepared(); auto hr=chain->Present(sync,flags); probe.Returned(); AfterPresent(owner,&probe,hr); return hr;
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
   HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
@@ -79,8 +83,8 @@ public:
   HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return chain->GetCoreWindow(a,b); }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present1(sync,flags,params);
-    std::lock_guard lock(owner->presents);
-    BeforePresent(owner); auto hr=chain->Present1(sync,flags,params); AfterPresent(owner); return hr;
+    CpuProbe probe; std::lock_guard lock(owner->presents); probe.Locked();
+    BeforePresent(owner); probe.Prepared(); auto hr=chain->Present1(sync,flags,params); probe.Returned(); AfterPresent(owner,&probe,hr); return hr;
   }
   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }
   HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** a) override { return chain->GetRestrictToOutput(a); }

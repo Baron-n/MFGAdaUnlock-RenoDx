@@ -182,7 +182,7 @@ void DrawControls(PanelPage page) {
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.5\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.6\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
@@ -193,9 +193,23 @@ void DrawControls(PanelPage page) {
           <<" available="<<status.uiCompositionAvailable<<" result="<<status.uiCompositionResult<<" updates="<<status.uiCompositionUpdates
           <<"\nbridge="<<bridge.detail<<" source_presents="<<bridge.frames<<" incomplete_inputs="<<bridge.rejected
           <<" submissions="<<bridge.submitted<<" SDK_result="<<bridge.sdkResult;
+      const auto log=LogSnapshot();
+      report<<"\nasync_log_started="<<log.started<<" pending="<<log.pending<<" dropped="<<log.dropped<<" failed_batches="<<log.failed;
       ImGui::SetClipboardText(report.str().c_str());
     }
     ui::Tooltip("Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.");
+    if(ImGui::CollapsingHeader("Performance capture (advanced)")) {
+      bool enabled=TimingEnabled();
+      ui::Setting("##xe_cpu_capture","Collect CPU timings","Off by default. Records a bounded window of source Present timing, SDK-call duration and XeLL sleep. Adds profiling overhead; does not measure displayed frames or GPU execution.",[&] {
+        if(ImGui::Checkbox("##xe_cpu_enabled",&enabled)) {
+          SetTimingEnabled(enabled);
+          WritePrivateProfileStringW(L"Diagnostics",L"CpuTiming",enabled?L"1":L"0",Ini().c_str());
+        }
+      });
+      if(ImGui::Button("Copy timing summary")) ImGui::SetClipboardText(TimingReport().c_str());
+      ui::Tooltip("Includes CPU p95/p99/p99.9 and reports unavailable display/GPU/physical measurements explicitly. Use PresentMon for displayed intervals.");
+      if(ImGui::Button("Clear timing window")) ClearTiming();
+    }
   }
   if(!status.settingsSaved) ui::Notice("Settings are active but could not be saved. Check write access to the game folder.");
 }

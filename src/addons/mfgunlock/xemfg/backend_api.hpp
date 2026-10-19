@@ -10,6 +10,8 @@ struct Status {
   char detail[256] = "XeMFG companion not initialized";
 };
 using GetStatus = bool (*)(Status*, uint32_t);
+struct LogStatus { uint64_t pending{},dropped{},batches{},failed{}; bool started{}; };
+LogStatus LogSnapshot() noexcept;
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 // Overlay readers must not wait behind an SDK call that may join/present.
 bool TryModelStatus(Status& out);

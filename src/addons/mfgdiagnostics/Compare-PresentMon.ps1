@@ -37,6 +37,7 @@ foreach ($name in @('display_intervals','application_intervals','present_interva
     reason = $reason
     mean_delta_ms = if (!$reason) { [math]::Round($b.$name.mean_ms - $a.$name.mean_ms,4) } else { $null }
     p99_delta_ms = if (!$reason) { [math]::Round($b.$name.p99_ms - $a.$name.p99_ms,4) } else { $null }
+    p999_delta_ms = if (!$reason -and $null -ne $a.$name.p999_ms -and $null -ne $b.$name.p999_ms) { [math]::Round($b.$name.p999_ms - $a.$name.p999_ms,4) } else { $null }
   }
 }
 $report = [ordered]@{schema=1; baseline=$Baseline; candidate=$Candidate; metrics=$metrics;

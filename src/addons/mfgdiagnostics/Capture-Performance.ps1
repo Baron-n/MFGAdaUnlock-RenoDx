@@ -12,9 +12,10 @@ param(
   [string]$ProcessName,
 
   [string]$ConfigurationNotes = '',
-  [ValidateSet('unknown','runtime','legacy','native')][string]$TimingPath = 'unknown',
+  [ValidateSet('unknown','runtime','legacy','native','xemfg')][string]$TimingPath = 'unknown',
   [string]$RuntimeIdentity = 'unknown',
   [string]$BuildManifest = '',
+  [ValidateRange(0,10000)][double]$DisplayedStutterThresholdMs = 0,
 
   [string]$OutputRoot = (Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'MFGBenchmarks'),
 
@@ -50,7 +51,7 @@ try {
     $path = $loadedModule.FileName
     $name = [IO.Path]::GetFileName($path)
     if ($name -match '^(sl\.|nvngx_)' -or
-        $name -match '^(ReShade|renodx-mfg)' -or
+        $name -match '^(ReShade|renodx-mfg|libxess_fg|libxell|nvcuda|nvapi64)' -or
         $name -like '*.addon64' -or $path -match '(?i)[\\/]models[\\/](dlssg|sl_dlss_g_0)[\\/]') {
       $item = Get-Item -LiteralPath $path -ErrorAction Stop
       [ordered]@{
@@ -88,12 +89,17 @@ $collectorIdentity = "$( $collectorItem.VersionInfo.FileVersion )|sha256=$collec
 $provenance = [ordered]@{ status = 'manifest not supplied'; active_provider = 'unproven' }
 if ($BuildManifest) {
   $manifest = Get-Content -LiteralPath $BuildManifest -Raw | ConvertFrom-Json
-  if (!$manifest.addon_sha256 -or !(@($modules | Where-Object { $_.sha256 -eq $manifest.addon_sha256 }).Count)) {
+  $addonHash=$manifest.addon_sha256
+  if(!$addonHash -and $manifest.assets) {
+    $addons=@($manifest.assets | Where-Object { $_.name -eq 'renodx-mfgunlock.addon64' })
+    if($addons.Count -eq 1) { $addonHash=$addons[0].sha256 }
+  }
+  if (!$addonHash -or !(@($modules | Where-Object { $_.sha256 -eq $addonHash }).Count)) {
     throw 'Build manifest does not match a mapped addon hash; refusing an ambiguous capture.'
   }
   Copy-Item -LiteralPath $BuildManifest -Destination (Join-Path $directory 'addon-build-manifest.json')
   $provenance = [ordered]@{ status='mapped addon hash matched'; source_commit=$manifest.source_commit;
-    addon_sha256=$manifest.addon_sha256; manifest_sha256=(Get-FileHash -LiteralPath $BuildManifest -Algorithm SHA256).Hash;
+    addon_sha256=$addonHash; manifest_sha256=(Get-FileHash -LiteralPath $BuildManifest -Algorithm SHA256).Hash;
     active_provider='unproven; use RuntimeIdentity only after feature selection is established' }
 }
 $metadata = [ordered]@{
@@ -120,7 +126,7 @@ $metadata = [ordered]@{
 $metadata | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (
   Join-Path $directory 'capture-metadata.json') -Encoding UTF8
 
-if (Test-Path -LiteralPath $NvapiProbePath -PathType Leaf) {
+if ($TimingPath -ne 'xemfg' -and (Test-Path -LiteralPath $NvapiProbePath -PathType Leaf)) {
   & $NvapiProbePath $target.Id | Set-Content -LiteralPath (Join-Path $directory 'nvapi-before.txt')
 }
 
@@ -152,7 +158,7 @@ if ($isAdmin) {
   if ($run.ExitCode -ne 0) { throw "PresentMon exited with code $($run.ExitCode)" }
 }
 
-if (Test-Path -LiteralPath $NvapiProbePath -PathType Leaf) {
+if ($TimingPath -ne 'xemfg' -and (Test-Path -LiteralPath $NvapiProbePath -PathType Leaf)) {
   & $NvapiProbePath $target.Id | Set-Content -LiteralPath (Join-Path $directory 'nvapi-after.txt')
 }
 if (-not (Test-Path -LiteralPath $csv -PathType Leaf)) {
@@ -161,6 +167,6 @@ if (-not (Test-Path -LiteralPath $csv -PathType Leaf)) {
 
 $analyzer = Join-Path $PSScriptRoot 'Analyze-PresentMon.ps1'
 if (Test-Path -LiteralPath $analyzer -PathType Leaf) {
-  & $analyzer -Path $csv -Label $Label -CollectorVersion $collectorIdentity -TimingPath $TimingPath -RuntimeIdentity $RuntimeIdentity
+  & $analyzer -Path $csv -Label $Label -CollectorVersion $collectorIdentity -TimingPath $TimingPath -RuntimeIdentity $RuntimeIdentity -DisplayedStutterThresholdMs $DisplayedStutterThresholdMs
 }
 Write-Host "Capture saved under: $directory"

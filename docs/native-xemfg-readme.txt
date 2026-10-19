@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.5
+MFGAdaUnlock - Native ReShade XeMFG R1.6
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. Full suite: 50 passed,
+bypass, FG disable, resize and context destruction. R1.6 full suite: 62 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -118,3 +118,15 @@ when that was the installed version. rollback/ also contains official 1.4.5.
 Do not hot reload: model, provider, hooks and callbacks have process lifetime.
 
 No GPL OptiScaler implementation is included. Preserve notices/ when sharing.
+
+R1.6 audits the frame pipeline and removes synchronous file I/O from logging
+producers and per-frame map nodes. It validates XeLL START/END pairs, uses native
+D3D12 devices for Intel contexts and retires viewport selection with its output.
+Diagnostics > Performance capture (advanced) adds a bounded CPU timing window,
+disabled by default. It does not measure displayed FPS, GPU execution or physical
+input latency. CPU profiling adds work; leave it off for performance benchmarks.
+See ENGINEERING_AUDIT.md, PACING_ANALYSIS.md, BENCHMARK_PLAN.md and CHANGELOG.md.
+No pacing formulas, waits, quality/model or image inputs changed in R1.6.
+Controlled gameplay/display cadence/physical-latency gains are NOT TESTED.
+SleepMode GPU-idle coordination and concurrent lifecycle remain open audit items.
+The package includes the preceding R1.5 addon for an identical-runtime A/B.

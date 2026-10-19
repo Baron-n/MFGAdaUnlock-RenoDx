@@ -88,18 +88,19 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   auto& s=State();
   if(!s.api.Load()) { Report("XeMFG provider pair or model hooks unavailable"); return E_NOINTERFACE; }
   auto o=std::make_shared<Output>(); o->queue=queue;
+  static std::atomic<uint64_t> outputGeneration{0}; o->diagnosticOutput=++outputGeneration;
   ComPtr<ID3D12Device> device;
   if(FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))
       || !single_overlay::native::Unwrap(device.Get(),o->device)) return E_NOINTERFACE;
   o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height;
   auto& a=s.api;
-  if(a.xellD3D12CreateContext(device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
+  if(a.xellD3D12CreateContext(o->device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
     Report("XeLL D3D12 context creation failed"); return E_NOINTERFACE;
   }
   xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=1;
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS) return E_NOINTERFACE;
   o->sleepConfigured=true; ++s.latencyModeUpdates;
-  if(a.xefgSwapChainD3D12CreateContext(device.Get(),&o->fg)!=0) return E_NOINTERFACE;
+  if(a.xefgSwapChainD3D12CreateContext(o->device.Get(),&o->fg)!=0) return E_NOINTERFACE;
   a.xefgSwapChainSetLoggingCallback(o->fg,XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING,
       [](const char* message,xefg_swapchain_logging_level_t level,void*) {
         static std::atomic<uint32_t> messages{0};
@@ -184,6 +185,7 @@ void Attach(HMODULE module) {
   s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",1,ini.c_str())!=0;
   s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",0,ini.c_str())!=0;
   LoadControls();
+  SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);
   AttachModel(module);
   reshade::register_event<reshade::addon_event::init_device>(&DeviceEvent);
   reshade::register_event<reshade::addon_event::present>(&OutputPresent);

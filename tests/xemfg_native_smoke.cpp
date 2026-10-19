@@ -48,6 +48,9 @@ int main(int argc,char** argv) {
     using Configure=bool(*)(const mfgunlock::xemfg::native::ControlSettings*,uint32_t);
     auto controlStatus=Import<ControlsStatus>(addon,"MFGAXeControlsStatus");
     auto configure=Import<Configure>(addon,"MFGAXeConfigure");
+    auto timingEnable=Import<void(*)(bool)>(addon,"MFGAXeTimingEnable");
+    auto timingReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeTimingReport");
+    timingEnable(true);
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
     Require(cs.version==2 && cs.settings.version==2 && !cs.settings.uiComposition,"UI composition default/ABI");
@@ -223,6 +226,10 @@ int main(int argc,char** argv) {
         "observed latency route/counters missing");
     Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
     Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==4,"UI composition setter repeated or did not restore default");
+    const auto requiredBytes=timingReport(nullptr,0); std::vector<char> cpuReport(requiredBytes);
+    Require(timingReport(cpuReport.data(),uint32_t(cpuReport.size()))==requiredBytes,"timing report size changed without new Presents");
+    Require(std::string(cpuReport.data()).find("Samples=48")!=std::string::npos,"actual Present calls missing from timing ring");
+    std::cout<<cpuReport.data(); timingEnable(false);
     settings.flipMetering=false; Require(configure(&settings,sizeof(settings)),"flip toggle off");
     controlStatus(&cs,sizeof(cs)); Require(!cs.flipRequested,"flip request did not reach pacer");
     settings.flipMetering=true; Require(configure(&settings,sizeof(settings)),"flip toggle on");
@@ -233,8 +240,12 @@ int main(int argc,char** argv) {
     sl::DLSSGOptions off; off.mode=sl::DLSSGMode::eOff; options(viewport,off);
     Check(chain->Present(0,0),"disabled Present");
     Check(chain->ResizeBuffers(3,800,450,DXGI_FORMAT_UNKNOWN,0),"ResizeBuffers");
-    chain.Reset(); CloseHandle(event); DestroyWindow(hwnd);
+    chain.Reset();
+    sl::ViewportHandle replacementViewport{7};
+    Require(options(replacementViewport,off)==sl::Result::eOk,"retired output kept the old viewport selection");
+    CloseHandle(event); DestroyWindow(hwnd);
     modelStatus(&ms,sizeof(ms)); Require(ms.contexts==0,"context/COM lifetime leaked");
+    Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"diagnostic log did not drain at test boundary");
     Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");
     std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;

@@ -237,14 +237,14 @@ void DiscoverStreamline() {
 }
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
-  const auto id=s.presenting.load(); auto it=o->frames.find(id);
-  const bool hudless=it!=o->frames.end() && !it->second.failed
-      && (it->second.resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
+  const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
+  const bool hudless=frame && !frame->failed
+      && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
   const bool compositionReady=ApplyUiComposition(*o,hudless);
   constexpr uint32_t required=(1u<<XEFG_SWAPCHAIN_RES_DEPTH)|(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR);
-  bool ready=compositionReady && it!=o->frames.end() && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
+  bool ready=compositionReady && frame && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
   if(ready) {
-    auto& f=it->second;
+    auto& f=*frame;
     // RenderSubmit END can legally arrive after Present starts or returns.
     // Admission requires the observed frame's starts, simulation and sleep;
     // END continues to be forwarded at its actual arrival in CaptureMarker.
@@ -273,7 +273,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     if(ready) o->appliedCount=count;
     else { a.xefgSwapChainSetEnabled(o->fg,0); o->enabled=false; }
   }
-  const auto* f=it==o->frames.end()?nullptr:&it->second;
+  const auto* f=frame;
   const uint32_t admission=(f?f->resources:0)|((f?f->markers:0)<<8)
       |(uint32_t(f&&f->constants)<<16)|(uint32_t(f&&f->valid)<<17)
       |(uint32_t(f&&f->failed)<<18)|(uint32_t(f&&f->sleeping)<<19)
@@ -294,15 +294,22 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
   o->last=id;
 }
-void AfterPresent(const std::shared_ptr<Output>& o) {
+void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
   std::lock_guard lock(o->io); xefg_swapchain_present_status_t status{};
-  if(State().api.xefgSwapChainGetLastPresentStatus(o->fg,&status)==0) {
+  const auto queryResult=State().api.xefgSwapChainGetLastPresentStatus(o->fg,&status);
+  if(queryResult==0) {
     auto& s=State(); std::lock_guard guard(s.lock);
     s.status.submitted=status.framesPresented; s.status.sdkResult=status.frameGenResult;
   }
   // Keep late PresentEnd markers for the preceding frame, but bound memory.
-  for(auto it=o->frames.begin();it!=o->frames.end();) {
-    if(it->first+2<o->last) it=o->frames.erase(it); else ++it;
+  o->frames.Prune(o->last);
+  if(probe && probe->active) {
+    auto& sample=probe->sample; sample.frame=o->last; sample.epoch=o->epoch; sample.output=o->diagnosticOutput;
+    sample.presentResult=result; sample.admitted=o->enabled; sample.requestedOutputs=State().multiplier;
+    sample.sdkOutputs=status.framesPresented; sample.sdkResult=status.frameGenResult; sample.sdkEnabled=status.isFrameGenEnabled!=0;
+    sample.sdkQueryResult=queryResult;
+    if(auto* frame=o->frames.Find(o->last)) sample.sleepUs=frame->sleepUs;
+    probe->Finish();
   }
 }
 }

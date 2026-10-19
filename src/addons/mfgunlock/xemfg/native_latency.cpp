@@ -23,15 +23,16 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id) {
   }
   const auto start=std::chrono::steady_clock::now();
   const auto result=a.xellSleep(o->ll,id);
-  s.lastSleepUs=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count();
+  const auto sleepUs=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count();
+  s.lastSleepUs=sleepUs;
   {
     std::lock_guard guard(o->io);
     o->sleepActive=false;
-    auto found=o->frames.find(id);
-    if(epoch!=o->epoch || found==o->frames.end()) return sl::Result::eErrorInvalidState;
-    auto& frame=found->second; frame.sleepInFlight=false;
+    auto* found=o->frames.Find(id);
+    if(epoch!=o->epoch || !found) return sl::Result::eErrorInvalidState;
+    auto& frame=*found; frame.sleepInFlight=false;
     if(result!=XELL_RESULT_SUCCESS) { frame.failed=true; return sl::Result::eErrorReflexAPI; }
-    frame.sleeping=true; ++s.latencySleeps; s.outputTick=GetTickCount64();
+    frame.sleeping=true; frame.sleepUs=sleepUs; ++s.latencySleeps; s.outputTick=GetTickCount64();
   }
   return sl::Result::eOk;
 }
@@ -43,6 +44,10 @@ bool ForwardSourceMarker(const std::shared_ptr<Output>& o,uint32_t id,uint32_t m
   // Older frames may still submit their real END timestamp during this sleep.
   if(!frame->sleeping || frame->sleepInFlight) { frame->failed=true; return false; }
   if(frame->markers&(1u<<marker)) return true;
+  // Each END needs its own START; phases may overlap and an old frame's END
+  // may arrive after another frame starts. Never fabricate a missing START.
+  if((marker==XELL_SIMULATION_END || marker==XELL_RENDERSUBMIT_END || marker==XELL_PRESENT_END)
+      && !(frame->markers&(1u<<(marker-1)))) { frame->failed=true; return false; }
   if(s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(marker))!=XELL_RESULT_SUCCESS) {
     frame->failed=true; return false;
   }

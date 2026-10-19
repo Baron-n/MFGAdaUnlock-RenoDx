@@ -13,6 +13,7 @@
 
 namespace xess_mod { void WriteLog(const char*,const std::string&) noexcept {} }
 namespace mfgunlock::xemfg {
+LogStatus LogSnapshot() noexcept { return {}; }
 bool TryModelStatus(Status& out) { out.model=out.initialized=out.enabled=1; return true; }
 namespace native {
 Bridge& State() {static Bridge state; return state;}
@@ -84,7 +85,7 @@ void Raster(ImDrawData* data,const unsigned char* tex,int tw,int th,std::vector<
 }
 int wmain(int argc,wchar_t** argv) {
   try {
-    if(argc<4 || argc>6) throw std::runtime_error("usage: preview output.png page(0..3) width [font-size] [expanded|tooltip|multiplier]");
+    if(argc<4 || argc>6) throw std::runtime_error("usage: preview output.png page(0..3) width [font-size] [expanded|performance|tooltip|multiplier]");
     const std::wstring scenario=argc==6?argv[5]:L"";
     const int page=std::stoi(argv[2]),width=std::stoi(argv[3]),height=1250;
     CoInitializeEx(nullptr,COINIT_MULTITHREADED);
@@ -114,6 +115,8 @@ int wmain(int argc,wchar_t** argv) {
       if(frame>=8) for(auto* window:GImGui->Windows) {
         if(scenario==L"expanded" && strstr(window->Name,"##xe_latency_"))
           window->StateStorage.SetInt(window->GetID("Advanced latency routing"),1);
+        if(scenario==L"performance" && strstr(window->Name,"##xe_model_details_"))
+          window->StateStorage.SetInt(window->GetID("Performance capture (advanced)"),1);
         if((scenario==L"tooltip" || scenario==L"multiplier") && strstr(window->Name,"##xemfg_generation_")) {
           auto* table=GImGui->Tables.GetByKey(window->GetID(scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
           if(table && table->ColumnsCount==2)
@@ -129,6 +132,14 @@ int wmain(int argc,wchar_t** argv) {
         if(!found) throw std::runtime_error("advanced routing was not expanded");
       }
       if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
+      if(frame==47 && scenario==L"performance") {
+        bool found=false;
+        for(auto* window:GImGui->Windows) if(strstr(window->Name,"##xe_model_details_")) {
+          found=window->StateStorage.GetInt(window->GetID("Performance capture (advanced)"))!=0;
+          if(window->ContentSize.x>window->InnerRect.GetWidth()+1.f) throw std::runtime_error("performance controls overflow the card");
+        }
+        if(!found) throw std::runtime_error("performance capture was not expanded");
+      }
       if(frame==47 && scenario==L"tooltip") {
         bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;
         if(!found) throw std::runtime_error("control tooltip did not appear");

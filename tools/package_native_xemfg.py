@@ -17,6 +17,8 @@ def main():
     ap.add_argument('--intel-sdk',type=Path,required=True)
     ap.add_argument('--game-validation',type=Path)
     ap.add_argument('--previous-addon',type=Path)
+    ap.add_argument('--audit-evidence',type=Path,required=True)
+    ap.add_argument('--pacing-review',type=Path,required=True)
     args=ap.parse_args()
     root=Path(__file__).resolve().parent.parent
     output=args.output.resolve(); output.mkdir(parents=True,exist_ok=True)
@@ -47,24 +49,39 @@ def main():
         'evidence/ctest-r1.3-before-hook-fix.log':root/'build/ctest-native-r1.3-before-hook-fix.log',
         'evidence/ctest-r1.4.log':root/'build/ctest-native-r1.4.log',
         'evidence/ctest-r1.5.log':root/'build/ctest-native-r1.5.log',
+        'evidence/ctest-r1.6.log':root/'build/ctest-native-r1.6.log',
+        'evidence/ctest-r1.6-before-startup-fix.log':root/'build/ctest-native-r1.6-before-startup-fix.log',
+        'evidence/intermediate/ctest-r1.6-targeted.log':root/'build/ctest-r1.6-targeted.log',
         'overlay-controls.md':root/'docs/research/native-xemfg-overlay-r1.2-2026-10-19.md',
         'interface-and-latency.md':root/'docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md',
         'compact-interface.md':root/'docs/research/xemfg-r1.4-compact-interface-2026-10-19.md',
         'ui-composition-and-pacing.md':root/'docs/research/xemfg-r1.5-ui-composition-and-pacing-2026-10-19.md',
     }
+    for name in ('ENGINEERING_AUDIT.md','PACING_ANALYSIS.md','BENCHMARK_PLAN.md','CHANGELOG.md'):
+        assets[name]=root/'docs/research/xemfg-r1.6'/name
+    for name in ('baseline.json','frame-store-benchmark-final.json','validation-summary.json'):
+        assets['evidence/r1.6/'+name]=args.audit_evidence/name
+    for name in ('review.json','MFGAdaUnlock-XeMFG.log'):
+        assets['evidence/r1.5-pacing-review/'+name]=args.pacing_review/name
     game_validation=None
+    validation=json.loads((args.audit_evidence/'validation-summary.json').read_text(encoding='utf-8'))
+    if validation['addon_sha256']!=sha(addon) or validation['ctest']['failed']:
+        raise ValueError('Audit validation does not match the addon or has failed tests')
+    if validation['ctest']['passed']!=62 or validation['ctest']['skipped']!=3:
+        raise ValueError('Update the documented test scope before packaging a different suite')
     if args.previous_addon:
         previous={'66384ac1f948964fc5fd1488267d021a22697f7c63b4e2b5abc8fd07222d99ac':'r1.1',
             '18bfb21b9d9b1da4006aac06adb77c9a1dc20b5313f5525fe263e1470da6eaf7':'r1.2',
             'f20a92b2ced415fbe8462b4cfb82f1f80b526e4a9b839bfbf6417e704bd7dcff':'r1.3',
-            'd6204480a38682c04a7e4c5fcafec6c0e087517dffc30c39d0a5738efba2e324':'r1.4'}
+            'd6204480a38682c04a7e4c5fcafec6c0e087517dffc30c39d0a5738efba2e324':'r1.4',
+            'cd902f48500b8ee110c2cd7095a981694ebfbb371db3e5e7ad1aa78237d18647':'r1.5'}
         revision=previous.get(sha(args.previous_addon))
         if revision is None: raise ValueError('Previous native rollback must be a sealed known build')
         assets[f'rollback/renodx-mfgunlock-native-{revision}.addon64']=args.previous_addon
     for page in range(4):
         assets[f'evidence/ui/page-{page}-synthetic-status.png']=root/f'build/tests/ui-preview/page-{page}.png'
     assets['evidence/ui/large-font-synthetic-status.png']=root/'build/tests/ui-preview/large-font.png'
-    for name in ('routing-expanded','routing-large-font','tooltip','multiplier-open'):
+    for name in ('routing-expanded','routing-large-font','tooltip','multiplier-open','performance','performance-large-font'):
         assets[f'evidence/ui/{name}-synthetic-status.png']=root/f'build/tests/ui-preview/{name}.png'
     if args.game_validation:
         game_validation=json.loads(args.game_validation.read_text(encoding='utf-8'))
@@ -84,11 +101,23 @@ def main():
             if not result.is_file() or not candidate.is_file() or sha(candidate)!=sha(addon): continue
             data=json.loads(result.read_text(encoding='utf-8'))
             if data['exit']!=0 or f'{count}x requested' not in data['stdout']: continue
+            if data['inputs']['libxell.dll']!='61aeeab7fdcfb6d1742f86c14c68c663d759607d01a6132645c857291eaebb86': continue
             for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log','MFGAdaUnlock.ini'):
                 assets[f'evidence/{count}x/{name}']=case/name
             break
         else:
             raise ValueError(f'Missing final-addon {count}x evidence')
+    for case in sorted((root/'build/tests/native-checks').glob('native-*'),reverse=True):
+        result=case/'result.json'
+        if not result.is_file(): continue
+        data=json.loads(result.read_text(encoding='utf-8'))
+        if (data['exit']!=0 or '4x requested' not in data['stdout']
+            or data['inputs']['renodx-mfgunlock-native.addon64']!=sha(addon)
+            or data['inputs']['libxell.dll']!='d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7'): continue
+        for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log','MFGAdaUnlock.ini'):
+            assets[f'evidence/4x-xell-1.3.2.10/{name}']=case/name
+        break
+    else: raise ValueError('Missing final-addon alternative XeLL evidence')
     for name,src in assets.items():
         dest=output/name; dest.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(src,dest)
     def git(*args):
@@ -100,7 +129,7 @@ def main():
                 source[path.relative_to(root).as_posix()]=sha(path)
     manifest={
         'identity':'Native ReShade XeMFG R1',
-        'revision':'R1.5',
+        'revision':'R1.6',
         'source_commit':git('rev-parse','HEAD'),'branch':git('branch','--show-current'),
         'working_tree':git('status','--porcelain'),
         'official_1_4_5_commit':'0fe65579d287581107babe267ee3e48c9135bf8a',
@@ -113,7 +142,7 @@ def main():
         'source_inputs_sha256':source,
         'compiler_inputs':compiler_inputs(build/'mfgunlock_native_xemfg.vcxproj'),
         'precompiled_inputs':json.loads((root/'build/xemfg-inputs/input-provenance.json').read_text(encoding='utf-8')),
-        'test_scope':'R1.5: full suite and real-SDK inference at 2x/3x/4x/6x, including UI composition default/opt-in/off/missing-input and preference persistence; setter fault/retry/reset unit tests; numerical pacing contracts; production-widget previews with synthetic status. Exact counts in ctest-r1.5.log. No new gameplay/display cadence/physical latency claim.',
+        'test_scope':'R1.6: 62 passed, 3 optional skipped; real-SDK inference at 2x/3x/4x/6x on installed XeLL and additional 4x on XeLL 1.3.2.10; bounded logging/frame storage/CPU diagnostics, marker pairing, retired viewport, UI composition, numerical pacing and PresentMon domains. Exact evidence in ctest-r1.6.log and validation-summary.json. No gameplay/display cadence/physical latency claim.',
         'gameplay_validated':bool(game_validation and game_validation.get('functional_and_initial_user_validation_complete')),
         'gameplay_validation_scope':None if not game_validation else {
             'game':'Cyberpunk 2077','sdk_outputs_observed':[2,3,4,6],

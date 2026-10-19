@@ -33,6 +33,7 @@ int main() {
     state.api.xellSetSleepMode=&SetMode; state.api.xellSleep=&Sleep; state.api.xellAddMarkerData=&Marker;
     auto output=std::make_shared<Output>(); output->last=1;
     FindFrame(*output,1)->sleeping=true;
+    FindFrame(*output,1)->markers=1u<<XELL_RENDERSUBMIT_START;
     Arm(); auto sleeping=std::async(std::launch::async,[&]{return SleepSourceFrame(output,2);}); Entered();
     Require(SleepSourceFrame(output,3)==sl::Result::eErrorInvalidState,"concurrent sleep accepted");
     auto marker=std::async(std::launch::async,[&]{return ForwardSourceMarker(output,1,XELL_RENDERSUBMIT_END);});
@@ -47,6 +48,12 @@ int main() {
     modeFail=false; Require(SleepSourceFrame(output,4)==sl::Result::eOk && output->sleepInterval==10000,"mode retry missing");
     const auto markerCount=markers.load();
     Require(!ForwardSourceMarker(output,5,XELL_SIMULATION_START) && markers==markerCount,"marker sent before same-frame sleep");
+    Require(SleepSourceFrame(output,7)==sl::Result::eOk,"test frame sleep");
+    Require(!ForwardSourceMarker(output,7,XELL_PRESENT_END) && output->frames.Find(7)->failed,"END without matching START accepted");
+    Require(SleepSourceFrame(output,8)==sl::Result::eOk,"test frame sleep");
+    Require(ForwardSourceMarker(output,8,XELL_RENDERSUBMIT_START),"render start rejected");
+    Require(ForwardSourceMarker(output,8,XELL_PRESENT_START),"overlapping present start rejected");
+    Require(ForwardSourceMarker(output,8,XELL_RENDERSUBMIT_END),"legal overlapping END rejected");
     Arm(); auto stale=std::async(std::launch::async,[&]{return SleepSourceFrame(output,6);}); Entered();
     { std::lock_guard lock(output->io); ++output->epoch; output->frames.clear(); }
     Release(); Require(stale.get()==sl::Result::eErrorInvalidState && output->frames.empty(),"sleep republished an old resource epoch");

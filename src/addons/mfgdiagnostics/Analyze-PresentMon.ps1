@@ -5,8 +5,9 @@ param(
 
   [string]$Label = '',
   [string]$CollectorVersion = 'unknown',
-  [ValidateSet('unknown','runtime','legacy','native')][string]$TimingPath = 'unknown',
-  [string]$RuntimeIdentity = 'unknown'
+  [ValidateSet('unknown','runtime','legacy','native','xemfg')][string]$TimingPath = 'unknown',
+  [string]$RuntimeIdentity = 'unknown',
+  [ValidateRange(0,10000)][double]$DisplayedStutterThresholdMs = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -50,12 +51,13 @@ function Get-Mean([double[]]$Values) {
   return ($Values | Measure-Object -Average).Average
 }
 
-function Get-SeriesSummary([double[]]$Values, [switch]$Rate) {
+function Get-SeriesSummary([double[]]$Values, [switch]$Rate, [double]$ThresholdMs = 0) {
   if ($Values.Count -eq 0) { return $null }
   $median = Get-Percentile $Values 0.50
   $deviations = @($Values | ForEach-Object { [math]::Abs($_ - $median) })
   $mad = Get-Percentile $deviations 0.50
   $threshold = [math]::Max(2.0 * $median, $median + 3.0 * $mad)
+  if($ThresholdMs -gt 0) { $threshold=$ThresholdMs }
   $mean = Get-Mean $Values
   $summary = [ordered]@{
     samples = $Values.Count
@@ -63,6 +65,7 @@ function Get-SeriesSummary([double[]]$Values, [switch]$Rate) {
     p50_ms = [math]::Round($median, 4)
     p95_ms = [math]::Round((Get-Percentile $Values 0.95), 4)
     p99_ms = [math]::Round((Get-Percentile $Values 0.99), 4)
+    p999_ms = [math]::Round((Get-Percentile $Values 0.999), 4)
     large_interval_threshold_ms = [math]::Round($threshold, 4)
     large_intervals = @($Values | Where-Object { $_ -gt $threshold }).Count
   }
@@ -102,7 +105,7 @@ if ($mainRows[0].PSObject.Properties.Name -contains 'AnimationTime') {
     elseif ($animationTime -eq 0) { $generatedAnimationRows += $row }
   }
 }
-$useAnimationSplit = $sourceAnimationRows.Count -ge 30 -and
+$useAnimationSplit = $TimingPath -ne 'xemfg' -and $sourceAnimationRows.Count -ge 30 -and
   $animationRows.Count -ge (1.5 * $sourceAnimationRows.Count)
 $applicationRows = if ($useAnimationSplit) { $sourceAnimationRows } else { $mainRows }
 
@@ -123,8 +126,14 @@ $pcLatency = Get-ColumnValues $mainRows @('MsPCLatency', 'InstrumentedLatency', 
 $sourceLatency = Get-ColumnValues $applicationRows @('MsPCLatency', 'InstrumentedLatency', 'DisplayLatency') -Positive
 $generatedLatency = Get-ColumnValues $generatedAnimationRows @('MsPCLatency', 'InstrumentedLatency', 'DisplayLatency') -Positive
 $animationError = Get-ColumnValues $mainRows @('MsAnimationError', 'AnimationError')
+if($TimingPath -eq 'xemfg') {
+  # Driver-specific AnimationTime heuristics do not identify XeFG source IDs.
+  # Keep raw columns below, but do not fabricate source/generated populations.
+  $application=@(); $sourceGpuBusy=@(); $sourceGpuTime=@(); $generatedGpuBusy=@(); $generatedGpuTime=@()
+  $sourceLatency=@(); $generatedLatency=@()
+}
 
-$displaySummary = Get-SeriesSummary $display -Rate
+$displaySummary = Get-SeriesSummary $display -Rate -ThresholdMs $DisplayedStutterThresholdMs
 $applicationSummary = Get-SeriesSummary $application -Rate
 $displayDurationMs = if ($display.Count) { ($display | Measure-Object -Sum).Sum } else { 0.0 }
 $inferredGeneration = $null
@@ -172,6 +181,7 @@ foreach ($entry in $metricColumns.GetEnumerator()) {
   if (!$column) { continue }
   $sourcePopulation = $entry.Key.StartsWith('source_frame_') -or $entry.Key -eq 'application_intervals'
   $generatedPopulation = $entry.Key.StartsWith('generated_candidate_')
+  if($TimingPath -eq 'xemfg' -and ($sourcePopulation -or $generatedPopulation)) { continue }
   $classification = if (($sourcePopulation -or $generatedPopulation) -and $useAnimationSplit) { 'AnimationTime heuristic' } else { 'all selected rows' }
   $semantics[$entry.Key] = [ordered]@{
     column=$column; units='ms'; definition=$column; collector_version=$CollectorVersion
@@ -227,6 +237,7 @@ $report = [ordered]@{
     'Rows from presentation-mode transitions are excluded by selecting the dominant PresentMode.',
     'HAGS can make PresentMon GPU execution timing less accurate; use Nsight GPU Trace for kernel conclusions.',
     'A large-interval count is a robust outlier indicator, not a universal definition of perceptible stutter.'
+    'For XeMFG, source/generated classifications are unavailable without validated frame-ID correlation; AnimationTime inference is disabled.'
   )
 }
 
