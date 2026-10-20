@@ -3,13 +3,17 @@
 #include "../panel_ui.hpp"
 #include <sstream>
 namespace mfgunlock::xemfg::native {
+static std::atomic<uint64_t> panelDraws{};
 void Draw() {
+  ++panelDraws;
   auto& s=State(); const auto status=Snapshot();
   const bool generating=status.enabled && status.sdkResult>=0 && status.submitted>1;
   const auto multiplier=std::to_string(s.multiplier.load())+"x";
   ui::Hero(multiplier.c_str(),"XeMFG","DX12",generating?"Generating frames":
       status.output?"Ready - waiting for frame generation":"Waiting for the game",generating);
-  if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG is currently supported through Streamline in DirectX 12.");
+  if(!status.output && strstr(status.detail,"provider pair"))
+    ui::Notice("XeMFG could not start with this game's Intel runtimes. Switch to DLSS-G and restart, or use a supported XeFG / XeLL runtime pair.");
+  else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG is currently supported through Streamline in DirectX 12.");
   else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
   static PanelPage page=PanelPage::General;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
@@ -36,6 +40,9 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.7.4");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.7.5");
 }
+}
+extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {
+  return mfgunlock::xemfg::native::panelDraws.load();
 }

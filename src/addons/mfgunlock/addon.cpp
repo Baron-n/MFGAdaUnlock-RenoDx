@@ -7951,7 +7951,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "Native ReShade XeMFG R1.7.4 - scoped overlay input recovery and shortcut receipts; official DLSS-G 1.4.5 base";
+    "Native ReShade XeMFG R1.7.5 - host-owned input and single-window panel; official DLSS-G 1.4.5 base";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

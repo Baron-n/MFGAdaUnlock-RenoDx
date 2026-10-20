@@ -9,6 +9,7 @@
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <sl_pcl.h>
+#include <deps/imgui/imgui.h>
 #include <reshade.hpp>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_bridge.hpp"
@@ -22,13 +23,9 @@ static bool keyTest{};
 static bool hotkeyTest{};
 static unsigned overlayOpens{},overlayCloses{};
 static unsigned commands{};
-static LRESULT CALLBACK DiscardLegacyHome(int code,WPARAM w,LPARAM l) {
-  if(code>=0 && w==PM_REMOVE) {
-    auto* message=reinterpret_cast<MSG*>(l);
-    if(message && (message->message==WM_KEYDOWN || message->message==WM_KEYUP) && message->wParam==VK_HOME)
-      message->message=WM_NULL;
-  }
-  return CallNextHookEx(nullptr,code,w,l);
+static bool selectPanel{};
+static void OverlayGui(reshade::api::effect_runtime*) {
+  if(selectPanel) ImGui::SetWindowFocus("MFG Unlock");
 }
 static LRESULT CALLBACK TestWindowProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
   if(message==WM_KEYDOWN && w==VK_F23) ++commands;
@@ -52,11 +49,13 @@ int main(int argc,char** argv) {
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
-    hotkeyTest=argc>2 && std::string(argv[2])=="--overlay-hotkeys";
+    hotkeyTest=argc>2 && std::string(argv[2])=="--overlay-foreground";
     keyTest=argc>2 && (std::string(argv[2])=="--overlay-keys" || hotkeyTest);
     if(keyTest) {
       Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
       reshade::register_event<reshade::addon_event::reshade_open_overlay>(&OverlayChange);
+      reshade::register_event<reshade::addon_event::reshade_overlay>(&OverlayGui);
+      selectPanel=true;
     }
     auto factoryCreate=Import<HRESULT(WINAPI*)(REFIID,void**)>(reshade,"CreateDXGIFactory1");
     ComPtr<IDXGIFactory4> factory; Check(factoryCreate(IID_PPV_ARGS(&factory)),"factory");
@@ -69,6 +68,7 @@ int main(int argc,char** argv) {
     }
     Require(device!=nullptr,"NVIDIA device");
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addon,"ReShade did not load the addon");
+    auto panelDraws=Import<uint64_t(*)()>(addon,"MFGAXePanelDraws");
     auto modelStatus=Import<mfgunlock::xemfg::GetStatus>(addon,"MFGAXeGetStatus");
     using BridgeStatus=bool(*)(mfgunlock::xemfg::native::Status*,uint32_t);
     auto bridgeStatus=Import<BridgeStatus>(addon,"MFGAXeNativeStatus");
@@ -98,6 +98,7 @@ int main(int argc,char** argv) {
     WNDCLASSW wc{}; wc.lpfnWndProc=TestWindowProc; wc.lpszClassName=L"XeMFGNativeSmoke"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
     HWND hwnd=CreateWindowW(wc.lpszClassName,L"XeMFG native bridge smoke",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
     Require(hwnd,"window");
+    if(hotkeyTest) { ShowWindow(hwnd,SW_SHOWNORMAL); SetForegroundWindow(hwnd); }
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
     ComPtr<IDXGISwapChain1> base;
@@ -194,10 +195,8 @@ int main(int argc,char** argv) {
     for(uint32_t frame=1;frame<=48;++frame) {
       if(keyTest && (frame==3 || frame==7 || frame==11 || frame==15)) {
         PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1);
-        // The second pair is a complete tap between two output updates.
-        if(frame>=11) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
       }
-      if(keyTest && (frame==4 || frame==8)) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      if(keyTest && (frame==4 || frame==8 || frame==12 || frame==16)) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
       if(keyTest) { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
       if(frame==36 || frame==42) {
         settings.sdkDeadlines=frame==36; Require(configure(&settings,sizeof(settings)),"deadline comparison request");
@@ -274,10 +273,12 @@ int main(int argc,char** argv) {
     Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
     Require(overlayStatus(&os,sizeof(os)) && os.updates>=48 && os.failed==0,"ReShade did not render final outputs");
     if(keyTest) {
+      std::cout<<"Production panel draws="<<panelDraws()<<std::endl;
+      Require(panelDraws()>0,"Home test never rendered the production MFG Unlock panel");
       std::cout<<"Overlay key transitions: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
-      Require(overlayOpens==2 && overlayCloses==2,"Home tap lost between output updates");
+      Require(overlayOpens==2 && overlayCloses==2,"native ReShade Home transitions lost");
       mfgunlock::xemfg::native::OverlayInputStatus input;
-      Require(overlayInput(&input,sizeof(input)) && input.recovered==2 && input.dropped==0,"native shortcut was replayed or recovery count is not exact");
+      Require(overlayInput(&input,sizeof(input)) && input.recovered==0 && input.dropped==0,"addon-owned key recovery is still active");
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
@@ -303,14 +304,16 @@ int main(int argc,char** argv) {
       for(unsigned i=0;i<2;++i) {
         // Configure the rebound runtime before sending a new completed tap.
         Check(chain->Present(0,0),"resized runtime warmup");
-        PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1); PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+        PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1);
         MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
-        Check(chain->Present(0,0),"resized runtime Home tap"); wait();
+        Check(chain->Present(0,0),"resized runtime Home press"); wait();
+        PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+        while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+        Check(chain->Present(0,0),"resized runtime Home release"); wait();
       }
-      Require(overlayOpens==3 && overlayCloses==3,"Home recovery did not survive resize or FG-off output");
+      Require(overlayOpens==3 && overlayCloses==3,"native Home did not survive resize or FG-off output");
       std::cout<<"Overlay keys after resize/FG-off: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
-      // ReShade routes keyboard input from children to their render window.
-      // Cover both a held press (native handling) and a full inter-update tap.
+      // ReShade also owns keyboard input from children of the render window.
       const auto child=CreateWindowW(wc.lpszClassName,L"input child",WS_CHILD,0,0,32,32,hwnd,nullptr,wc.hInstance,nullptr);
       Require(child,"input child");
       PostMessageW(child,WM_KEYDOWN,VK_HOME,1);
@@ -319,14 +322,17 @@ int main(int argc,char** argv) {
       PostMessageW(child,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
       { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
       Check(chain->Present(0,0),"child Home release"); wait();
-      PostMessageW(child,WM_KEYDOWN,VK_HOME,1); PostMessageW(child,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      PostMessageW(child,WM_KEYDOWN,VK_HOME,1);
       { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
-      Check(chain->Present(0,0),"child completed Home"); wait();
+      Check(chain->Present(0,0),"second child Home press"); wait();
+      PostMessageW(child,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
+      { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+      Check(chain->Present(0,0),"second child Home release"); wait();
       std::cout<<"Overlay keys with child input: opens="<<overlayOpens<<" closes="<<overlayCloses<<std::endl;
       Require(overlayOpens==4 && overlayCloses==4,"Home tap from render-window child was lost");
       mfgunlock::xemfg::native::OverlayInputStatus childStatus;
-      Require(overlayInput(&childStatus,sizeof(childStatus)) && childStatus.recovered==5 && !childStatus.dropped,
-          "child native press recovered twice or child tap not recovered");
+      Require(overlayInput(&childStatus,sizeof(childStatus)) && childStatus.recovered==0 && !childStatus.dropped,
+          "child input was intercepted by the addon");
       DestroyWindow(child);
       if(hotkeyTest) {
         // SendInput is used ONLY after confirming this test's own window is
@@ -334,38 +340,32 @@ int main(int argc,char** argv) {
         ShowWindow(hwnd,SW_SHOWNORMAL); SetForegroundWindow(hwnd);
         const auto focusDeadline=GetTickCount64()+3000;
         auto pump=[&] { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); };
-        while(GetForegroundWindow()!=hwnd && GetTickCount64()<focusDeadline) { pump(); Sleep(5); }
+        while(GetForegroundWindow()!=hwnd && GetTickCount64()<focusDeadline) { SetForegroundWindow(hwnd); pump(); Sleep(5); }
         Require(GetForegroundWindow()==hwnd,"own test window not foreground; no input sent");
-        const auto discard=SetWindowsHookExW(WH_GETMESSAGE,&DiscardLegacyHome,nullptr,GetCurrentThreadId());
-        Require(discard,"legacy-loss test fixture");
         for(unsigned i=0;i<5;++i) { pump(); Check(chain->Present(0,0),"hotkey focus warmup"); wait(); }
         auto press=[&](WORD key) {
           Require(GetForegroundWindow()==hwnd,"focus left test window; no input sent");
-          INPUT inputs[2]{};
-          for(auto& input:inputs) { input.type=INPUT_KEYBOARD; input.ki.wVk=key; }
-          inputs[1].ki.dwFlags=KEYEVENTF_KEYUP;
-          Require(SendInput(2,inputs,sizeof(INPUT))==2,"own test keyboard input failed");
-          const auto end=GetTickCount64()+150;
-          do { pump(); Check(chain->Present(0,0),"hotkey output"); wait(); Sleep(2); } while(GetTickCount64()<end);
+          INPUT input{}; input.type=INPUT_KEYBOARD; input.ki.wVk=key;
+          Require(SendInput(1,&input,sizeof(INPUT))==1,"own test key press failed");
+          for(unsigned i=0;i<8;++i) { pump(); Check(chain->Present(0,0),"native key press"); wait(); Sleep(5); }
+          input.ki.dwFlags=KEYEVENTF_KEYUP;
+          Require(SendInput(1,&input,sizeof(INPUT))==1,"own test key release failed");
+          for(unsigned i=0;i<8;++i) { pump(); Check(chain->Present(0,0),"native key release"); wait(); Sleep(5); }
         };
         press(VK_F23); const auto beforeCommands=commands;
         Require(beforeCommands>0,"closed overlay captures test game commands");
         press(VK_HOME);
-        Require(overlayOpens==5 && overlayCloses==4,"registered Home did not open exactly once");
+        Require(overlayOpens==5 && overlayCloses==4,"ReShade Home did not open exactly once");
         press(VK_F23); Require(commands==beforeCommands,"open overlay did not capture test commands");
         press(VK_HOME);
-        Require(overlayOpens==5 && overlayCloses==5,"registered Home could not close input-capturing overlay");
+        Require(overlayOpens==5 && overlayCloses==5,"ReShade Home could not close input-capturing overlay");
         press(VK_F23); Require(commands==beforeCommands+1,"closing overlay did not release game commands");
-        // Deactivation must release the system registration immediately.
         SendMessageW(hwnd,WM_ACTIVATEAPP,FALSE,0);
-        Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"foreground loss retained Home registration");
-        UnregisterHotKey(hwnd,0xb123);
         SendMessageW(hwnd,WM_ACTIVATEAPP,TRUE,0); pump();
         press(VK_HOME); press(VK_HOME);
-        Require(overlayOpens==6 && overlayCloses==6,"registered Home did not survive reactivation");
-        UnhookWindowsHookEx(discard);
+        Require(overlayOpens==6 && overlayCloses==6,"native Home did not survive reactivation");
         ShowWindow(hwnd,SW_HIDE); pump();
-        std::cout<<"Foreground hotkey: opens=6 closes=6; game commands captured/released; deactivation unregisters Home\n";
+        std::cout<<"Foreground ReShade: opens=6 closes=6; production panel drawn; game commands captured/released\n";
       }
     }
     chain.Reset();

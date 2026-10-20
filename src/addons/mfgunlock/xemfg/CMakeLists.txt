@@ -67,6 +67,7 @@ set_target_properties(xemfg_streamline_fixture PROPERTIES OUTPUT_NAME "sl.interp
 add_executable(xemfg_native_smoke "${CMAKE_SOURCE_DIR}/xemfg_native_smoke.cpp")
 target_compile_definitions(xemfg_native_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_native_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include"
+  "${RENODX_SOURCE_DIR}/external/reshade"
   "${RENODX_SOURCE_DIR}/external/reshade/include")
 target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi user32)
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
@@ -194,3 +195,8 @@ if(XEMFG_OFFLINE_HOST AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --host "${XEMFG_OFFLINE_HOST}")
   set_tests_properties(xemfg_loader_startup xemfg_early_sdk_lifecycle xemfg_host_redirect_lifecycle xemfg_optiscaler_present xemfg_native_context_publication_guard xemfg_game_first_shared_model PROPERTIES TIMEOUT 45)
 endif()
+
+add_executable(xemfg_reshade_panel_input "${CMAKE_SOURCE_DIR}/xemfg_reshade_panel_input.cpp")
+target_compile_definitions(xemfg_reshade_panel_input PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_reshade_panel_input PRIVATE "${RENODX_SOURCE_DIR}/external/reshade" "${RENODX_SOURCE_DIR}/external/reshade/include")
+target_link_libraries(xemfg_reshade_panel_input PRIVATE d3d12 dxgi user32)

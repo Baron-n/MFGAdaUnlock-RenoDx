@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_window.hpp"
 #include <map>
-#include <string>
 #include <vector>
 
 namespace mfgunlock::xemfg::native {
@@ -10,7 +9,6 @@ std::mutex registryLock;
 std::map<HWND,std::shared_ptr<WindowControl>> windows;
 std::atomic<uintptr_t> nextGeneration{1};
 UINT ControlMessage() { static const UINT value=RegisterWindowMessageW(L"MFGAdaUnlock.XeMFG.WindowControl.1"); return value; }
-UINT OverlayMessage() { static const UINT value=RegisterWindowMessageW(L"MFGAdaUnlock.XeMFG.OverlayHotkey.1"); return value; }
 constexpr auto property=L"MFGAdaUnlock.XeMFG.WindowOwner.1";
 LONG_PTR Style(HWND hwnd,int index) { return DWORD(GetWindowLongPtrW(hwnd,index)); }
 bool SetStyle(HWND hwnd,int index,LONG_PTR value) {
@@ -19,13 +17,6 @@ bool SetStyle(HWND hwnd,int index,LONG_PTR value) {
 }
 bool SameRect(const RECT& a,const RECT& b) {
   return a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom;
-}
-bool Foreground(HWND hwnd) {
-  return IsWindowVisible(hwnd) && !IsIconic(hwnd)
-      && GetAncestor(GetForegroundWindow(),GA_ROOT)==GetAncestor(hwnd,GA_ROOT);
-}
-UINT Modifiers(OverlayChord chord) {
-  return (chord.modifiers&1?MOD_CONTROL:0)|(chord.modifiers&2?MOD_SHIFT:0)|(chord.modifiers&4?MOD_ALT:0);
 }
 }
 std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
@@ -42,8 +33,6 @@ std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
     if(auto it=windows.find(hwnd); it!=windows.end()) {
       if(GetPropW(hwnd,property)==it->second.get()) { SetLastError(ERROR_ALREADY_EXISTS); return {}; }
       if(it->second->hook) UnhookWindowsHookEx(it->second->hook);
-      if(it->second->activationHook) UnhookWindowsHookEx(it->second->activationHook);
-      if(it->second->hotkeyId) GlobalDeleteAtom(it->second->hotkeyId);
       windows.erase(it); // The old HWND was destroyed; its property is gone.
     }
     // This thread belongs to our own process (validated above). A local hook
@@ -52,11 +41,6 @@ std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
     value->hook=SetWindowsHookExW(WH_GETMESSAGE,&MessageHook,nullptr,tid);
     if(!value->hook) return {};
     if(!SetPropW(hwnd,property,value.get())) { UnhookWindowsHookEx(value->hook); return {}; }
-    value->activationHook=SetWindowsHookExW(WH_CALLWNDPROC,&ActivationHook,nullptr,tid);
-    if(!value->activationHook) value->hotkeyError=GetLastError();
-    const auto atomName=L"MFGAdaUnlock.XeMFG.Overlay."+std::to_wstring(GetCurrentProcessId())+L"."+std::to_wstring(value->generation);
-    value->hotkeyId=GlobalAddAtomW(atomName.c_str());
-    if(!value->hotkeyId) value->hotkeyError=GetLastError();
     windows.emplace(hwnd,value);
   }
   if(force) value->Request(true);
@@ -67,62 +51,6 @@ void WindowControl::Request(bool force) {
   if(retiring || !IsWindow(hwnd)) return;
   requested=force; pending=true; error=0;
   if(!PostMessageW(hwnd,ControlMessage(),generation,0)) { error=GetLastError(); pending=false; }
-}
-void WindowControl::OverlayKey(OverlayChord chord) {
-  // Read registration; never register/redirect the game's input devices.
-  RAWINPUTDEVICE devices[64]{}; UINT count=64; bool raw{};
-  const auto n=GetRegisteredRawInputDevices(devices,&count,sizeof(RAWINPUTDEVICE));
-  if(n!=UINT(-1)) for(UINT i=0;i<n;++i)
-    if(devices[i].usUsagePage==1 && devices[i].usUsage==6
-        && (devices[i].dwFlags&RIDEV_NOLEGACY)==RIDEV_NOLEGACY) raw=true;
-  rawKeyboard=raw && chord.key!=0;
-  std::lock_guard guard(lock); shortcut.Configure(chord);
-  if(chord!=hotkeyWanted) {
-    hotkeyWanted=chord;
-    if(!PostMessageW(hwnd,OverlayMessage(),generation,0)) hotkeyError=GetLastError();
-  }
-}
-void WindowControl::OverlayNative() { std::lock_guard guard(lock); shortcut.ObservedNative(); }
-void WindowControl::OverlayTextCapture(bool capture) {
-  std::lock_guard guard(lock);
-  if(capture==textCapture || retiring) return;
-  textCapture=capture;
-  if(!PostMessageW(hwnd,OverlayMessage(),generation,0)) hotkeyError=GetLastError();
-}
-bool WindowControl::OverlayOwnsHotkey(OverlayChord chord) {
-  std::lock_guard guard(lock);
-  return hotkeyRegistered && hotkeyApplied==chord && hotkeyWanted==chord && !retiring && !textCapture;
-}
-void WindowControl::ApplyHotkey(bool deactivate) {
-  if(GetCurrentThreadId()!=thread) return;
-  std::lock_guard guard(lock);
-  const bool enable=!deactivate && !retiring && !textCapture && activationHook && hotkeyId
-      && hotkeyWanted.exact && hotkeyWanted.key>=VK_BACK && hotkeyWanted.key<256
-      && hotkeyWanted.key!=VK_F12 && !(hotkeyWanted.modifiers&~7u)
-      && GetPropW(hwnd,property)==this && Foreground(hwnd);
-  if(hotkeyRegistered && (!enable || hotkeyApplied!=hotkeyWanted)) {
-    if(!UnregisterHotKey(hwnd,hotkeyId)) { hotkeyError=GetLastError(); return; }
-    hotkeyRegistered=false; ++hotkeyChanges; shortcut.Cancel();
-  }
-  if(enable && !hotkeyRegistered) {
-    SetLastError(0);
-    if(RegisterHotKey(hwnd,hotkeyId,Modifiers(hotkeyWanted)|MOD_NOREPEAT,hotkeyWanted.key)) {
-      hotkeyRegistered=true; hotkeyApplied=hotkeyWanted; hotkeySince=GetTickCount();
-      hotkeyError=0; shortcut.Cancel();
-    } else hotkeyError=GetLastError();
-    ++hotkeyChanges;
-  }
-}
-uint32_t WindowControl::OverlayTaps(uint32_t blockers,uint64_t& dropped,OverlayReceipt* receipt) {
-  const bool unfocused=IsWindowVisible(hwnd) && (IsIconic(hwnd)
-      || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(hwnd,GA_ROOT));
-  std::lock_guard guard(lock); dropped=shortcut.Dropped();
-  if(unfocused) shortcut.Cancel();
-  if(unfocused) blockers|=8;
-  if(retiring) blockers|=16;
-  const auto taps=shortcut.Drain(blockers!=0);
-  if(receipt) *receipt={taps,childMessages,hotkeyChanges,hotkeyError,hotkeyRegistered,blockers};
-  return taps.ready;
 }
 WindowStatus WindowControl::Snapshot() {
   std::lock_guard guard(lock);
@@ -199,105 +127,19 @@ void WindowControl::Retire() {
   {
     std::lock_guard guard(lock);
     retiring=true; requested=false; pending=managed || applying; error=0;
-    if((pending || hotkeyRegistered) && IsWindow(hwnd) && PostMessageW(hwnd,ControlMessage(),generation,0)) return;
+    if(pending && IsWindow(hwnd) && PostMessageW(hwnd,ControlMessage(),generation,0)) return;
     // A dead window has no styles to restore. Keep a live pending controller
     // if posting failed; never call window-changing APIs from this thread.
-    if((pending || hotkeyRegistered) && IsWindow(hwnd)) { error=GetLastError(); return; }
+    if(pending && IsWindow(hwnd)) { error=GetLastError(); return; }
   }
-  Cleanup();
-}
-void WindowControl::Cleanup() {
   std::lock_guard registry(registryLock);
   if(hook) UnhookWindowsHookEx(hook); hook=nullptr;
-  if(activationHook) UnhookWindowsHookEx(activationHook); activationHook=nullptr;
-  if(hotkeyId) GlobalDeleteAtom(hotkeyId); hotkeyId=0;
   if(GetPropW(hwnd,property)==this) RemovePropW(hwnd,property);
   if(auto it=windows.find(hwnd); it!=windows.end() && it->second.get()==this) windows.erase(it);
-}
-LRESULT CALLBACK WindowControl::ActivationHook(int code,WPARAM w,LPARAM l) {
-  if(code>=0) {
-    const auto* message=reinterpret_cast<CWPSTRUCT*>(l);
-    if(message && (message->message==WM_ACTIVATEAPP || message->message==WM_ACTIVATE || message->message==WM_NCDESTROY)) {
-      std::shared_ptr<WindowControl> value;
-      { std::lock_guard guard(registryLock);
-        if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
-      }
-      if(value) {
-        const bool deactivate=message->message==WM_NCDESTROY
-            || (message->message==WM_ACTIVATEAPP && !message->wParam)
-            || (message->message==WM_ACTIVATE && LOWORD(message->wParam)==WA_INACTIVE);
-        if(deactivate) value->ApplyHotkey(true);
-        else PostMessageW(value->hwnd,OverlayMessage(),value->generation,0);
-      }
-    }
-  }
-  return CallNextHookEx(nullptr,code,w,l);
 }
 LRESULT CALLBACK WindowControl::MessageHook(int code,WPARAM w,LPARAM l) {
   if(code>=0 && w==PM_REMOVE) {
     auto* message=reinterpret_cast<MSG*>(l);
-    if(message && (message->message==WM_KEYDOWN || message->message==WM_SYSKEYDOWN
-        || message->message==WM_KEYUP || message->message==WM_SYSKEYUP || message->message==WM_INPUT)) {
-      std::shared_ptr<WindowControl> value;
-      { std::lock_guard guard(registryLock);
-        if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
-        else {
-          // ReShade also accepts input from a child of the render window.
-          // Restrict recovery to this owner thread and one unambiguous host.
-          for(const auto& [host,candidate]:windows) {
-            if(candidate->thread!=GetCurrentThreadId() || !IsChild(host,message->hwnd)) continue;
-            if(value) { value.reset(); break; }
-            value=candidate;
-          }
-        }
-      }
-      if(value && (message->message!=WM_INPUT || value->rawKeyboard)) {
-        uint32_t key=uint32_t(message->wParam);
-        bool down=message->message==WM_KEYDOWN || message->message==WM_SYSKEYDOWN;
-        bool repeat=(uintptr_t(message->lParam)&(uintptr_t(1)<<30))!=0;
-        if(message->message==WM_INPUT) {
-          RAWINPUT raw{}; UINT bytes=sizeof(raw);
-          if(GET_RAWINPUT_CODE_WPARAM(message->wParam)!=RIM_INPUT
-              || GetRawInputData(reinterpret_cast<HRAWINPUT>(message->lParam),RID_INPUT,&raw,&bytes,sizeof(RAWINPUTHEADER))==UINT(-1)
-              || raw.header.dwType!=RIM_TYPEKEYBOARD) return CallNextHookEx(nullptr,code,w,l);
-          key=raw.data.keyboard.VKey; down=!(raw.data.keyboard.Flags&RI_KEY_BREAK); repeat=false;
-        }
-        const bool unfocused=IsWindowVisible(value->hwnd) && (IsIconic(value->hwnd)
-            || GetAncestor(GetForegroundWindow(),GA_ROOT)!=GetAncestor(value->hwnd,GA_ROOT));
-        std::lock_guard guard(value->lock);
-        if(unfocused) value->shortcut.Cancel();
-        else if(!value->retiring) {
-          if(message->hwnd!=value->hwnd && key==value->shortcut.Chord().key) ++value->childMessages;
-          // WM_HOTKEY owns this binding while registered. Legacy messages
-          // (if also delivered) must not enqueue the same press again.
-          if(!value->hotkeyRegistered || key!=value->hotkeyApplied.key) value->shortcut.Key(key,down,repeat);
-        }
-      }
-      // Observe only. ReShade and the game still receive the original message.
-    }
-    if(message && message->message==WM_HOTKEY) {
-      std::shared_ptr<WindowControl> value;
-      { std::lock_guard guard(registryLock);
-        if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
-      }
-      if(value) {
-        std::lock_guard guard(value->lock);
-        if(value->hotkeyId && message->wParam==value->hotkeyId) {
-          if(value->hotkeyRegistered && !value->retiring && !value->textCapture && Foreground(value->hwnd)
-              && HIWORD(message->lParam)==value->hotkeyApplied.key
-              && LOWORD(message->lParam)==Modifiers(value->hotkeyApplied)
-              && int32_t(message->time-value->hotkeySince)>=0) value->shortcut.Hotkey();
-          message->message=WM_NULL; // Only our atom, never another addon's hotkey.
-        }
-      }
-    }
-    if(message && message->message==OverlayMessage()) {
-      std::shared_ptr<WindowControl> value;
-      { std::lock_guard guard(registryLock);
-        if(auto it=windows.find(message->hwnd); it!=windows.end()) value=it->second;
-      }
-      if(value && message->wParam==value->generation) { message->message=WM_NULL; value->ApplyHotkey(); }
-    }
     if(message && message->message==ControlMessage()) {
       std::shared_ptr<WindowControl> value;
       { std::lock_guard guard(registryLock);
@@ -307,10 +149,12 @@ LRESULT CALLBACK WindowControl::MessageHook(int code,WPARAM w,LPARAM l) {
         // Consume only our own generation's private request.
         message->message=WM_NULL;
         value->Apply();
-        value->ApplyHotkey();
-        bool retiring{}; { std::lock_guard guard(value->lock); retiring=value->retiring && !value->pending && !value->hotkeyRegistered; }
+        bool retiring{}; { std::lock_guard guard(value->lock); retiring=value->retiring && !value->pending; }
         if(retiring) {
-          value->Cleanup();
+          std::lock_guard guard(registryLock);
+          if(value->hook) UnhookWindowsHookEx(value->hook); value->hook=nullptr;
+          if(GetPropW(value->hwnd,property)==value.get()) RemovePropW(value->hwnd,property);
+          if(auto it=windows.find(value->hwnd); it!=windows.end() && it->second==value) windows.erase(it);
         }
       }
     }

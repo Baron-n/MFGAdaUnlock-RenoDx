@@ -135,43 +135,40 @@ int wmain(int argc,wchar_t** argv) {
         if(lastNavigationWindow!=name) { lastNavigationWindow=name; std::cout<<"Navigation window: "<<name<<'\n'; }
         if(strstr(name,"/summary_") || strstr(name,"##compact_overview"))
           throw std::runtime_error("read-only overview captured keyboard navigation");
-        if(strstr(name,"##keyboard_controls") && GImGui->NavId) ++controlFrames;
+        if(GImGui->NavId) ++controlFrames;
       }
-      if(scenario==L"navigation" && frame<2) for(auto* window:GImGui->Windows)
-        if(strstr(window->Name,"/summary_") || strstr(window->Name,"##compact_overview")) { click=window->Rect().GetCenter(); break; }
+      for(auto* window:GImGui->Windows)
+        if(window->Active && (window->Flags&ImGuiWindowFlags_ChildWindow))
+          throw std::runtime_error("panel created a child window");
+      if(scenario==L"navigation" && frame<2) {
+        if(auto* table=GImGui->Tables.GetByKey(ImGui::GetID("##mfg_summary_cards"))) click=table->OuterRect.GetCenter();
+        else { ImGui::PushID("##compact_overview");
+          if(auto* compact=GImGui->Tables.GetByKey(ImGui::GetID("##compact_summary"))) click=compact->OuterRect.GetCenter();
+          ImGui::PopID(); }
+      }
       auto* bar=GImGui->TabBars.GetByKey(ImGui::GetID("##xemfg_pages"));
       if(bar && bar->Tabs.Size==4) click=ImVec2(bar->BarRect.Min.x+bar->Tabs[page].Offset+bar->Tabs[page].Width*.5f,bar->BarRect.GetCenter().y);
       if(frame==9 && bar && bar->SelectedTabId!=bar->Tabs[page].ID) throw std::runtime_error("requested preview tab was not selected");
-      if(frame>=8) for(auto* window:GImGui->Windows) {
-        if(scenario==L"expanded" && strstr(window->Name,"##xe_latency_"))
-          window->StateStorage.SetInt(window->GetID("Advanced latency routing"),1);
-        if(scenario==L"performance" && strstr(window->Name,"##xe_model_details_"))
-          window->StateStorage.SetInt(window->GetID("Performance capture (advanced)"),1);
-        if(scenario==L"pacing" && strstr(window->Name,"##xe_presentation_"))
-          window->StateStorage.SetInt(window->GetID("Advanced pacing comparison"),1);
-        if((scenario==L"tooltip" || scenario==L"multiplier") && strstr(window->Name,"##xemfg_generation_")) {
-          auto* table=GImGui->Tables.GetByKey(window->GetID(scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
+      auto groupId=[&](const char* group,const char* name) {
+        ImGui::PushID(group); auto id=ImGui::GetID(name); ImGui::PopID(); return id;
+      };
+      const auto expandedId=groupId("##xe_latency","Advanced latency routing");
+      const auto performanceId=groupId("##xe_model_details","Performance capture (advanced)");
+      const auto pacingId=groupId("##xe_presentation","Advanced pacing comparison");
+      auto& storage=ImGui::GetCurrentWindow()->StateStorage;
+      if(frame>=8) {
+        if(scenario==L"expanded") storage.SetInt(expandedId,1);
+        if(scenario==L"performance") storage.SetInt(performanceId,1);
+        if(scenario==L"pacing") storage.SetInt(pacingId,1);
+        if(scenario==L"tooltip" || scenario==L"multiplier") {
+          auto* table=GImGui->Tables.GetByKey(groupId("##xemfg_generation",scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
           if(table && table->ColumnsCount==2)
             io.AddMousePosEvent((table->Columns[1].MinX+table->Columns[1].MaxX)*.5f,table->OuterRect.GetCenter().y);
         }
       }
-      if(frame==47 && scenario==L"expanded") {
-        bool found=false;
-        for(auto* window:GImGui->Windows) if(strstr(window->Name,"##xe_latency_")) {
-          found=window->StateStorage.GetInt(window->GetID("Advanced latency routing"))!=0;
-          if(window->ContentSize.x>window->InnerRect.GetWidth()+1.f) throw std::runtime_error("expanded latency controls overflow the card");
-        }
-        if(!found) throw std::runtime_error("advanced routing was not expanded");
-      }
+      if(frame==47 && scenario==L"expanded" && !storage.GetInt(expandedId)) throw std::runtime_error("advanced routing was not expanded");
+      if(frame==47 && scenario==L"performance" && !storage.GetInt(performanceId)) throw std::runtime_error("performance capture was not expanded");
       if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
-      if(frame==47 && scenario==L"performance") {
-        bool found=false;
-        for(auto* window:GImGui->Windows) if(strstr(window->Name,"##xe_model_details_")) {
-          found=window->StateStorage.GetInt(window->GetID("Performance capture (advanced)"))!=0;
-          if(window->ContentSize.x>window->InnerRect.GetWidth()+1.f) throw std::runtime_error("performance controls overflow the card");
-        }
-        if(!found) throw std::runtime_error("performance capture was not expanded");
-      }
       if(frame==47 && scenario==L"tooltip") {
         bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;
         if(!found) throw std::runtime_error("control tooltip did not appear");

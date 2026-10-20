@@ -6,11 +6,10 @@
 #include "../backend_selection.hpp"
 #include <deps/imgui/imgui.h>
 #include <reshade.hpp>
-#include <charconv>
 namespace mfgunlock::xemfg::native {
 namespace {
 std::atomic<uint64_t> created{},destroyed{},updates{},failed{};
-std::atomic<uint64_t> keyRequests{},keyRecovered{},keyDropped{};
+std::atomic<uint64_t> keyRequests{};
 class FinalOutput final:public IDXGISwapChain4 {
   std::atomic<ULONG> refs{1};
   ComPtr<IDXGISwapChain4> chain;
@@ -20,44 +19,8 @@ class FinalOutput final:public IDXGISwapChain4 {
   std::recursive_mutex lock;
   DXGI_COLOR_SPACE_TYPE color{DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709};
   bool colorKnown{};
-  std::weak_ptr<WindowControl> window;
-  OverlayChord chord;
-  uint64_t nextConfig{};
-  unsigned keyLogs{};
-  unsigned inputLogs{};
-  uint64_t inputActivity{UINT64_MAX};
-  uint64_t hotkeyChanges{};
-  uint32_t shortcutBlockers{};
-  bool overlayOpen{},recovering{};
+  unsigned requestLogs{};
   static thread_local FinalOutput* rendering;
-  void Shortcut() {
-    auto input=window.lock();
-    if(!input) { if(auto o=Active()) { input=o->window; window=input; nextConfig=0; } }
-    if(!input || GetTickCount64()<nextConfig) return;
-    nextConfig=GetTickCount64()+500;
-    auto read=[&](const char* key,char* buffer,size_t& length) {
-      const auto capacity=length;
-      if(reshade::get_config_value(runtime,"INPUT",key,buffer,&length)) return true;
-      length=capacity; return reshade::get_config_value(nullptr,"INPUT",key,buffer,&length);
-    };
-    OverlayChord value;
-    char buffer[128]{}; size_t length=sizeof(buffer);
-    if(read("KeyOverlay",buffer,length)) {
-      uint32_t fields[4]{VK_HOME,0,0,0};
-      size_t pos{}; bool valid=true;
-      for(unsigned i=0;i<4 && pos<length && buffer[pos];++i) {
-        auto end=pos; while(end<length && buffer[end]) ++end;
-        const auto result=std::from_chars(buffer+pos,buffer+end,fields[i]);
-        if(result.ec!=std::errc{} || result.ptr!=buffer+end) valid=false;
-        pos=end+1;
-      }
-      value.key=valid && fields[0]<256?fields[0]:0;
-      value.modifiers=(fields[1]?1:0)|(fields[2]?2:0)|(fields[3]?4:0);
-    }
-    length=sizeof(buffer);
-    if(read("ForceShortcutModifiers",buffer,length)) value.exact=buffer[0]!='0';
-    chord=value; input->OverlayKey(chord);
-  }
   void Color() {
     if(!runtime || !colorKnown) return;
     using Space=reshade::api::color_space;
@@ -73,68 +36,24 @@ class FinalOutput final:public IDXGISwapChain4 {
   }
   void Destroy() {
     if(!runtime) return;
-    if(auto input=window.lock()) input->OverlayKey({0,0,true});
     reshade::destroy_effect_runtime(runtime); runtime=nullptr; ++destroyed;
-    overlayOpen=false; nextConfig=0;
   }
   void Render(UINT flags) {
     if(runtime && !(flags&DXGI_PRESENT_TEST)) {
       struct Scope { FinalOutput* previous; Scope(FinalOutput* value):previous(rendering){rendering=value;} ~Scope(){rendering=previous;} } scope(this);
-      Shortcut(); shortcutBlockers=runtime->is_key_pressed(VK_ESCAPE)?1:0;
-      const bool nativePressed=chord.key && runtime->is_key_pressed(chord.key);
+      // ReShade owns its shortcut, active widgets and input capture. Updating
+      // the final runtime must not reserve Home, replay keys or veto toggles.
       reshade::update_and_present_effect_runtime(runtime); ++updates;
-      if(auto input=window.lock()) {
-        OverlayReceipt receipt;
-        uint64_t dropped{}; const auto taps=input->OverlayTaps(shortcutBlockers,dropped,&receipt);
-        keyDropped.store(dropped);
-        if(receipt.taps.activity!=inputActivity || nativePressed || receipt.hotkeyChanges!=hotkeyChanges) {
-          inputActivity=receipt.taps.activity;
-          hotkeyChanges=receipt.hotkeyChanges;
-          if(inputLogs++<64) xess_mod::WriteLog("native_overlay_input","\"key\":"+std::to_string(chord.key)
-              +",\"presses\":"+std::to_string(receipt.taps.presses)+",\"releases\":"+std::to_string(receipt.taps.releases)
-              +",\"matched\":"+std::to_string(receipt.taps.matched)+",\"native\":"+std::to_string(receipt.taps.native)
-              +",\"queued\":"+std::to_string(receipt.taps.queued)+",\"handled\":"+std::to_string(receipt.taps.handled)
-              +",\"blocked\":"+std::to_string(receipt.taps.blocked)+",\"recover\":"+std::to_string(taps)
-              +",\"blockers\":"+std::to_string(receipt.blockers)+",\"modifiers\":"+std::to_string(receipt.taps.modifiers)
-              +",\"canceled\":"+std::to_string(receipt.taps.canceled)+",\"child_messages\":"+std::to_string(receipt.childMessages)
-              +",\"hotkeys\":"+std::to_string(receipt.taps.hotkeys)+",\"hotkey_registered\":"+(receipt.hotkeyRegistered?"true":"false")
-              +",\"hotkey_error\":"+std::to_string(receipt.hotkeyError)
-              +",\"down\":"+(receipt.taps.down?"true":"false")+",\"native_pressed\":"+(nativePressed?"true":"false")
-              +",\"requested_open\":"+(overlayOpen?"true":"false"));
-        }
-        for(uint32_t i=0;i<taps;++i) {
-          const bool previous=overlayOpen; recovering=true;
-          const bool accepted=runtime->open_overlay(!previous,reshade::api::input_source::keyboard);
-          recovering=false;
-          if(!accepted) overlayOpen=previous;
-          else ++keyRecovered;
-          if(keyLogs++<16) xess_mod::WriteLog("native_overlay_key_recovery","\"open\":"+std::string(overlayOpen?"true":"false")
-              +",\"accepted\":"+(accepted?"true":"false")+",\"key\":"+std::to_string(chord.key));
-        }
-      }
     }
   }
 public:
   static bool OverlayChange(reshade::api::effect_runtime* value,bool open,reshade::api::input_source source) {
     auto* self=rendering;
     if(!self || self->runtime!=value) return false;
-    if(!self->recovering && value->is_key_pressed(self->chord.key) && !value->is_key_pressed(VK_ESCAPE))
-      if(auto input=self->window.lock(); input && input->OverlayOwnsHotkey(self->chord)) return true;
-    self->overlayOpen=open; ++keyRequests;
-    // ReShade labels the request by the last ImGui navigation source, even
-    // when the configured keyboard shortcut caused it. Test the actual key.
-    if(!self->recovering && value->is_key_pressed(self->chord.key))
-      if(auto input=self->window.lock()) input->OverlayNative();
-    if(self->keyLogs++<16) xess_mod::WriteLog("native_overlay_request","\"open\":"+std::string(open?"true":"false")
-        +",\"recovered\":"+(self->recovering?"true":"false")+",\"source\":"+std::to_string(uint32_t(source)));
-    return false; // Respect ReShade and any other addon's veto.
-  }
-  static void OverlayGui(reshade::api::effect_runtime* value) {
-    if(rendering && rendering->runtime==value) {
-      if(ImGui::IsAnyItemActive()) rendering->shortcutBlockers|=2;
-      if(ImGui::GetIO().WantTextInput) rendering->shortcutBlockers|=4;
-      if(auto input=rendering->window.lock()) input->OverlayTextCapture(ImGui::GetIO().WantTextInput);
-    }
+    ++keyRequests;
+    if(self->requestLogs++<32) xess_mod::WriteLog("native_overlay_request","\"open\":"+std::string(open?"true":"false")
+        +",\"source\":"+std::to_string(uint32_t(source))+",\"owner\":\"ReShade\"");
+    return false;
   }
   FinalOutput(ComPtr<IDXGISwapChain4> value,ComPtr<ID3D12Device> d,ComPtr<ID3D12CommandQueue> q)
       :chain(std::move(value)),device(std::move(d)),queue(std::move(q)) { Create(); }
@@ -203,7 +122,7 @@ public:
 thread_local FinalOutput* FinalOutput::rendering{};
 }
 OverlayStatus OverlaySnapshot() noexcept { return {created,destroyed,updates,failed}; }
-OverlayInputStatus OverlayInputSnapshot() noexcept { return {keyRequests,keyRecovered,keyDropped}; }
+OverlayInputStatus OverlayInputSnapshot() noexcept { return {keyRequests,0,0}; }
 void WrapFinalOutput(IUnknown* source,HWND hwnd,IDXGISwapChain1** output) noexcept {
   try {
     if(!output || !*output || !single_overlay::native::SystemDxgiObject(*output,40)) return;
@@ -215,7 +134,6 @@ void WrapFinalOutput(IUnknown* source,HWND hwnd,IDXGISwapChain1** output) noexce
     static std::once_flag callbacks;
     std::call_once(callbacks,[] {
       reshade::register_event<reshade::addon_event::reshade_open_overlay>(&FinalOutput::OverlayChange);
-      reshade::register_event<reshade::addon_event::reshade_overlay>(&FinalOutput::OverlayGui);
     });
     auto* replacement=new FinalOutput(std::move(chain),std::move(device),std::move(queue));
     (*output)->Release(); *output=replacement;
