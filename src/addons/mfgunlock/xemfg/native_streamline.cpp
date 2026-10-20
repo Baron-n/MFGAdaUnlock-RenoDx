@@ -193,8 +193,15 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
       // Intel's documented ONLY_NOW contract records the copy at the tag,
       // using the producer's list and restoring its resource state. A COM
       // AddRef alone would not preserve the contents of a volatile resource.
-      if(!command || !single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(command),list)
+      if(!command || !single_overlay::native::UnwrapProducerCommand(reinterpret_cast<IUnknown*>(command),list)
           || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { rejection="volatile_command"; reject(HudMetadata); continue; }
+      ComPtr<ID3D12Device> producerDevice,nativeProducerDevice;
+      ComPtr<IUnknown> producerIdentity;
+      if(FAILED(list->GetDevice(IID_PPV_ARGS(&producerDevice)))
+          || !single_overlay::native::Unwrap(producerDevice.Get(),nativeProducerDevice)
+          || FAILED(nativeProducerDevice.As(&producerIdentity)) || producerIdentity!=expectedIdentity) {
+        rejection="producer_device"; reject(HudMetadata); continue;
+      }
       data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
     } else { rejection="lifecycle"; reject(HudMetadata); continue; }
     const auto code=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);

@@ -19,6 +19,7 @@ ap.add_argument('--overlay-keys',action='store_true')
 ap.add_argument('--overlay-foreground',action='store_true')
 ap.add_argument('--capcom-flags',action='store_true')
 ap.add_argument('--retire-sleep',action='store_true')
+ap.add_argument('--producer-shadow',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -48,6 +49,7 @@ ctypes.windll.kernel32.SetErrorMode(3)
 flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])
 if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
+if args.producer_shadow: flags+=['--producer-shadow']
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
@@ -92,6 +94,7 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     'sdk_policy_activation_verified':policy_activation,'sdk_deadline_records':len(sdk_deadlines),
     'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,'passthrough_identity_verified':passthrough_identity,
     'native_reshade_keys_verified':native_keys,'native_reshade_child_verified':native_child,'foreground_reshade_verified':foreground_verified,
-    'production_panel_verified':'Production panel draws=' in result.stdout},indent=2),encoding='utf-8')
+    'production_panel_verified':'Production panel draws=' in result.stdout,
+    'producer_shadow_verified':args.producer_shadow and result.returncode==0 and 'Heap producer commands: accepted; non-code implementation: rejected; generation resumed' in result.stdout},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
 raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False else 1)

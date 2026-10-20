@@ -21,6 +21,8 @@
 #include <filesystem>
 #include <dbghelp.h>
 #include <future>
+#include <array>
+#include <algorithm>
 using Microsoft::WRL::ComPtr;
 static bool keyTest{};
 static bool hotkeyTest{};
@@ -55,6 +57,37 @@ static void Check(HRESULT code,const char* where) { if(FAILED(code)) { std::cerr
 static void Require(bool value,const char* what) { if(!value) throw std::runtime_error(what); }
 struct Token : sl::FrameToken { uint32_t id{}; operator uint32_t() const override {return id;} };
 template<class T> T Import(HMODULE m,const char* name) { auto p=reinterpret_cast<T>(GetProcAddress(m,name)); Require(p!=nullptr,name); return p; }
+// A valid public COM wrapper whose object-owned dispatch table is in the heap.
+// Its methods remain image-backed. This reproduces the admission constraint
+// without importing another overlay or guessing any native-object offsets.
+class ProducerCommandProxy final:public ID3D12CommandList {
+  std::atomic<ULONG> refs{1};
+  ComPtr<ID3D12GraphicsCommandList> native;
+  std::array<void*,9> table{};
+public:
+  explicit ProducerCommandProxy(ID3D12GraphicsCommandList* value):native(value) {
+    auto*** slot=reinterpret_cast<void***>(static_cast<ID3D12CommandList*>(this));
+    std::copy_n(*slot,table.size(),table.begin()); *slot=table.data();
+  }
+  void RejectQueryImplementation() { table[0]=table.data(); } // readable data, never callable
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
+    if(!out) return E_POINTER; *out=nullptr;
+    constexpr GUID base={0xadec44e2,0x61f0,0x45c3,{0xad,0x9f,0x1b,0x37,0x37,0x92,0x84,0xff}};
+    if(id==base) { *out=native.Get(); native->AddRef(); return S_OK; }
+    if(id==__uuidof(IUnknown)||id==__uuidof(ID3D12Object)||id==__uuidof(ID3D12DeviceChild)||id==__uuidof(ID3D12CommandList)) {
+      *out=static_cast<ID3D12CommandList*>(this); AddRef(); return S_OK;
+    }
+    return E_NOINTERFACE;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+  ULONG STDMETHODCALLTYPE Release() override { const auto count=--refs; if(!count) delete this; return count; }
+  HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID id,UINT* size,void* data) override {return native->GetPrivateData(id,size,data);}
+  HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID id,UINT size,const void* data) override {return native->SetPrivateData(id,size,data);}
+  HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID id,const IUnknown* value) override {return native->SetPrivateDataInterface(id,value);}
+  HRESULT STDMETHODCALLTYPE SetName(LPCWSTR name) override {return native->SetName(name);}
+  HRESULT STDMETHODCALLTYPE GetDevice(REFIID id,void** out) override {return native->GetDevice(id,out);}
+  D3D12_COMMAND_LIST_TYPE STDMETHODCALLTYPE GetType() override {return native->GetType();}
+};
 static void Barrier(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES before,D3D12_RESOURCE_STATES after) {
   D3D12_RESOURCE_BARRIER b{}; b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
   b.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,before,after}; list->ResourceBarrier(1,&b);
@@ -198,6 +231,8 @@ int main(int argc,char** argv) {
       WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.lpszClassName=L"XeMFGRealStreamline"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
       const auto window=CreateWindowW(wc.lpszClassName,L"Isolated Streamline output recreation",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
       Require(window,"real recreation window");
+      const bool visible=flag("--visible-recreation");
+      if(visible) { ShowWindow(window,SW_SHOWNOACTIVATE); UpdateWindow(window); }
       for(unsigned cycle=0;cycle<4;++cycle) {
         D3D12_COMMAND_QUEUE_DESC queueDesc{}; ComPtr<ID3D12CommandQueue> queue;
         Check(device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue)),"real recreation queue");
@@ -221,7 +256,9 @@ int main(int argc,char** argv) {
           sl::DLSSGOptions on; on.structVersion=3; on.mode=sl::DLSSGMode::eOn; on.numFramesToGenerate=3;
           Require(reinterpret_cast<PFun_slDLSSGSetOptions*>(setter)(sl::ViewportHandle{0},on)==sl::Result::eOk,"real replacement FG on");
         }
-        for(unsigned frame=0;frame<(generate?8u:3u);++frame) {
+        unsigned shown{};
+        for(unsigned frame=0;frame<(visible?90u:generate?8u:3u);++frame) {
+          MSG pending{}; while(PeekMessageW(&pending,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&pending);
           sl::FrameToken* token{};
           Require(tokenFn(token,nullptr)==sl::Result::eOk && token,"real frame token");
           Require(reinterpret_cast<PFun_slReflexSleep*>(sleepFn)(*token)==sl::Result::eOk,"real source sleep");
@@ -250,10 +287,14 @@ int main(int argc,char** argv) {
           }
           back.Reset();
           mark(sl::PCLMarker::eRenderSubmitEnd); mark(sl::PCLMarker::ePresentStart);
-          Check(chain->Present(0,0),"real passthrough Present");
+          const auto presented=chain->Present(0,0);
+          Check(presented,"real passthrough Present");
+          if(presented==S_OK) ++shown;
           mark(sl::PCLMarker::ePresentEnd);
           if(inputs) inputs->Wait();
+          if(visible) Sleep(16);
         }
+        if(visible) { Require(shown>60,"visible recreation did not submit visible Presents"); std::cout<<"Visible Presents cycle "<<cycle<<"="<<shown<<std::endl; }
         if(generate) {
           mfgunlock::xemfg::Status ms; model(&ms,sizeof(ms));
           Require(bridge(&bs,sizeof(bs)) && bs.enabled && !bs.rejected && ms.tensor_launches>0,"real Streamline frame inputs did not reach Intel inference");
@@ -500,10 +541,15 @@ int main(int argc,char** argv) {
       Barrier(list.Get(),back.Get(),D3D12_RESOURCE_STATE_RENDER_TARGET,D3D12_RESOURCE_STATE_PRESENT);
       // Cover both tag APIs and both lifetime contracts with real SDK copies.
       const bool volatileInputs=frame>=17 && frame<=32;
+      ComPtr<ProducerCommandProxy> producer;
+      if(volatileInputs && flag("--producer-shadow")) producer.Attach(new ProducerCommandProxy(list.Get()));
+      const bool invalidProducer=producer && frame==22;
+      if(invalidProducer) producer->RejectQueryImplementation();
+      auto* producerCommand=reinterpret_cast<sl::CommandBuffer*>(producer?static_cast<ID3D12CommandList*>(producer.Get()):static_cast<ID3D12CommandList*>(list.Get()));
       for(auto& tag:tagged) tag.lifecycle=volatileInputs?sl::eOnlyValidNow:sl::eValidUntilPresent;
       const uint32_t tagCount=frame==34?1:frame==17?2:3; // Missing MV bypass; missing HUD-less uses UI interpolation.
-      if(frame%2) tags(token,viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
-      else legacyTags(viewport,tagged,tagCount,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
+      if(frame%2) tags(token,viewport,tagged,tagCount,producerCommand);
+      else legacyTags(viewport,tagged,tagCount,producerCommand);
       if(frame==37 || frame==38) {
         sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
         tags(token,viewport,&invalidOptional,1,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
@@ -520,8 +566,8 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
-      if(frame==34 || frame==38) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"missing MV or invalid retag did not bypass FG"); }
-      else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,"valid overlapping RenderSubmit/Present was rejected"); }
+      if(frame==34 || frame==38 || invalidProducer) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"invalid input did not bypass FG"); }
+      else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,producer?"heap producer command was not accepted":"valid overlapping RenderSubmit/Present was rejected"); }
       if(frame==37) {
         controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues && cs.hudRejected && !cs.uiCompositionApplied,"invalid optional HUD did not fall back to default interpolation");
       }
@@ -530,6 +576,7 @@ int main(int argc,char** argv) {
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
     }
+    if(flag("--producer-shadow")) std::cout<<"Heap producer commands: accepted; non-code implementation: rejected; generation resumed"<<std::endl;
     mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms)); bridgeStatus(&bs,sizeof(bs));
     Sleep(100);
     auto refresh=Import<void(*)()>(addon,"MFGAXeNativeRefresh"); refresh();
@@ -555,7 +602,10 @@ int main(int argc,char** argv) {
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
-    Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==4,"UI composition setter repeated or did not restore default");
+    // An invalid producer removes this frame's HUD-less input, then the next
+    // valid frame restores it: one additional disable/enable transition.
+    const uint64_t compositionTransitions=flag("--producer-shadow")?6:4;
+    Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==compositionTransitions,"UI composition setter repeated or did not restore default");
     const auto requiredBytes=timingReport(nullptr,0); std::vector<char> cpuReport(requiredBytes);
     Require(timingReport(cpuReport.data(),uint32_t(cpuReport.size()))==requiredBytes,"timing report size changed without new Presents");
     Require(std::string(cpuReport.data()).find("Samples=48")!=std::string::npos,"actual Present calls missing from timing ring");

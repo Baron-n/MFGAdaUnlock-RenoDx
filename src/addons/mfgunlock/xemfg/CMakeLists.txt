@@ -148,8 +148,20 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --capcom-flags --latency-output Reflex --retire-sleep)
   set_tests_properties(xemfg_native_retire_source_sleep PROPERTIES RUN_SERIAL TRUE TIMEOUT 40)
+  add_test(NAME xemfg_native_producer_shadow COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+    --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+    --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --producer-shadow --capcom-flags)
+  set_tests_properties(xemfg_native_producer_shadow PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   set(XEMFG_OFFLINE_STREAMLINE "" CACHE PATH "Explicit real Streamline plugin directory for presentation ownership tests")
   if(XEMFG_OFFLINE_STREAMLINE)
+    add_test(NAME xemfg_real_streamline_visible COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_streamline_recreate.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --reshade "${XEMFG_OFFLINE_RESHADE}" --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}"
+      --streamline "${XEMFG_OFFLINE_STREAMLINE}" --generate --early-addon --visible-recreation)
+    set_tests_properties(xemfg_real_streamline_visible PROPERTIES RUN_SERIAL TRUE TIMEOUT 85)
     foreach(route IN ITEMS XeLL Reflex)
       foreach(order IN ITEMS early late)
         set(startup_flags)
