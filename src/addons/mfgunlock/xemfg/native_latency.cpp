@@ -4,25 +4,34 @@
 #include "native_internal.hpp"
 #include <chrono>
 namespace mfgunlock::xemfg::native {
-sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id) {
+sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
+    PFun_slReflexSleep* nativeSleep,const sl::FrameToken* token) {
   auto& s=State(); auto& a=s.api;
   uint64_t epoch{};
+  const auto route=s.latencyOutput.load();
+  const bool reflex=route==LatencyOutput::Reflex;
+  if(reflex && (!nativeSleep || !token)) return sl::Result::eErrorInvalidState;
   {
     std::lock_guard guard(o->io);
     auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
     if(frame->sleeping) return sl::Result::eOk;
     if(o->sleepActive || frame->sleepInFlight) return sl::Result::eErrorInvalidState;
-    const auto interval=s.limitUs.load();
-    if(!o->sleepConfigured || o->sleepInterval!=interval) {
-      xell_sleep_params_t mode{}; mode.bLowLatencyMode=1; mode.minimumIntervalUs=interval;
+    const auto interval=reflex?0:s.limitUs.load();
+    const bool lowLatency=!reflex;
+    if(!o->sleepConfigured || o->sleepInterval!=interval || o->sleepLowLatency!=lowLatency) {
+      xell_sleep_params_t mode{}; mode.bLowLatencyMode=lowLatency; mode.minimumIntervalUs=interval;
       if(a.xellSetSleepMode(o->ll,&mode)!=XELL_RESULT_SUCCESS) return sl::Result::eErrorReflexAPI;
-      o->sleepConfigured=true; o->sleepInterval=interval; ++s.latencyModeUpdates;
-      xess_mod::WriteLog("native_sleep_mode","\"interval_us\":"+std::to_string(interval)+",\"low_latency\":true");
+      o->sleepConfigured=true; o->sleepInterval=interval; o->sleepLowLatency=lowLatency; ++s.latencyModeUpdates;
+      xess_mod::WriteLog("native_sleep_mode","\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false"));
     }
     epoch=o->epoch; frame->sleepInFlight=true; o->sleepActive=true;
   }
   const auto start=std::chrono::steady_clock::now();
-  const auto result=a.xellSleep(o->ll,id);
+  // Native Reflex is the only latency wait in this route. XeLL sleep with
+  // low latency OFF and interval zero retains the separate diagnostic marker context.
+  // XeFG is bound to its profiled external-latency path in this route.
+  const auto nativeResult=reflex?nativeSleep(*token):sl::Result::eOk;
+  const auto result=nativeResult==sl::Result::eOk?a.xellSleep(o->ll,id):XELL_RESULT_ERROR_UNKNOWN;
   const auto sleepUs=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count();
   s.lastSleepUs=sleepUs;
   {
@@ -31,8 +40,11 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id) {
     auto* found=o->frames.Find(id);
     if(epoch!=o->epoch || !found) return sl::Result::eErrorInvalidState;
     auto& frame=*found; frame.sleepInFlight=false;
+    if(nativeResult!=sl::Result::eOk) { frame.failed=true; return nativeResult; }
     if(result!=XELL_RESULT_SUCCESS) { frame.failed=true; return sl::Result::eErrorReflexAPI; }
-    frame.sleeping=true; frame.sleepUs=sleepUs; ++s.latencySleeps; s.outputTick=GetTickCount64();
+    frame.sleeping=true; frame.sleepUs=sleepUs; frame.latencyOutput=route; ++s.latencySleeps;
+    if(reflex) { ++s.reflexSleeps; if(s.gameReflexMode!=0) s.reflexOutputTick=GetTickCount64(); }
+    else { ++s.xellSleeps; s.outputTick=GetTickCount64(); }
   }
   return sl::Result::eOk;
 }

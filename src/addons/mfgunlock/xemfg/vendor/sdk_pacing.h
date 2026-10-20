@@ -45,6 +45,8 @@ void RequestFlipMetering(bool enabled) noexcept;
 // Commits on output 0 of a generated batch, disables driver metering for that
 // batch, and preserves all SDK waits and the extra-output pacing hook.
 void RequestSdkDeadlines(bool enabled) noexcept;
+// Commits at a first generated output, together with the metering configuration.
+void RequestQueueAhead(bool enabled) noexcept;
 struct FlipStatus {
     bool requested{}, enabled{}, available{}, installed{}, registered{}, queue{}, busy{};
     bool configured{}, metered{}, refused{};
@@ -52,6 +54,8 @@ struct FlipStatus {
     int status{};
     uint64_t calls{};
     bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
+    bool queueAheadRequested{},queueAheadActive{};
+    uint64_t queueAheadDeadlines{};
 };
 // Read only, scoped to the exact live SDK handle (never another context).
 FlipStatus Snapshot(void* handle) noexcept;

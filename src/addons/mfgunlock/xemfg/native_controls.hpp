@@ -4,15 +4,16 @@
 #include "native_window.hpp"
 namespace mfgunlock::xemfg::native {
 enum class LatencyInput : uint32_t { Auto, StreamlineReflex };
-enum class LatencyOutput : uint32_t { Auto, XeLL };
+enum class LatencyOutput : uint32_t { Auto, XeLL, Reflex };
 struct ControlSettings {
-  uint32_t version{3};
+  uint32_t version{4};
   LatencyInput input{LatencyInput::Auto};
   LatencyOutput output{LatencyOutput::Auto};
+  bool queueAhead{true};
   bool flipMetering{true}, forceBorderless{}, uiComposition{},sdkDeadlines{};
 };
 struct ControlStatus {
-  uint32_t version{3};
+  uint32_t version{4};
   ControlSettings settings;
   WindowStatus window;
   bool reflexObserved{}, xellObserved{}, nativeReflexDisabled{};
@@ -32,9 +33,13 @@ struct ControlStatus {
   int flipResult{};
   uint64_t flipCalls{};
   bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
+  bool queueAheadActive{}; uint64_t queueAheadDeadlines{};
   uint32_t hudIssues{},hudInputs{};
   uint64_t hudRejected{};
   char cudaReason[128]{};
+  LatencyOutput activeLatencyOutput{LatencyOutput::XeLL};
+  bool latencyRestartPending{},reflexOutputObserved{},reflexOptionsReady{};
+  uint64_t reflexSleeps{},xellSleeps{};
 };
 void LoadControls();
 ControlSettings ControlsSettings();

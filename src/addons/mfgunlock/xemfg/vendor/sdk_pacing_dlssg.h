@@ -156,6 +156,20 @@ private:
 // output `index` (1..outputs-1) flips at batchStart + index * spacing; it is released `lead` early
 // (at most half a spacing) so the presenting thread's wake-up, copy and Present no longer place it.
 // No output waits more than one spacing from now (the DLSS-G cap above).
+// Queue-ahead authorization belongs to one acknowledged, non-VSync batch.
+// It only replaces the CPU arithmetic deadline. The caller MUST still invoke
+// the SDK's original Pace, including its fence/cancel wait, and original Present.
+struct MeteredBatch {
+    bool accepted{}, queueAhead{};
+    uint32_t frame{}, outputs{};
+    int64_t anchorNs{}, batchNs{};
+    bool CanQueue(uint32_t currentFrame,uint32_t currentOutputs,uint32_t index,int64_t now) const noexcept {
+        return accepted && queueAhead && currentFrame==frame && currentOutputs==outputs
+            && outputs>=2 && outputs<=6 && index>=1 && index<outputs
+            && anchorNs>0 && batchNs>=1000 && batchNs<=250000000
+            && now>=anchorNs && now-anchorNs<=2*batchNs;
+    }
+};
 struct MeteredDeadline { int64_t deadline{}, lead{}; bool capped{}; };
 inline bool PlanMetered(int64_t batchStart, int64_t spacing, uint32_t index, int64_t lead, int64_t now,
     MeteredDeadline& decision) noexcept

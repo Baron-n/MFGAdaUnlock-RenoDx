@@ -40,7 +40,7 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.7.5");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.8");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

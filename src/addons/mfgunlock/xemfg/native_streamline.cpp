@@ -172,17 +172,23 @@ sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl:
 sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
   if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion!=1 || opts.next)
     return sl::Result::eErrorUnsupportedInterface;
-  sl::ReflexOptions disabled; disabled.mode=sl::ReflexMode::eOff;
-  const auto result=reflexOptions(disabled);
-  State().reflexOff=result==sl::Result::eOk;
-  State().gameReflexMode=uint32_t(opts.mode);
-  State().limitUs=opts.frameLimitUs;
+  auto& s=State();
+  const bool native=s.latencyOutput.load()==LatencyOutput::Reflex;
+  // The original setter stays on the game's calling thread. Native output
+  // preserves every V1 field; XeLL output suppresses the native limiter too.
+  sl::ReflexOptions forwarded=opts;
+  if(!native) { forwarded.mode=sl::ReflexMode::eOff; forwarded.frameLimitUs=0; }
+  const auto result=reflexOptions(forwarded);
+  s.reflexOptionsReady=result==sl::Result::eOk;
+  s.reflexOff=result==sl::Result::eOk && forwarded.mode==sl::ReflexMode::eOff;
+  s.gameReflexMode=uint32_t(opts.mode);
+  s.limitUs=opts.frameLimitUs;
   return result;
 }
 sl::Result SleepHook(const sl::FrameToken& f) {
   auto o=Active(); if(!o) return reflexSleep(f);
   State().inputTick=GetTickCount64();
-  return SleepSourceFrame(o,FrameId(uint32_t(f)));
+  return SleepSourceFrame(o,FrameId(uint32_t(f)),reflexSleep,&f);
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   const auto id=FrameId(uint32_t(f)); auto& s=State(); const auto value=uint32_t(marker);
@@ -195,7 +201,7 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
 }
 sl::Result MarkerHook(sl::PCLMarker marker,const sl::FrameToken& f) {
   CaptureMarker(marker,f);
-  return pclMarker(marker,f); // Preserve PCL statistics; Reflex sleeping is disabled separately.
+  return pclMarker(marker,f); // Preserve native PCL/Reflex markers; the selected output owns the sleep.
 }
 sl::Result EvaluateHook(sl::Feature feature,const sl::FrameToken& f,const sl::BaseStructure** inputs,
     uint32_t count,sl::CommandBuffer* command) {
@@ -264,7 +270,9 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
   const bool compositionReady=ApplyUiComposition(*o,hudless);
   constexpr uint32_t required=(1u<<XEFG_SWAPCHAIN_RES_DEPTH)|(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR);
-  bool ready=compositionReady && frame && id>o->last && s.nativeOff && s.reflexOff && s.requested && o->compatible;
+  const bool nativeReflex=s.latencyOutput.load()==LatencyOutput::Reflex;
+  const bool latencyReady=s.reflexOptionsReady && (nativeReflex?s.gameReflexMode!=0:s.reflexOff.load());
+  bool ready=compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
   if(ready) {
     auto& f=*frame;
     // RenderSubmit END can legally arrive after Present starts or returns.
@@ -272,7 +280,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     // END continues to be forwarded at its actual arrival in CaptureMarker.
     constexpr uint32_t beforePresent=(1u<<XELL_SIMULATION_START)|(1u<<XELL_SIMULATION_END)
         |(1u<<XELL_RENDERSUBMIT_START)|(1u<<XELL_PRESENT_START);
-    ready=f.constants && f.valid && !f.failed && f.sleeping && (f.markers&beforePresent)==beforePresent
+    ready=f.constants && f.valid && !f.failed && f.sleeping && f.latencyOutput==s.latencyOutput.load() && (f.markers&beforePresent)==beforePresent
         && (f.resources&required)==required && f.motionWidth && f.motionHeight;
     if(ready) {
       auto data=f.data; data.motionVectorScaleX*=f.motionWidth; data.motionVectorScaleY*=f.motionHeight;
@@ -312,7 +320,9 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   }
   { std::lock_guard guard(s.lock); s.status.inputs=ready; s.status.enabled=ready;
     s.status.multiplier=s.multiplier; ++s.status.frames; if(!ready) ++s.status.rejected; }
-  if(ready) Report("XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
+  if(ready) Report(nativeReflex?"XeMFG active: Streamline inputs and native Reflex; pacing state is reported separately":
+      "XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
+  else if(s.requested && nativeReflex && !latencyReady) Report("XeMFG bypass: enable native NVIDIA Reflex in the game for the selected latency output");
   else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
   o->last=id;
 }

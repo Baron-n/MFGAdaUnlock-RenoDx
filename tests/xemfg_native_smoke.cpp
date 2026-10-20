@@ -83,14 +83,15 @@ int main(int argc,char** argv) {
     timingEnable(true);
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
-    Require(cs.version==3 && cs.settings.version==3 && !cs.settings.uiComposition && !cs.settings.sdkDeadlines,"default/ABI");
+    Require(cs.version==4 && cs.settings.version==4 && !cs.settings.uiComposition && !cs.settings.sdkDeadlines,"default/ABI");
+    const bool nativeReflex=cs.activeLatencyOutput==mfgunlock::xemfg::native::LatencyOutput::Reflex;
     auto settings=cs.settings; settings.input=mfgunlock::xemfg::native::LatencyInput::StreamlineReflex;
-    settings.output=mfgunlock::xemfg::native::LatencyOutput::XeLL;
+    settings.output=nativeReflex?mfgunlock::xemfg::native::LatencyOutput::Reflex:mfgunlock::xemfg::native::LatencyOutput::XeLL;
     settings.forceBorderless=true;
     Require(configure(&settings,sizeof(settings)),"explicit Reflex to XeLL preference");
-    auto unsupported=settings; unsupported.output=static_cast<mfgunlock::xemfg::native::LatencyOutput>(2);
+    auto unsupported=settings; unsupported.output=static_cast<mfgunlock::xemfg::native::LatencyOutput>(3);
     Require(!configure(&unsupported,sizeof(unsupported)),"unsupported output accepted");
-    auto oldAbi=settings; oldAbi.version=2;
+    auto oldAbi=settings; oldAbi.version=3;
     Require(!configure(&oldAbi,sizeof(oldAbi)),"old settings padding interpreted as UI composition");
     controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
@@ -147,7 +148,13 @@ int main(int argc,char** argv) {
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
     Require(reflex(ro)==sl::Result::eOk,"Reflex disable");
-    Require(Import<uint32_t(*)()>(fixture,"FixtureModes")()==0,"NVIDIA/Reflex generators still enabled");
+    Require(Import<uint32_t(*)()>(fixture,"FixtureModes")()==(nativeReflex?0x100u:0u),"native FG/Reflex mode routing");
+    Require(Import<uint32_t(*)()>(fixture,"FixtureReflexLimit")()==(nativeReflex?25000u:0u),"frame cap duplicated/lost in latency translation");
+    Require(cs.activeLatencyOutput==settings.output,"startup latency route changed");
+    auto pending=settings; pending.output=nativeReflex?mfgunlock::xemfg::native::LatencyOutput::XeLL:mfgunlock::xemfg::native::LatencyOutput::Reflex;
+    Require(configure(&pending,sizeof(pending)),"save alternate latency output");
+    controlStatus(&cs,sizeof(cs)); Require(cs.latencyRestartPending && cs.activeLatencyOutput==settings.output,"UI-thread latency switch applied live");
+    Require(configure(&settings,sizeof(settings)),"restore requested route");
     ComPtr<ID3D12Fence> fence; Check(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"fence");
     auto event=CreateEventW(nullptr,FALSE,FALSE,nullptr); uint64_t value=0;
     auto wait=[&] { Check(queue->Signal(fence.Get(),++value),"signal"); if(fence->GetCompletedValue()<value) {Check(fence->SetEventOnCompletion(value,event),"event"); Require(WaitForSingleObject(event,30000)==WAIT_OBJECT_0,"GPU timeout");} };
@@ -282,8 +289,10 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    Require(cs.reflexObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.sleeps==48 && cs.markers>=48*6,
+    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==48)) && cs.sleeps==48 && cs.markers>=48*6,
         "observed latency route/counters missing");
+    Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
+    std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
     Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==4,"UI composition setter repeated or did not restore default");
     const auto requiredBytes=timingReport(nullptr,0); std::vector<char> cpuReport(requiredBytes);

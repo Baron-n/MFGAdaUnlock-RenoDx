@@ -134,6 +134,14 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --multiplier ${multiplier} --overlay-keys)
   set_tests_properties(xemfg_native_reshade_${multiplier}x PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE)
   endforeach()
+  foreach(multiplier IN ITEMS 2 3 4 6)
+    add_test(NAME xemfg_native_reflex_${multiplier}x COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --multiplier ${multiplier} --latency-output Reflex)
+    set_tests_properties(xemfg_native_reflex_${multiplier}x PROPERTIES TIMEOUT 150 RUN_SERIAL TRUE)
+  endforeach()
 endif()
 
 add_executable(xemfg_provider_probe "${CMAKE_SOURCE_DIR}/xemfg_provider_probe.cpp"
@@ -200,3 +208,5 @@ add_executable(xemfg_reshade_panel_input "${CMAKE_SOURCE_DIR}/xemfg_reshade_pane
 target_compile_definitions(xemfg_reshade_panel_input PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_reshade_panel_input PRIVATE "${RENODX_SOURCE_DIR}/external/reshade" "${RENODX_SOURCE_DIR}/external/reshade/include")
 target_link_libraries(xemfg_reshade_panel_input PRIVATE d3d12 dxgi user32)
+
+add_subdirectory("${CMAKE_SOURCE_DIR}/xemfg_cuda" "${CMAKE_BINARY_DIR}/xemfg-cuda")

@@ -6,6 +6,7 @@
 #include "../src/addons/mfgunlock/xemfg/vendor/host_unlock.h"
 #include "../src/addons/mfgunlock/backend_selection.hpp"
 #include <iostream>
+#include "../src/addons/mfgunlock/xemfg/native_reflex_profile.hpp"
 
 namespace xess_mod {
 HMODULE Self() noexcept { return GetModuleHandleW(nullptr); }
@@ -31,6 +32,14 @@ int wmain(int argc,wchar_t** argv) {
     auto fg=LoadLibraryExW(argv[1],nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     auto ll=LoadLibraryExW(argv[2],nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     if (!fg || !ll || !xess_layout::Pair(fg,ll)) throw std::runtime_error("layout_pair");
+    if(!mfgunlock::xemfg::native::reflex_profile::Available(fg)) throw std::runtime_error("external_latency_profile");
+    std::array<unsigned char,342> setter{};
+    if(!xess_layout::Image(fg).Read(0x20e620,setter.data(),setter.size())) throw std::runtime_error("external_latency_read");
+    for(size_t i=0;i<setter.size();++i) {
+      setter[i]^=1;
+      if(mfgunlock::xemfg::native::reflex_profile::SetterMatches(setter)) throw std::runtime_error("mutated_external_latency_accepted");
+      setter[i]^=1;
+    }
     const auto a=Text(fg),b=Text(ll);
     // Incompatible capacity is rejected without any change.
     for (unsigned n: {0,1,6,255}) {

@@ -74,7 +74,7 @@ std::string TimingReport() {
         <<" p99="<<q(.99)<<" p99.9="<<q(.999)<<" max="<<values.back()<<'\n';
   };
   stats("Source Present intervals",interval); stats("Present serialization wait",wait); stats("BeforePresent",prepare);
-  stats("SDK Present call",present); stats("AfterPresent/status",finish); stats("Source-frame XeLL sleep",sleep);
+  stats("SDK Present call",present); stats("AfterPresent/status",finish); stats("Source-frame latency wait (Reflex or XeLL)",sleep);
   report<<"Displayed FPS/intervals: unavailable internally; use PresentMon display metrics.\n"
       <<"GPU execution, queue depth/fence waits, physical latency: NOT MEASURED. SDK-reported outputs do not prove scanout.\n"
       <<"Percentiles: nearest rank; last bounded window, excludes nonconsecutive source IDs/epochs. Profiling adds CPU work.\n";

@@ -38,6 +38,7 @@ struct Frame {
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
   uint32_t hudIssues{};
+  LatencyOutput latencyOutput{LatencyOutput::XeLL};
   xefg_swapchain_frame_constant_data_t data{};
 };
 struct Output {
@@ -58,7 +59,7 @@ struct Output {
   uint64_t epoch{};
   uint64_t diagnosticOutput{};
   uint32_t sleepInterval{};
-  bool sleepConfigured{}, sleepActive{};
+  bool sleepConfigured{}, sleepActive{},sleepLowLatency{true};
   // XeFG initializes with composition disabled. A live preference is applied
   // only at the source Present boundary, with this frame's HUD-less input.
   bool uiCompositionKnown{true}, uiCompositionApplied{}, uiCompositionAvailable{};
@@ -74,6 +75,11 @@ struct Bridge {
   std::weak_ptr<Output> output;
   std::atomic<uint32_t> recording{0}, presenting{0}, viewport{UINT32_MAX};
   std::atomic<bool> nativeOff{false}, reflexOff{false}, requested{false};
+  std::atomic<bool> reflexOptionsReady{false};
+  // Output changes are saved by the UI and take effect only after restart.
+  // This avoids replaying a game's Reflex setter on an arbitrary UI thread.
+  std::atomic<LatencyOutput> latencyOutput{LatencyOutput::XeLL};
+  std::atomic<uint64_t> reflexOutputTick{0},reflexSleeps{0},xellSleeps{0};
   std::atomic<uint32_t> multiplier{4}, limitUs{0};
   std::atomic<uint64_t> outputPresents{0};
   std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
@@ -87,7 +93,8 @@ Bridge& State();
 inline Frame* FindFrame(Output& o,uint32_t id) {
   return o.frames.Acquire(id);
 }
-sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id);
+sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id,
+    PFun_slReflexSleep* nativeSleep=nullptr,const sl::FrameToken* token=nullptr);
 bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
 bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);

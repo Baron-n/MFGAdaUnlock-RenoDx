@@ -74,6 +74,8 @@ struct Owner
         // real -> G1 seam that much short (PresentMon, Subnautica 2: 4x 4.1 / 13.5 / 7.2 / 7.9 ms).
         uint32_t anchorFrame{};
         int64_t anchorNs{};
+        bool queueAhead{};
+        uint64_t queueAheadDeadlines{};
     } flip;
     std::atomic<unsigned> flipLogs{}, flipSkipLogs{};
 };
@@ -97,6 +99,7 @@ std::atomic<SetFlipConfigFunction> flipFunction{};
 std::atomic<bool> flipEnabled{}, firstLayout{}, flipToggleDown{}, flipToggleKey{};
 std::atomic<bool> flipRequested{};
 std::atomic<bool> sdkDeadlinesRequested{},sdkDeadlinesActive{};
+std::atomic<bool> queueAheadRequested{true};
 std::atomic<int64_t> flipLeadNs{2500000};
 std::atomic<unsigned> flipToggleLogs{};
 // A batch is configured once the estimate holds this many batch deltas (DLSS-G averages six).
@@ -361,6 +364,7 @@ void ConfigureFlip(Owner& owner, uint32_t outputs, int64_t batchNs, const char* 
     else if (outputs && ++flip.consecutiveFailures >= kFlipFailureLimit) flip.refused = true;
     flip.configured = outputs && status == 0;
     flip.metered = flip.configured && !(config.flipConfigFeedbackMask & kFlipFeedbackNoIflip);
+    flip.queueAhead = flip.metered && queueAheadRequested.load(std::memory_order_acquire);
     flip.outputs = flip.configured ? outputs : 0;
     flip.batchNs = flip.configured ? batchNs : 0;
     flip.spacing = flip.configured ? batchNs/int64_t(outputs) : 0;
@@ -663,7 +667,7 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
         // flipmeter.1: inside a batch the driver meters, the configured spacing (the hardware's)
         // places each output and it is released early by the lead.
         cadence::MeteredDeadline metered{};
-        bool meteredApplied{}, flipMetered{};
+        bool meteredApplied{}, flipMetered{},queueAhead{};
         int64_t spacing{}, flipBatchNs{}, flipBase{};
         uint64_t flipLimited{};
         {
@@ -674,7 +678,14 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
             const bool anchored = flip.anchorFrame == frame && flip.anchorNs > 0 && batchStart > 0
                 && flip.anchorNs <= batchStart && batchStart-flip.anchorNs <= flip.batchNs;
             flipBase = anchored ? flip.anchorNs : batchStart;
-            if (!nativeDeadlines && flip.metered && flip.outputs == total && flipEnabled.load(std::memory_order_acquire)
+            const cadence::MeteredBatch batch{flip.metered,flip.queueAhead,flip.anchorFrame,flip.outputs,flip.anchorNs,flip.batchNs};
+            if(!nativeDeadlines && flipEnabled.load(std::memory_order_acquire) && batch.CanQueue(frame,total,index,now)) {
+                // The original SDK Pace remains in control of resource/fence readiness.
+                // Driver metering owns spacing; do not impose the display schedule again on the CPU.
+                *output=now; queueAhead=true; meteredApplied=true; spacing=flip.spacing;
+                ++flip.queueAheadDeadlines;
+            }
+            else if (!nativeDeadlines && flip.metered && flip.outputs == total && flipEnabled.load(std::memory_order_acquire)
                 && cadence::PlanMetered(flipBase, flip.spacing, index, flipLeadNs.load(std::memory_order_relaxed),
                     now, metered))
             {
@@ -693,7 +704,7 @@ void NativeDeadline(Route& current, void* timing, int64_t* output, const void* r
                 ",\"samples\":"+std::to_string(decision.samples)+",\"capped\":"+(decision.capped ? "true" : "false")+
                 ",\"batch_start_ns\":"+std::to_string(batchStart)+",\"now_ns\":"+std::to_string(now)+
                 ",\"sdk_deadline_ns\":"+std::to_string(sdkDeadline)+",\"deadline_ns\":"+std::to_string(*output)+
-                ",\"flip_metered\":"+(meteredApplied ? "true" : "false")+",\"flip_base_ns\":"+std::to_string(flipBase)+
+                ",\"flip_metered\":"+(meteredApplied ? "true" : "false")+",\"queue_ahead\":"+(queueAhead ? "true" : "false")+",\"flip_base_ns\":"+std::to_string(flipBase)+
                 ",\"flip_lead_ns\":"+std::to_string(metered.lead)+
                 ",\"flip_spacing_ns\":"+std::to_string(spacing)+",\"mean_interval_ns\":"+std::to_string(meanInterval)+
                 ",\"excluded\":"+std::to_string(excluded)+",\"gpu_latency_ns\":"+std::to_string(gpuLatency)+
@@ -945,9 +956,11 @@ void SetFlipToggleHotkey(bool enabled) noexcept
 }
 
 void RequestFlipMetering(bool enabled) noexcept { flipRequested.store(enabled, std::memory_order_release); }
+void RequestQueueAhead(bool enabled) noexcept { queueAheadRequested.store(enabled,std::memory_order_release); }
 void RequestSdkDeadlines(bool enabled) noexcept { sdkDeadlinesRequested.store(enabled,std::memory_order_release); }
 FlipStatus Snapshot(void* handle) noexcept {
     FlipStatus status{};
+    status.queueAheadRequested=queueAheadRequested.load(std::memory_order_acquire);
     status.requested=flipRequested.load(std::memory_order_acquire);
     status.enabled=flipEnabled.load(std::memory_order_acquire);
     status.available=flipFunction.load(std::memory_order_acquire)!=nullptr;
@@ -963,6 +976,7 @@ FlipStatus Snapshot(void* handle) noexcept {
         status.registered=true; status.queue=bool(owner->flipQueue);
         std::unique_lock guard(owner->flipMutex,std::try_to_lock);
         if(!guard.owns_lock()) { status.busy=true; return status; }
+        status.queueAheadActive=owner->flip.queueAhead; status.queueAheadDeadlines=owner->flip.queueAheadDeadlines;
         status.configured=owner->flip.configured; status.metered=owner->flip.metered;
         status.refused=owner->flip.refused; status.outputs=owner->flip.outputs;
         status.feedback=owner->flip.feedback; status.status=owner->flip.status; status.calls=owner->flip.calls;

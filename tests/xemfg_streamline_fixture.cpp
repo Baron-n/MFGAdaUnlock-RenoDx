@@ -6,7 +6,7 @@
 #include <sl_pcl.h>
 #include <atomic>
 #include <cstring>
-static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{};
+static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{};
 #define EXPORT extern "C" __declspec(dllexport) __declspec(noinline)
 static __declspec(noinline) sl::Result Options(const sl::ViewportHandle&,const sl::DLSSGOptions& o) {
   ++calls; fgMode=uint32_t(o.mode); return sl::Result::eOk;
@@ -15,9 +15,9 @@ static __declspec(noinline) sl::Result State(const sl::ViewportHandle&,sl::DLSSG
   ++calls; s.numFramesActuallyPresented=1; return sl::Result::eOk;
 }
 static __declspec(noinline) sl::Result Reflex(const sl::ReflexOptions& o) {
-  ++calls; reflexMode=uint32_t(o.mode); return sl::Result::eOk;
+  ++calls; reflexMode=uint32_t(o.mode); reflexLimit=o.frameLimitUs; return sl::Result::eOk;
 }
-static __declspec(noinline) sl::Result Sleep(const sl::FrameToken& f) { calls+=uint32_t(f)+1; return sl::Result::eOk; }
+static __declspec(noinline) sl::Result Sleep(const sl::FrameToken& f) { ++reflexSleeps; calls+=uint32_t(f)+1; return sl::Result::eOk; }
 static __declspec(noinline) sl::Result Marker(sl::PCLMarker m,const sl::FrameToken& f) {
   calls+=uint32_t(f)+uint32_t(m)+1; return sl::Result::eOk;
 }
@@ -41,3 +41,6 @@ EXPORT sl::Result slSetConstants(const sl::Constants&,const sl::FrameToken& f,co
   calls+=uint32_t(f)+1; return sl::Result::eOk;
 }
 EXPORT uint32_t FixtureModes() { return fgMode|(reflexMode<<8); }
+
+EXPORT uint32_t FixtureReflexSleeps() { return reflexSleeps; }
+EXPORT uint32_t FixtureReflexLimit() { return reflexLimit; }

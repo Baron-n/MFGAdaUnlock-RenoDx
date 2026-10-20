@@ -13,6 +13,7 @@ ap=argparse.ArgumentParser()
 for name in ('directory','addon','exe','fixture','reshade','sdk-fg','sdk-ll'):
     ap.add_argument('--'+name,type=Path,required=True)
 ap.add_argument('--multiplier',type=int,choices=range(2,7),default=4)
+ap.add_argument('--latency-output',choices=('XeLL','Reflex'),default='XeLL')
 ap.add_argument('--overlay-keys',action='store_true')
 ap.add_argument('--overlay-foreground',action='store_true')
 args=ap.parse_args()
@@ -25,7 +26,7 @@ manifest={}
 for src,name in inputs.items():
     shutil.copy2(src,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
-(d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n',encoding='ascii')
+(d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[INPUT]\nInputProcessing=2\nKeyOverlay=36,0,0,0\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
@@ -44,12 +45,12 @@ native_keys=(('Overlay key transitions: opens=2 closes=2' in result.stdout
 native_child=(('Overlay keys with child input: opens=4 closes=4' in result.stdout) if args.overlay_keys else None)
 foreground_verified=('Foreground ReShade: opens=6 closes=6; production panel drawn; game commands captured/released' in result.stdout) if args.overlay_foreground else None
 persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
-    and prefs.get('Latency','Output',fallback='')=='XeLL'
+    and prefs.get('Latency','Output',fallback='')==args.latency_output
     and prefs.get('XeFG','ForceBorderless',fallback='')=='0'
     and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on'
     and prefs.get('XeFG','UIComposition',fallback='')=='0'
     and prefs.get('XeFG','SdkDeadlines',fallback='')=='0')
-(d/'result.json').write_text(json.dumps({'inputs':manifest,'exit':result.returncode,
+(d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'inputs':manifest,'exit':result.returncode,
     'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted,
     'sdk_policy_activation_verified':policy_activation,'sdk_deadline_records':len(sdk_deadlines),
     'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,

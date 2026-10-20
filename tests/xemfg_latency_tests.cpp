@@ -11,9 +11,13 @@ std::mutex gateMutex;
 std::condition_variable gateCv;
 bool entered{}, released{};
 std::atomic<bool> block{}, modeFail{};
-std::atomic<unsigned> sleeps{}, modes{}, markers{};
+std::atomic<unsigned> sleeps{}, modes{}, markers{}, nativeSleeps{};
+xell_sleep_params_t lastMode{};
+sl::Result nativeResult=sl::Result::eOk;
+sl::Result NativeSleep(const sl::FrameToken&) { ++nativeSleeps; return nativeResult; }
+struct Token final : sl::FrameToken { operator uint32_t() const override { return 10; } };
 void Require(bool value,const char* why) { if(!value) throw std::runtime_error(why); }
-xell_result_t SetMode(xell_context_handle_t,const xell_sleep_params_t*) { ++modes; return modeFail?XELL_RESULT_ERROR_UNKNOWN:XELL_RESULT_SUCCESS; }
+xell_result_t SetMode(xell_context_handle_t,const xell_sleep_params_t* params) { ++modes; lastMode=*params; return modeFail?XELL_RESULT_ERROR_UNKNOWN:XELL_RESULT_SUCCESS; }
 xell_result_t Sleep(xell_context_handle_t,uint32_t) {
   ++sleeps;
   if(block) { std::unique_lock lock(gateMutex); entered=true; gateCv.notify_all(); gateCv.wait_for(lock,std::chrono::seconds(2),[]{return released;}); }
@@ -58,6 +62,19 @@ int main() {
     { std::lock_guard lock(output->io); ++output->epoch; output->frames.clear(); }
     Release(); Require(stale.get()==sl::Result::eErrorInvalidState && output->frames.empty(),"sleep republished an old resource epoch");
     Require(!output->sleepActive,"sleep lease leaked");
+    block=false; state.latencyOutput=LatencyOutput::Reflex; state.gameReflexMode=1; state.limitUs=25000;
+    Token token;
+    Require(SleepSourceFrame(output,10)==sl::Result::eErrorInvalidState,"Reflex accepted without native function/token");
+    const auto before=sleeps.load();
+    Require(SleepSourceFrame(output,10,&NativeSleep,&token)==sl::Result::eOk,"Reflex sleep route failed");
+    Require(nativeSleeps==1 && sleeps==before+1,"Reflex must call native once and retain Intel frame bookkeeping");
+    Require(!lastMode.bLowLatencyMode && lastMode.minimumIntervalUs==0,"XeLL limiter competes with Reflex");
+    Require(output->frames.Find(10)->latencyOutput==LatencyOutput::Reflex && state.reflexSleeps==1 && state.reflexOutputTick>0,"Reflex route not observed");
+    Require(SleepSourceFrame(output,10,&NativeSleep,&token)==sl::Result::eOk && nativeSleeps==1 && sleeps==before+1,"duplicate Reflex sleep");
+    Require(ForwardSourceMarker(output,10,XELL_SIMULATION_START),"Intel bookkeeping markers missing with Reflex");
+    nativeResult=sl::Result::eErrorReflexAPI;
+    Require(SleepSourceFrame(output,11,&NativeSleep,&token)==nativeResult && sleeps==before+1,"native failure swallowed or Intel sleep called after failure");
+    Require(output->frames.Find(11)->failed && !output->sleepActive,"failed native wait retained admission/lease");
     std::cout<<"PASS: late marker during sleep, deduplication, mode cache/retry, same-frame ordering and reset epoch\n";
     return 0;
   } catch(const std::exception& e) { Release(); std::cerr<<e.what()<<'\n'; return 1; }

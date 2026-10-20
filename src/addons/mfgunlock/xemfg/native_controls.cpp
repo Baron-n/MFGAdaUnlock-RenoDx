@@ -25,7 +25,11 @@ bool ReadChoice(const wchar_t* section,const wchar_t* key,const wchar_t* choice)
 void LoadControls() {
   std::lock_guard guard(settingsLock);
   settings.input=ReadChoice(L"Latency",L"Input",L"Reflex")?LatencyInput::StreamlineReflex:LatencyInput::Auto;
-  settings.output=ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
+  settings.queueAhead=GetPrivateProfileIntW(L"XeFG",L"MeteredQueueAhead",1,Ini().c_str())!=0;
+  sdk_pacing::RequestQueueAhead(settings.queueAhead);
+  settings.output=ReadChoice(L"Latency",L"Output",L"Reflex")?LatencyOutput::Reflex:
+      ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
+  State().latencyOutput=settings.output==LatencyOutput::Reflex?LatencyOutput::Reflex:LatencyOutput::XeLL;
   settings.forceBorderless=GetPrivateProfileIntW(L"XeFG",L"ForceBorderless",0,Ini().c_str())!=0;
   settings.uiComposition=GetPrivateProfileIntW(L"XeFG",L"UIComposition",0,Ini().c_str())!=0;
   settings.sdkDeadlines=GetPrivateProfileIntW(L"XeFG",L"SdkDeadlines",0,Ini().c_str())!=0;
@@ -34,14 +38,16 @@ void LoadControls() {
   settings.flipMetering=_wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0");
 }
 bool ConfigureControls(const ControlSettings& value) {
-  // This transport has one implemented input and one compatible output. Never
-  // persist unsupported enum values or silently combine Reflex sleep + XeLL.
-  if(value.version!=3 || uint32_t(value.input)>1 || uint32_t(value.output)>1) return false;
+  // Reject unknown ABI/enums. The latency output is fixed for this process;
+  // changing the preference never replays a game setter on the UI thread.
+  if(value.version!=4 || uint32_t(value.input)>1 || uint32_t(value.output)>2) return false;
   ControlSettings old;
   { std::lock_guard guard(settingsLock); old=settings; settings=value; }
   const auto ini=Ini();
   bool saved=WritePrivateProfileStringW(L"Latency",L"Input",value.input==LatencyInput::Auto?L"Auto":L"Reflex",ini.c_str())!=0;
-  saved=WritePrivateProfileStringW(L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":L"XeLL",ini.c_str()) && saved;
+  saved=WritePrivateProfileStringW(L"XeFG",L"MeteredQueueAhead",value.queueAhead?L"1":L"0",ini.c_str()) && saved;
+  sdk_pacing::RequestQueueAhead(value.queueAhead);
+  saved=WritePrivateProfileStringW(L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":value.output==LatencyOutput::Reflex?L"Reflex":L"XeLL",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0",ini.c_str()) && saved;
   saved=WritePrivateProfileStringW(L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0",ini.c_str()) && saved;
@@ -69,7 +75,13 @@ ControlStatus ControlsSnapshot() {
   result.sleeps=s.latencySleeps; result.markers=s.latencyMarkers;
   result.modeUpdates=s.latencyModeUpdates; result.lastSleepUs=s.lastSleepUs;
   result.reflexObserved=s.inputTick && now-s.inputTick.load()<2000;
-  result.xellObserved=s.outputTick && now-s.outputTick.load()<2000;
+  result.activeLatencyOutput=s.latencyOutput;
+  const auto wanted=result.settings.output==LatencyOutput::Reflex?LatencyOutput::Reflex:LatencyOutput::XeLL;
+  result.latencyRestartPending=wanted!=result.activeLatencyOutput;
+  result.reflexOutputObserved=s.reflexOutputTick && now-s.reflexOutputTick.load()<2000;
+  result.reflexOptionsReady=s.reflexOptionsReady;
+  result.reflexSleeps=s.reflexSleeps; result.xellSleeps=s.xellSleeps;
+  result.xellObserved=result.activeLatencyOutput==LatencyOutput::XeLL && s.outputTick && now-s.outputTick.load()<2000;
   result.nativeReflexDisabled=s.reflexOff; result.gameReflexMode=s.gameReflexMode;
   result.hudIssues=s.lastHudIssues; result.hudInputs=s.lastHudInputs; result.hudRejected=s.hudRejected;
   xefg_cuda::Status cuda;
@@ -96,6 +108,7 @@ ControlStatus ControlsSnapshot() {
   result.flipRegistered=flip.registered; result.flipQueue=flip.queue; result.flipBusy=flip.busy;
   result.flipRequested=flip.requested; result.flipEnabled=flip.enabled;
   result.flipConfigured=flip.configured; result.flipMetered=flip.metered; result.flipRefused=flip.refused;
+  result.queueAheadActive=flip.queueAheadActive; result.queueAheadDeadlines=flip.queueAheadDeadlines;
   result.flipOutputs=flip.outputs; result.flipFeedback=flip.feedback; result.flipResult=flip.status; result.flipCalls=flip.calls;
   result.sdkDeadlinesRequested=flip.sdkDeadlinesRequested; result.sdkDeadlinesActive=flip.sdkDeadlinesActive;
   return result;
@@ -128,6 +141,11 @@ void DrawControls(PanelPage page) {
     ui::Readout("##xe_flip_state","Pacing status",flip,flipHelp,metering?ui::Accent:ui::Muted);
     if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
     if(ImGui::CollapsingHeader("Advanced pacing comparison")) {
+      ui::Setting("##xe_queue_row","Queue metered frames early","Lets the driver space a verified group of frames while the SDK prepares its next work. GPU fences and resource waits remain owned by Intel. Applies only when the driver accepts flip metering and Present uses sync interval 0. Turn off to compare with the previous CPU timing.",[&] {
+        ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);
+        if(ImGui::Checkbox("##xe_queue_ahead",&value.queueAhead)) ConfigureControls(value);
+        ImGui::EndDisabled();
+      });
       ui::Setting("##xe_deadline_row","Use Intel SDK timing (test)","Off keeps the current driver/adaptive path. On keeps Intel's original deadlines and disables driver metering at the next generated group. This experimental comparison does not add a pacer, wait or FPS cap. Keep the same scene and compare displayed intervals and mouse response; turn off to restore the usual path.",[&] {
         if(ImGui::Checkbox("##xe_sdk_deadlines",&value.sdkDeadlines)) ConfigureControls(value);
       });
@@ -168,19 +186,21 @@ void DrawControls(PanelPage page) {
   if(page==PanelPage::Latency) {
     ui::Section("Mouse and input response");
     ui::Card card("##xe_latency");
-    ui::Readout("##xe_latency_state","Low latency",status.xellObserved?"XeLL - active":"Waiting for game timing",
-        "XeLL schedules real game frames. The bridge replaces native Reflex sleeping with XeLL to avoid two competing waits. Active means recent successful XeLL sleeps, not a physical latency measurement.",status.xellObserved?ui::Accent:ui::Warning);
+    ui::Readout("##xe_latency_state","Low latency",status.xellObserved?"XeLL - active":status.reflexOutputObserved?"Reflex - active":"Waiting for game timing",
+        "The selected output controls latency: native Reflex or XeLL. The other latency limiter is disabled. Active means recent successful calls, not a physical latency measurement.",(status.xellObserved || status.reflexOutputObserved)?ui::Accent:ui::Warning);
     ui::Readout("##xe_latency_source","Timing source",status.reflexObserved?"Reflex / Streamline":"Not observed yet",
-        "Uses the game's Reflex timing and markers as input to XeLL. Keep the game's low-latency option enabled when available.");
+        "Uses the game's Reflex timing and markers for the selected latency output. Keep the game's low-latency option enabled when available.");
     ui::Description("Keep the game's low-latency option enabled.");
     ui::Tooltip("Avoid stacking external FPS limiters while comparing responsiveness. Generated FPS and physical input latency measure different things.");
+    if(status.activeLatencyOutput==LatencyOutput::Reflex && status.reflexOptionsReady && !status.gameReflexMode) ui::Notice("Enable NVIDIA Reflex in the game to use this latency output.");
+    if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
     if(ImGui::CollapsingHeader("Advanced latency routing")) {
       int input=int(value.input),output=int(value.output);
       ui::Setting("##xe_input_row","Timing input","Auto uses Reflex / Streamline timing. This bridge currently supports that input route.",[&] {
         if(ImGui::Combo("##xe_timing_input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
       });
-      ui::Setting("##xe_output_row","Latency output","Auto uses XeLL. XeMFG needs XeLL; native Reflex output is available with the DLSS-G backend after a restart.",[&] {
-        if(ImGui::Combo("##xe_latency_output",&output,"Auto (recommended)\0XeLL\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
+      ui::Setting("##xe_output_row","Latency output","Auto keeps XeLL. Reflex uses the game's native Reflex sleep and options, with the XeLL latency limiter disabled. Keep Reflex enabled in the game's settings. Restart the game after changing this selection.",[&] {
+        if(ImGui::Combo("##xe_latency_output",&output,"Auto (XeLL)\0XeLL\0Reflex\0")) { value.output=LatencyOutput(output); ConfigureControls(value); }
       });
     }
   }
@@ -198,7 +218,7 @@ void DrawControls(PanelPage page) {
     ui::Readout("##xe_diag_cuda","Acceleration",acceleration,
         "NVIDIA Tensor Core execution is observed through the CUDA route. Raw counters are included in the copied report.");
     ui::Readout("##xe_diag_flip","Flip metering",flip,flipHelp,metering?ui::Accent:ui::Muted);
-    ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":"Waiting for game timing");
+    ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":status.reflexOutputObserved?"Reflex - active":"Waiting for game timing");
     ui::Readout("##xe_diag_ui","HUD handling",composition,compositionHelp);
     ui::Readout("##xe_diag_window","Display mode",window);
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
@@ -207,12 +227,15 @@ void DrawControls(PanelPage page) {
       std::ostringstream report; report<<"MFG Unlock XeMFG R1.7.5\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
+          <<"\nqueue_ahead="<<status.queueAheadActive<<" deadlines="<<status.queueAheadDeadlines
           <<"\nflip="<<flip<<" result="<<status.flipResult<<" feedback="<<status.flipFeedback<<" outputs="<<status.flipOutputs<<" calls="<<status.flipCalls
           <<"\nsdk_deadlines_requested="<<status.sdkDeadlinesRequested<<" active="<<status.sdkDeadlinesActive
           <<"\nhud_inputs="<<status.hudInputs<<" issues="<<status.hudIssues<<" filtered_tags="<<status.hudRejected
           <<"\noverlay_created="<<overlay.created<<" destroyed="<<overlay.destroyed<<" updates="<<overlay.updates<<" failed="<<overlay.failed
           <<"\noverlay_requests="<<overlayInput.requests<<" recovered_taps="<<overlayInput.recovered<<" dropped_taps="<<overlayInput.dropped
           <<"\nwindow="<<window<<" error="<<w.error<<" managed="<<w.managed
+          <<"\nlatency_output="<<uint32_t(status.activeLatencyOutput)<<" pending_restart="<<status.latencyRestartPending
+          <<" reflex_sleeps="<<status.reflexSleeps<<" xell_sleeps="<<status.xellSleeps
           <<"\nnative_reflex_disabled="<<status.nativeReflexDisabled<<" game_reflex_mode="<<status.gameReflexMode
           <<"\nsleeps="<<status.sleeps<<" markers="<<status.markers<<" mode_changes="<<status.modeUpdates<<" last_sleep_us="<<status.lastSleepUs
           <<"\nui_composition_requested="<<value.uiComposition<<" applied="<<status.uiCompositionApplied<<" known="<<status.uiCompositionKnown
@@ -237,6 +260,7 @@ void DrawControls(PanelPage page) {
       if(ImGui::Button("Clear timing window")) ClearTiming();
     }
   }
+  if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
   if(!status.settingsSaved) ui::Notice("Settings are active but could not be saved. Check write access to the game folder.");
 }
 }

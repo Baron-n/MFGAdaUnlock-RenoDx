@@ -2,6 +2,7 @@
 // Independent Streamline/DXGI transport. No OptiScaler source is used here.
 #include "native_internal.hpp"
 #include "native_overlay.hpp"
+#include "native_reflex_profile.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
@@ -98,16 +99,25 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   if(a.xellD3D12CreateContext(o->device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
     Report("XeLL D3D12 context creation failed"); return E_NOINTERFACE;
   }
-  xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=1;
+  xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=s.latencyOutput==LatencyOutput::Reflex?0:1;
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS) return E_NOINTERFACE;
-  o->sleepConfigured=true; ++s.latencyModeUpdates;
+  o->sleepConfigured=true; o->sleepLowLatency=sleep.bLowLatencyMode!=0; ++s.latencyModeUpdates;
   if(a.xefgSwapChainD3D12CreateContext(o->device.Get(),&o->fg)!=0) return E_NOINTERFACE;
   a.xefgSwapChainSetLoggingCallback(o->fg,XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING,
       [](const char* message,xefg_swapchain_logging_level_t level,void*) {
         static std::atomic<uint32_t> messages{0};
         if(messages.fetch_add(1)<100) xess_mod::WriteLog("native_sdk_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(message?message:"")+"\"");
       },nullptr);
-  if(a.xefgSwapChainSetLatencyReduction(o->fg,o->ll)!=0) return E_NOINTERFACE;
+  const bool nativeReflex=s.latencyOutput==LatencyOutput::Reflex;
+  if(nativeReflex && !reflex_profile::Available(GetModuleHandleW(L"libxess_fg.dll"))) {
+    Report("Native Reflex output unavailable for this XeFG profile; select XeLL and restart");
+    return E_NOINTERFACE;
+  }
+  const auto latencyResult=a.xefgSwapChainSetLatencyReduction(o->fg,
+      nativeReflex?reflex_profile::ExternalSelector():static_cast<void*>(o->ll));
+  if(latencyResult!=0) return E_NOINTERFACE;
+  xess_mod::WriteLog("native_latency_binding",std::string("\"output\":\"")+(nativeReflex?"Reflex":"XeLL")+
+      "\",\"external_profile\":"+(nativeReflex?"true":"false")+",\"result\":"+std::to_string(latencyResult));
   xefg_swapchain_d3d12_init_params_t init{};
   init.maxInterpolatedFrames=5;
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)

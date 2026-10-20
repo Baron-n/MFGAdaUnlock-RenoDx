@@ -22,6 +22,19 @@ int main() {
     Check(PlanMetered(start,6250000,2,2500000,start+8*ms,metered) && metered.deadline==start+10*ms,"metered early release");
     Check(PlanMetered(start,6250000,1,20*ms,start,metered) && metered.lead==3125000,"metered lead exceeds half spacing");
     Check(PlanMetered(start,6250000,1,2500000,start+30*ms,metered) && metered.deadline<start+30*ms,"late output given a new future deadline");
+    MeteredBatch batch{true,true,8,4,start,25*ms};
+    for(unsigned outputs : {2u,3u,4u,5u,6u}) {
+      batch.outputs=outputs;
+      for(unsigned index=1;index<outputs;++index) Check(batch.CanQueue(8,outputs,index,start+index*ms),"acknowledged batch cannot queue");
+      Check(!batch.CanQueue(9,outputs,1,start+ms),"another batch inherited metering");
+      Check(!batch.CanQueue(8,outputs,outputs,start+ms),"output beyond configured batch accepted");
+    }
+    batch.outputs=4;
+    Check(!batch.CanQueue(8,6,1,start+ms),"multiplier mismatch queued");
+    Check(!batch.CanQueue(8,4,0,start+ms),"first output should configure, not use previous metering");
+    Check(!batch.CanQueue(8,4,1,start-1) && !batch.CanQueue(8,4,1,start+51*ms),"invalid/stale timing queued");
+    batch.accepted=false; Check(!batch.CanQueue(8,4,1,start+ms),"driver refusal queued");
+    batch.accepted=true; batch.queueAhead=false; Check(!batch.CanQueue(8,4,1,start+ms),"VSync/unverified/disabled route queued");
     clock.Observe(9,4,start+100*ms);
     Check(clock.Typical()==25*ms && clock.Excluded()==1 && clock.Mean()>clock.Typical(),"hitch contaminated pacing estimate");
     for(uint32_t i=10;i<=15;++i) clock.Observe(i,4,start+100*ms+(i-9)*50*ms);
