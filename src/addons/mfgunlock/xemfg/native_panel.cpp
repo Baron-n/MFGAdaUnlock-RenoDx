@@ -25,6 +25,8 @@ void Draw() {
       ui::Notice("Another frame-generation loader is active. Use this addon with ReShade directly, then restart the game.");
     else ui::Notice("XeMFG could not initialize. Open Diagnostics and copy the report to see the reason.");
   }
+  else if(!status.output && strstr(status.detail,"needs early Streamline"))
+    ui::Notice("XeMFG was loaded too late to take over presentation safely. Restart the game with ReShade and this addon loaded at startup.");
   else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG currently uses Streamline inputs in DirectX 12.");
   else if(paused) ui::Notice("The game's latest request has frame generation disabled. If it is enabled in the game, copy Diagnostics so the connection can be checked.");
   else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
@@ -53,7 +55,7 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.9.1");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.9.2");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

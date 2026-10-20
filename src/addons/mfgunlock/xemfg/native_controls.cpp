@@ -226,7 +226,7 @@ void DrawControls(PanelPage page) {
     if(ImGui::Button("Copy diagnostic report")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9.1\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9.2\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers

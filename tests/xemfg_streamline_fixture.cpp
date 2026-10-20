@@ -8,7 +8,25 @@
 #include <cstring>
 static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{};
 static std::atomic<uint32_t> fgStatus{};
+static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
+static std::atomic<uint32_t> queriesAfterShutdown{};
 #define EXPORT extern "C" __declspec(dllexport) __declspec(noinline)
+EXPORT sl::Result slInit(const sl::Preferences&,uint64_t) {
+  initialized=true; fgLoaded=reflexLoaded=true; return sl::Result::eOk;
+}
+EXPORT sl::Result slSetD3DDevice(void*) { return sl::Result::eOk; }
+EXPORT sl::Result slShutdown() { initialized=false; return sl::Result::eOk; }
+EXPORT sl::Result slIsFeatureLoaded(sl::Feature feature,bool& enabled) {
+  if(!initialized) return sl::Result::eErrorNotInitialized;
+  enabled=feature==sl::kFeatureDLSS_G?fgLoaded.load():reflexLoaded.load(); return sl::Result::eOk;
+}
+EXPORT sl::Result slSetFeatureLoaded(sl::Feature feature,bool enabled) {
+  if(!initialized) return sl::Result::eErrorNotInitialized;
+  if(feature==sl::kFeatureDLSS_G) fgLoaded=enabled; else reflexLoaded=enabled;
+  return sl::Result::eOk;
+}
+EXPORT uint32_t FixturePhysicalFgLoaded() { return fgLoaded; }
+EXPORT uint32_t FixtureQueriesAfterShutdown() { return queriesAfterShutdown; }
 static __declspec(noinline) sl::Result Options(const sl::ViewportHandle&,const sl::DLSSGOptions& o) {
   ++calls; fgMode=uint32_t(o.mode); return sl::Result::eOk;
 }
@@ -23,6 +41,7 @@ static __declspec(noinline) sl::Result Marker(sl::PCLMarker m,const sl::FrameTok
   calls+=uint32_t(f)+uint32_t(m)+1; return sl::Result::eOk;
 }
 EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
+  if(!initialized) { ++queriesAfterShutdown; fn=nullptr; return sl::Result::eErrorNotInitialized; }
   ++calls;
   if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);

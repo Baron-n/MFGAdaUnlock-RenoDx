@@ -69,7 +69,7 @@ target_compile_definitions(xemfg_native_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_native_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include"
   "${RENODX_SOURCE_DIR}/external/reshade"
   "${RENODX_SOURCE_DIR}/external/reshade/include")
-target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi user32)
+target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi user32 dbghelp)
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
@@ -136,6 +136,29 @@ endforeach()
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME xemfg_native_capcom_flags COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+    --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+    --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --capcom-flags)
+  set_tests_properties(xemfg_native_capcom_flags PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  set(XEMFG_OFFLINE_STREAMLINE "" CACHE PATH "Explicit real Streamline plugin directory for presentation ownership tests")
+  if(XEMFG_OFFLINE_STREAMLINE)
+    foreach(route IN ITEMS XeLL Reflex)
+      foreach(order IN ITEMS early late)
+        set(startup_flags)
+        if(order STREQUAL "early")
+          list(APPEND startup_flags --early-addon)
+        endif()
+        add_test(NAME xemfg_real_streamline_${route}_${order} COMMAND "${Python3_EXECUTABLE}"
+          "${CMAKE_SOURCE_DIR}/xemfg_streamline_recreate.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+          --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+          --reshade "${XEMFG_OFFLINE_RESHADE}" --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}"
+          --streamline "${XEMFG_OFFLINE_STREAMLINE}" --generate --latency-output ${route} ${startup_flags})
+        set_tests_properties(xemfg_real_streamline_${route}_${order} PROPERTIES RUN_SERIAL TRUE TIMEOUT 85)
+      endforeach()
+    endforeach()
+  endif()
   foreach(layout IN ITEMS storage-only preloaded-storage mutated-storage missing)
     add_test(NAME xemfg_native_runtime_${layout} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

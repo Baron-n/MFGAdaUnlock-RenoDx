@@ -88,6 +88,10 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     return E_NOINTERFACE;
   }
   if(Active()) return E_NOINTERFACE; // One selected Streamline viewport/output in this implementation.
+  if(!OwnsPresentationHooks()) {
+    Report("XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit");
+    return E_NOINTERFACE;
+  }
   ComPtr<ID3D12CommandQueue> queue;
   if(!source || FAILED(source->QueryInterface(IID_PPV_ARGS(&queue)))) return E_NOINTERFACE;
   if(queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT) return E_NOINTERFACE;
@@ -175,7 +179,7 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
   return originalFactory(f,d,w,desc,full,restrictOutput,out);
 }
 bool Install() {
-  if(single_overlay::native::InsideLoader()) return false;
+  if(single_overlay::native::InsideLoader() || StreamlineStopping()) return false;
   DiscoverStreamline();
   static std::mutex installLock; std::lock_guard guard(installLock);
   if(originalFactory) return true;
@@ -196,10 +200,11 @@ static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,
   if(Active()) ++State().outputPresents;
 }
 static DWORD WINAPI DiscoverWorker(void*) {
-  for(unsigned i=0;i<80;++i) { DiscoverStreamline(); Install(); Sleep(250); }
+  for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;
 }
 void Attach(HMODULE module) {
+  CaptureStreamlineStartup();
   auto& s=State(); auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
   s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",1,ini.c_str())!=0;

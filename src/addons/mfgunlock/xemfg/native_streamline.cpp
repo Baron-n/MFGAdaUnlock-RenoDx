@@ -17,6 +17,73 @@ PFun_slDLSSGGetState* getState{};
 PFun_slReflexSetOptions* reflexOptions{};
 PFun_slReflexSleep* reflexSleep{};
 PFun_slPCLSetMarker* pclMarker{};
+PFun_slInit* initialize{};
+PFun_slSetD3DDevice* setDevice{};
+PFun_slShutdown* shutdown{};
+PFun_slIsFeatureLoaded* getLoaded{};
+PFun_slSetFeatureLoaded* setLoaded{};
+std::atomic<bool> lifecycleApi{},presentationIsolated{},logicalLoaded{true},stopping{};
+
+// slSetFeatureLoaded rebuilds Streamline's hook lists and is not thread safe.
+// Use ONLY the game's startup API boundary, never a worker or Present callback.
+bool IsolatePresentation(const char* boundary,bool captureRequest) {
+  if(single_overlay::native::InsideLoader() || !lifecycleApi || !getLoaded || !setLoaded || Active()) return false;
+  bool loaded{};
+  const auto queried=getLoaded(sl::kFeatureDLSS_G,loaded);
+  const auto result=queried==sl::Result::eOk?setLoaded(sl::kFeatureDLSS_G,false):queried;
+  if(captureRequest && queried==sl::Result::eOk) logicalLoaded=loaded;
+  bool physical=true;
+  const auto verified=result==sl::Result::eOk?getLoaded(sl::kFeatureDLSS_G,physical):result;
+  presentationIsolated=result==sl::Result::eOk && verified==sl::Result::eOk && !physical;
+  xess_mod::WriteLog("native_presentation_isolation","\"boundary\":\""+std::string(boundary)
+      +"\",\"result\":"+std::to_string(uint32_t(result))+",\"isolated\":"+(presentationIsolated.load()?"true":"false")
+      +",\"game_loaded\":"+(logicalLoaded.load()?"true":"false"));
+  return presentationIsolated;
+}
+sl::Result InitHook(const sl::Preferences& preferences,uint64_t version) {
+  std::lock_guard guard(discovery);
+  stopping=false; presentationIsolated=false;
+  const auto result=initialize(preferences,version);
+  if(result==sl::Result::eOk) IsolatePresentation("slInit",true);
+  return result;
+}
+sl::Result DeviceHook(void* device) {
+  std::lock_guard guard(discovery);
+  // Covers integrations that initialized SL before the addon was loaded.
+  // This explicit initialization call belongs to the host's quiescent startup.
+  if(!presentationIsolated && !stopping && !Snapshot().frames)
+    IsolatePresentation("slSetD3DDevice",true);
+  return setDevice(device);
+}
+sl::Result ShutdownHook() {
+  stopping=true;
+  // Drain discovery, then release the lock before SL joins its plugin workers.
+  // A plugin's shutdown may itself resolve a function on another thread.
+  { std::lock_guard guard(discovery); presentationIsolated=false; }
+  xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"drained\"");
+  const auto result=shutdown();
+  xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"complete\",\"result\":"+std::to_string(uint32_t(result)));
+  return result;
+}
+sl::Result SetLoadedHook(sl::Feature feature,bool enabled) {
+  std::lock_guard guard(discovery);
+  if(feature!=sl::kFeatureDLSS_G || stopping || !getLoaded) return setLoaded(feature,enabled);
+  const auto result=setLoaded(feature,false);
+  if(result==sl::Result::eOk) {
+    bool physical=true;
+    const auto verified=getLoaded(feature,physical);
+    logicalLoaded=enabled; presentationIsolated=verified==sl::Result::eOk && !physical;
+    if(!enabled) State().requested=false;
+  }
+  return result;
+}
+sl::Result GetLoadedHook(sl::Feature feature,bool& enabled) {
+  std::lock_guard guard(discovery);
+  const auto result=getLoaded(feature,enabled);
+  if(result==sl::Result::eOk && feature==sl::kFeatureDLSS_G && presentationIsolated)
+    enabled=logicalLoaded;
+  return result;
+}
 
 bool SelectViewport(uint32_t v) {
   auto& s=State(); auto expected=UINT32_MAX;
@@ -173,7 +240,7 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   sl::DLSSGOptions disabled; disabled.structVersion=1; disabled.mode=sl::DLSSGMode::eOff;
   const auto r=setOptions(v,disabled);
   s.nativeOff=r==sl::Result::eOk;
-  s.requested=opts.mode!=sl::DLSSGMode::eOff;
+  s.requested=logicalLoaded && opts.mode!=sl::DLSSGMode::eOff;
   static std::atomic<uint64_t> previous{UINT64_MAX};
   const uint64_t signature=uint64_t(uint32_t(opts.mode))|(uint64_t(uint32_t(r))<<32);
   if(previous.exchange(signature)!=signature)
@@ -258,7 +325,11 @@ bool Feature(const char* name,void* entry) {
 #define H(n,f) if(strcmp(name,#n)==0) return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&n));
   // Function pointer variable names intentionally differ from exported names.
 #undef H
-#define H(n,f,p) if(strcmp(name,n)==0) return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&p));
+#define H(n,f,p) if(strcmp(name,n)==0) { \
+  HMODULE pin{}; \
+  if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN, \
+      reinterpret_cast<LPCWSTR>(entry),&pin)) return false; \
+  return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&p)); }
   H("slDLSSGSetOptions",OptionsHook,setOptions) H("slDLSSGGetState",StateHook,getState)
   H("slReflexSetOptions",ReflexOptionsHook,reflexOptions) H("slReflexSleep",SleepHook,reflexSleep)
   H("slPCLSetMarker",MarkerHook,pclMarker)
@@ -266,14 +337,40 @@ bool Feature(const char* name,void* entry) {
   return false;
 }
 sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
+  // The host owns the shutdown contract. Do not acquire our discovery lock or
+  // publish new detours from a plugin's teardown callback.
+  if(stopping) return getFeature(feature,name,fn);
+  std::lock_guard guard(discovery);
   const auto r=getFeature(feature,name,fn);
-  if(r==sl::Result::eOk && name && fn) { std::lock_guard guard(discovery); Feature(name,fn); }
+  if(!stopping && r==sl::Result::eOk && name && fn) Feature(name,fn);
   return r;
 }
 } // namespace
+bool OwnsPresentationHooks() noexcept { return lifecycleApi && presentationIsolated && !stopping; }
+bool StreamlineStopping() noexcept { return stopping; }
+void CaptureStreamlineStartup() {
+  // No SDK entry calls here. These exports can be captured before slInit even
+  // when the host's interposer is only mapped during the loader's attach phase.
+  auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module) return;
+  HMODULE pin{};
+  if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+      reinterpret_cast<LPCWSTR>(module),&pin) || pin!=module) return;
+#define H(n,f,p) if(!p) Hook(reinterpret_cast<void*>(GetProcAddress(module,n)),reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&p));
+  H("slIsFeatureLoaded",GetLoadedHook,getLoaded)
+  H("slSetFeatureLoaded",SetLoadedHook,setLoaded)
+  H("slShutdown",ShutdownHook,shutdown)
+  H("slSetD3DDevice",DeviceHook,setDevice)
+  H("slInit",InitHook,initialize)
+#undef H
+  // Incomplete installation must not disable NVIDIA or create an Intel output
+  // without the query/control/shutdown hooks needed to keep that owner safe.
+  lifecycleApi=getLoaded && setLoaded && shutdown && (initialize || setDevice);
+}
 void DiscoverStreamline() {
-  if(single_overlay::native::InsideLoader()) return;
+  if(single_overlay::native::InsideLoader() || stopping) return;
   std::lock_guard guard(discovery);
+  if(stopping) return;
+  CaptureStreamlineStartup();
   auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module) return;
   HMODULE pinned{};
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
@@ -309,7 +406,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   // Present identity belongs to the source frame, including passthrough.
   // Missing FG inputs must not leave the Intel proxy on the previous ID.
   const auto presentIdResult=id && id>o->last?a.xefgSwapChainSetPresentId(o->fg,id):XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
-  bool ready=presentIdResult>=0 && compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
+  bool ready=OwnsPresentationHooks() && presentIdResult>=0 && compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
   if(ready) {
     auto& f=*frame;
     // RenderSubmit END can legally arrive after Present starts or returns.

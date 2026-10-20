@@ -16,16 +16,17 @@ def sha(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--revision', choices=('R1.8', 'R1.9', 'R1.9.1'), default='R1.8')
+    ap.add_argument('--revision', choices=('R1.8', 'R1.9', 'R1.9.1', 'R1.9.2'), default='R1.8')
     for name in ('output', 'evidence', 'previous-addon', 'official-addon', 'intel-sdk'):
         ap.add_argument('--' + name, type=Path, required=True)
     a = ap.parse_args()
     compat = a.revision != 'R1.8'
-    handoff = a.revision == 'R1.9.1'
+    startup = a.revision == 'R1.9.2'
+    handoff = a.revision in ('R1.9.1', 'R1.9.2')
     revision = a.revision
-    previous = 'R1.9' if handoff else 'R1.8' if compat else 'R1.7.5'
-    total = 89 if compat else 80
-    report_name = 'game-status-report.md' if handoff else 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
+    previous = 'R1.9.1' if startup else 'R1.9' if handoff else 'R1.8' if compat else 'R1.7.5'
+    total = 94 if startup else 89 if compat else 80
+    report_name = 'presentation-ownership-report.md' if startup else 'game-status-report.md' if handoff else 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
     root = Path(__file__).resolve().parent.parent
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
@@ -48,6 +49,8 @@ def main():
         result = json.loads((Path(receipt['directory']) / 'result.json').read_text())
         if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64'] != digest:
             raise ValueError('Stale SDK evidence: ' + key)
+        if not result['inputs']['libxell.dll'].startswith(key.rsplit('-', 1)[-1]):
+            raise ValueError('XeLL runtime differs from the matrix label: ' + key)
         if not all(result[k] for k in ('control_preferences_persisted', 'sdk_policy_activation_verified', 'hud_filter_verified')):
             raise ValueError('SDK control contract failed: ' + key)
         if handoff and not result.get('passthrough_identity_verified'):
@@ -66,7 +69,17 @@ def main():
             fields = ('startup_rejection_verified', 'model_unpublished') if layout in ('mutated-storage', 'missing') else ('runtime_selection_verified', 'control_preferences_persisted', 'hud_filter_verified')
             if not all(result.get(k) for k in fields):
                 raise ValueError('Compatibility contract failed: ' + layout)
-    previous_hash = '513d6dde26309a2737c29a23f31e46322a779bc27ee6605488a2ff0490a9fed1' if handoff else '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
+    if startup:
+        if set(validation.get('streamline_cases', {})) != {'XeLL-early', 'XeLL-late', 'Reflex-early', 'Reflex-late'}:
+            raise ValueError('Missing real Streamline lifecycle matrix')
+        for label, receipt in validation['streamline_cases'].items():
+            result = json.loads((Path(receipt['directory']) / 'result.json').read_text())
+            if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64'] != digest or not all(result.get(k) for k in ('presentation_isolated', 'shutdown_completed', 'inference_verified')):
+                raise ValueError('Real Streamline lifecycle failed: ' + label)
+        capcom = json.loads((Path(validation['capcom_flags']['directory']) / 'result.json').read_text())
+        if capcom['exit'] or capcom['inputs']['renodx-mfgunlock-native.addon64'] != digest:
+            raise ValueError('Missing matching RE Engine flag coverage')
+    previous_hash = '62a85ad1d8c7ca63e5e99406c56bd77888370d1cb41ff2f43ef92f780c47b5e9' if startup else '513d6dde26309a2737c29a23f31e46322a779bc27ee6605488a2ff0490a9fed1' if handoff else '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
     if sha(a.previous_addon) != previous_hash:
         raise ValueError(previous + ' rollback differs')
     if sha(a.official_addon) != '9715987f6323a2699dd5b7636412258a6b97a180a4d70c0f79d286714e2972e2':
@@ -75,8 +88,8 @@ def main():
         raise ValueError('Refuse to overwrite a sealed package')
     assets = {
         'renodx-mfgunlock.addon64': addon,
-        report_name: root / ('docs/research/xemfg-r1.9.1-game-status-2026-10-20.md' if handoff else 'docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
-        f'rollback/renodx-mfgunlock-{previous.lower()}.addon64': a.previous_addon,
+        report_name: root / ('docs/research/xemfg-r1.9.2-presentation-ownership-2026-10-20.md' if startup else 'docs/research/xemfg-r1.9.1-game-status-2026-10-20.md' if handoff else 'docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
+        f'{"archive" if startup else "rollback"}/renodx-mfgunlock-{previous.lower()}.addon64': a.previous_addon,
         'rollback/renodx-mfgunlock-1.4.5.addon64': a.official_addon,
         'Restore-MFGBackup.ps1': root / 'tools/Restore-MFGBackup.ps1',
         'notices/MFGAdaUnlock-MIT.txt': root / 'LICENSE',
@@ -97,6 +110,12 @@ def main():
         directory = Path(receipt['directory'])
         for name in ('result.json', 'MFGAdaUnlock-XeMFG.log', 'ReShade.log'):
             assets[f'evidence/{label}/{name}'] = directory / name
+    if startup:
+        for label, receipt in validation['streamline_cases'].items():
+            for name in ('result.json', 'MFGAdaUnlock-XeMFG.log', 'ReShade.log', 'sl.log'):
+                assets[f'evidence/Streamline-{label}/{name}'] = Path(receipt['directory']) / name
+        for name in ('result.json', 'MFGAdaUnlock-XeMFG.log', 'ReShade.log'):
+            assets[f'evidence/Capcom-flags/{name}'] = Path(validation['capcom_flags']['directory']) / name
     for page in range(4):
         assets[f'evidence/ui/page-{page}.png'] = root / f'build/tests/ui-preview/page-{page}.png'
     a.output.mkdir(parents=True)
@@ -126,19 +145,25 @@ def main():
             'UI Composition remains optional and off by default. No OptiScaler or ASI dependency.\n'
             'Supported XeFG: 1.3.1.78; XeLL: 1.3.0.5 or 1.3.2.10, admitted by exact hashes.\n'
             'No runtime DLLs included. The local installer can refresh the root and existing _storage_ copies with backup.\n'
-            '86 tests passed; 3 optional historical checks skipped. Real SDK layout tests include mutated/missing runtime rejection.\n'
+            f'{total-3} tests passed; 3 optional historical checks skipped. Real SDK layout tests include mutated/missing runtime rejection.\n'
             'Gameplay activation in each game still requires a fresh scene/log; no new pacing or latency gain is claimed.\n'
-            f'Read {report_name}. Rollback addon: {previous} or official DLSS-G 1.4.5 in rollback/.\n'
+            f'Read {report_name}. Rollback addon: {"official DLSS-G 1.4.5" if startup else previous+" or official DLSS-G 1.4.5"} in rollback/.\n'
             'For game runtime rollback, use Restore-MFGBackup.ps1 with the installer backup directory.\n')
-    if handoff:
+    if handoff and not startup:
         readme += ('R1.9.1: updates the Intel Present ID even when a batch is bypassed; suppresses only NVIDIA-owned Reflex/backbuffer warnings after NVIDIA FG is disabled.\n'
             'Other status errors and all input validation remain. New bounded diagnostics distinguish depth rejection from game options/state.\n'
             'Pragmata R1.9 failed to interpolate and the user observed flashing. R1.9.1 is a targeted correction requiring a fresh game test, not a confirmed flicker fix.\n')
+    if startup:
+        readme += ('R1.9.2: disables NVIDIA DLSS-G presentation callbacks at a host startup boundary through the public Streamline API; Intel exclusively owns presentation.\n'
+            'Game feature enable/disable requests remain logical controls of the Intel replacement. Discovery is drained before Streamline shutdown.\n'
+            'Four real Streamline/ReShade/Intel tests cover early/late startup, XeLL/Reflex, 4x inference, same-window output recreation and shutdown.\n'
+            'R1.9.1 failed during Pragmata boot. It is archived for provenance, not recommended as game rollback; use official 1.4.5 and the installation snapshot.\n'
+            'Pragmata gameplay activation, missing depth and flicker are not confirmed fixed by these isolated tests.\n')
     (a.output / 'README.txt').write_text(readme, encoding='utf-8')
     source = {p.relative_to(root).as_posix(): sha(p) for folder in ('src', 'tests', 'tools', 'docs')
               for p in sorted((root / folder).rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
     manifest = dict(identity='Native ReShade XeMFG '+revision, revision=revision, source_commit=git('rev-parse', 'HEAD'),
-        branch=git('branch', '--show-current'), base_commit='1d007337be46ef0445b51544efa86b27506a3acb' if handoff else '8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
+        branch=git('branch', '--show-current'), base_commit='0cbedd11ebd00a806a790fffee7510490ec72996' if startup else '1d007337be46ef0445b51544efa86b27506a3acb' if handoff else '8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
         official_1_4_5_commit='0fe65579d287581107babe267ee3e48c9135bf8a',
         addon_sha256=digest, optiscaler_dependency=False, asi_dependency=False, runtime_dlls_bundled=False,
         gameplay_validated=False, displayed_pacing_gain_measured=False, physical_latency_gain_measured=False,

@@ -17,6 +17,7 @@ ap.add_argument('--latency-output',choices=('XeLL','Reflex'),default='XeLL')
 ap.add_argument('--runtime-layout',choices=('adjacent','storage-only','preloaded-storage','mutated-storage','missing'),default='adjacent')
 ap.add_argument('--overlay-keys',action='store_true')
 ap.add_argument('--overlay-foreground',action='store_true')
+ap.add_argument('--capcom-flags',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -44,6 +45,7 @@ if args.runtime_layout!='adjacent':
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[INPUT]\nInputProcessing=2\nKeyOverlay=36,0,0,0\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])
+if args.capcom_flags: flags+=['--capcom-flags']
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)

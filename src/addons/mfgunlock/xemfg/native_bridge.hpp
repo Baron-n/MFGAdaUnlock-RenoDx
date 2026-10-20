@@ -20,5 +20,9 @@ void Draw();
 Status Snapshot();
 // Called outside the loader by ReShade's D3D12 device event, or the harness.
 bool Install();
+// Export hooks only: safe to capture a mapped interposer during addon attach.
+void CaptureStreamlineStartup();
+bool OwnsPresentationHooks() noexcept;
+bool StreamlineStopping() noexcept;
 }
 }
