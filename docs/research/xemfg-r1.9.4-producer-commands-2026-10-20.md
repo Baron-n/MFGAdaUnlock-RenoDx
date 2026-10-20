@@ -62,9 +62,30 @@ Os minidumps e logs completos são locais e não integram o download. Há um dum
 
 Referências de contrato: [Intel, ciclo de vida dos inputs](https://github.com/intel/xess/blob/main/doc/xess_fg_developer_guide_english.md), [Microsoft, swapchain flip por HWND](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_2/nf-dxgi1_2-idxgifactory2-createswapchainforhwnd) e [ReShade 6.8, API de runtime manual](https://github.com/crosire/reshade/blob/v6.8.0/source/addon.cpp). Nenhum código GPL foi incorporado.
 
-## Próxima validação e rollback
+## Validação em cena — PID 9028
 
-Manter o overlay Steam desativado apenas para contornar o bloqueio conhecido no Pragmata. Carregar uma cena com FG solicitado pelo jogo e XeMFG 4x; conferir no novo log admissão completa, ativação, multiplicador e lançamentos Tensor. Ainda são necessários testes de imagem e desempenho antes de promover essa candidata ou generalizar o contorno a outros jogos.
+O usuário relatou que a R1.9.4 carregou e parecia gerar quadros, mantendo o overlay da Steam desativado. O log dessa sessão cobre 183,359 s e confirma interpolação efetiva pelo SDK, além da seleção no painel:
+
+| Observação | Resultado |
+|---|---|
+| Saída 4x | `frames_presented=4`, `enabled=1`, `interpolation_result=0` |
+| Troca para 6x e retorno a 4x | Ambas observadas com resultado zero; não apenas solicitação de multiplicador |
+| Execução CUDA/Tensor | Contador chegou a 297.760 lançamentos nesta sessão |
+| XeLL | Três vínculos de contexto aceitos, todos com resultado zero |
+| Flip metering | Driver aceitou a configuração 4x, `status=0`, `feedback=0`, `metered=true`; os registros de deadline também observaram saída metered em 4x/6x |
+| Encerramento | Streamline concluiu com resultado zero; os três outputs foram destruídos com resultado zero e zero referências nativas restantes |
+
+A primeira amostra após habilitar FG retornou `-14` (`XEFG_SWAPCHAIN_RESULT_ERROR_INCORRECT_INPUT_RESOURCES`: input insuficiente para avaliar a interpolação). Na amostra seguinte, 1.000 ms depois, já havia saída 4x com resultado zero e 2.028 lançamentos Tensor. Não há nova ocorrência desse erro nas amostras seguintes. O log amostrado não permite estabelecer a duração exata da recusa nem classificá-la automaticamente como aquecimento normal.
+
+A última amostra explícita de admissão completa (`resources=7`, `valid=1`, `failed=0`) antecede a ativação de FG. O limite de registros de admissão foi atingido antes da cena; portanto, não se apresenta essa amostra como auditoria de cada frame interpolado. A confirmação de execução vem dos resultados de interpolação e lançamentos efetivos. As recusas de tags opcionais de HUD observadas no início permanecem identificadas como `optional_hud`.
+
+O usuário ativou UI Composition durante a sessão (`requested=1`, `hudless=1`, `enabled=1`, resultado zero). Essa preferência foi preservada; a opção continua desligada por padrão. Como houve troca de multiplicador e interação com o overlay, a sessão não é um benchmark controlado. Há registros de `pacing_hitch` e não houve captura de intervalos exibidos pelo PresentMon ou medição física de latência. Aceitação pelo driver e inferência funcional não demonstram cadência perfeita.
+
+Os logs, configurações, resumo por PID e hashes estão em `out/xemfg-r1.9.4-evidence/pragmata-gameplay-9028/`, **relativo à árvore principal**, não a esta worktree. O addon instalado nas cópias da raiz e de `_storage_` tem o SHA-256 indicado acima. O pacote selado e seu manifesto não foram alterados para incorporar esta validação posterior.
+
+## Validação restante e rollback
+
+Manter o overlay Steam desativado para contornar o bloqueio conhecido no Pragmata. A interpolação em cena foi confirmada na sessão acima; a compatibilidade com o overlay Steam ativo continua aberta. Ainda são necessários testes controlados de imagem e desempenho antes de promover essa candidata ou generalizar o resultado a outros jogos.
 
 Rollback: fechar o processo e usar `Restore-MFGBackup.ps1` com o snapshot do instalador. O pacote conserva a 1.4.5 oficial em `rollback/` e a R1.9.3 em `archive/` para proveniência; a R1.9.3 não é indicada como solução do congelamento. A opção de overlay da Steam foi alterada pelo usuário e não é modificada pelo instalador.
 
