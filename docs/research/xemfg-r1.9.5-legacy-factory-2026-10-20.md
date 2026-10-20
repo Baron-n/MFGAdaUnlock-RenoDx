@@ -38,10 +38,32 @@ Emissão 1.4.5.24, SHA-256 do addon `bce5e0cef035e546ef02783a7efa282d3eee71615f0
 
 Na árvore principal, `out/xemfg-r1.9.5-evidence/control-baseline/` conserva logs/INIs e seus hashes. `control-baseline.json` registra o PID e as identidades iniciais; `legacy-negative.json` conserva a falha do teste com a R1.9.4. Os diretórios de cada teste isolado ficam na worktree, em `build/tests/native-checks/`.
 
-A correção fecha uma lacuna demonstrada na criação da saída. **A interpolação efetiva na cena do Control ainda exige um novo teste do usuário e leitura do log.** O pacote não anuncia essa validação antecipadamente. Não houve captura PresentMon nem medição de ganho de FPS, cadência exibida ou latência física nesta correção.
+A correção fecha uma lacuna demonstrada na criação da saída. No momento em que o pacote foi selado, a interpolação em cena ainda não havia sido validada. A confirmação posterior está registrada abaixo; o pacote e seu manifesto permanecem imutáveis. Não houve captura PresentMon nem medição de ganho de FPS, cadência exibida ou latência física nesta correção.
 
 A R1.9.4 já interpolou no Pragmata em uma sessão separada com Steam overlay desativado. A compatibilidade com o overlay Steam ativo continua aberta e não é resolvida por este hook. Essa limitação do Pragmata não é automaticamente atribuída ao Control.
 
 Instalação somente com o jogo fechado, mantendo ReShade, RenoDX, INIs e o par Intel admitido. O instalador salva o estado real encontrado, inclusive a ausência de addon após a remoção manual. Para desfazer a instalação, usar `Restore-MFGBackup.ps1` com esse snapshot; isso pode voltar a deixar o jogo sem addon MFG. A R1.9.4 anterior fica arquivada no pacote e a 1.4.5 oficial fica em `rollback/`. Não há publicação automática nem dependência de OptiScaler/ASI.
 
 Contrato consultado: [Microsoft, IDXGIFactory::CreateSwapChain](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/nf-dxgi-idxgifactory-createswapchain), que admite uma fila direta D3D12 como `pDevice`.
+
+## Validação posterior em cena — PID 13708
+
+O usuário informou que o jogo carregou e parecia gerar quadros. A cópia do log do PID 13708 cobre 129,344 s e confirma execução na R1.9.5 de hash indicado acima, com o mesmo par Intel admitido:
+
+| Observação | Resultado |
+|---|---|
+| Criação pela API antiga | Duas saídas substituídas pelo Intel, ambas com resultado zero; formatos R10G10B10A2, flags `0x842` e `0x802` |
+| Inputs | Amostra de profundidade, movimento e cor com `resources=7`, `markers=31`, `constants=1`, `valid=1`, `failed=0` na viewport 1 |
+| Interpolação 4x | 14 amostras de SDK com `enabled=1`, `frames_presented=4` e resultado zero |
+| Interpolação 6x | Uma amostra com `enabled=1`, `frames_presented=6` e resultado zero, após troca solicitada pelo usuário |
+| CUDA/Tensor | Rota ativa em compute capability 8.9; contador chegou a 184.720 lançamentos |
+| XeLL | Dois vínculos de contexto aceitos, resultado zero |
+| Flip metering | Configurações 4x aceitas com `status=0`, `feedback=0`, `metered=true`; amostras de deadline indicaram metering ativo em 4x e 6x |
+
+A amostra explícita de admissão completa antecede a ativação de FG; não é uma auditoria de cada frame posterior. A confirmação de interpolação vem dos resultados do SDK e dos lançamentos efetivos. Não houve resultado negativo de interpolação nas amostras habilitadas. Uma reativação de FG registrou o aviso 3 (`XEFG_SWAPCHAIN_RESULT_WARNING_TOO_FEW_FRAMES`); a amostra seguinte, 1.000 ms depois, já mostrou saída 4x com resultado zero. Esse intervalo entre amostras não mede a duração exata do aviso.
+
+A primeira saída de boot foi aposentada com `destroy_result=0` e `remaining_refs=0`. **O log copiado não contém recibo de aposentadoria do contexto final nem de shutdown Streamline**, portanto não se anuncia encerramento completo validado nesta sessão. Não há `startup_rejected`, `native_swapchain_init_failed` ou `native_retirement_pending` no trecho. Há avisos de referência de factory no log ReShade; a ativação bem-sucedida não os transforma em prova de lifetime geral correto.
+
+UI Composition permaneceu desligado no evento registrado. O usuário alternou FG e multiplicador e deixou 6x na configuração; essa preferência foi preservada. A sessão tem dois registros `pacing_hitch`, sem captura PresentMon ou latência física. Interpolação funcional e aceitação do driver não demonstram cadência perfeita nem ganho de desempenho.
+
+Logs, configurações, resumo e manifesto de hashes estão em `out/xemfg-r1.9.5-evidence/control-gameplay-13708/`, relativo à árvore principal. Esta validação confirma a ativação no Control nesta configuração; não generaliza suporte a outras integrações nem modifica a limitação conhecida do overlay Steam no Pragmata.
