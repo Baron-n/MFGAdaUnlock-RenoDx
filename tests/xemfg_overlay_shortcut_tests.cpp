@@ -46,6 +46,9 @@ int main() { try {
       "modifier mismatch not distinguishable from missing input");
   receipt.Cancel(); const auto canceled=receipt.Drain().activity;
   receipt.Cancel(); Require(receipt.Drain().activity==canceled,"unfocused idle produces unbounded log activity");
+  receipt.Hotkey(); receipt.Hotkey(); seen=receipt.Drain();
+  Require(seen.hotkeys==2 && seen.ready==2 && !seen.blocked,"registered shortcut notifications lost");
+  receipt.Hotkey(); Require(receipt.Drain(true).blocked==1,"text capture did not consume registered shortcut");
   std::cout<<"PASS: lost taps, native deduplication, modifier/rebind/disabled policies, capture and bounded queue\n";
   return 0;
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; } }

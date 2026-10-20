@@ -18,7 +18,7 @@ LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
 }
 void Require(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
 void Pump() { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
-int main() {
+int main(int argc,char** argv) {
   try {
     WNDCLASSW wc{}; wc.lpfnWndProc=WndProc; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"MFGWindowControlTest";
     RegisterClassW(&wc);
@@ -26,6 +26,35 @@ int main() {
     Require(hwnd,"create window");
     const DWORD originalStyle=DWORD(GetWindowLongPtrW(hwnd,GWL_STYLE)); RECT before{}; GetWindowRect(hwnd,&before);
     auto controller=WindowControl::Bind(hwnd,false); Require(bool(controller),"bind hook");
+    if(argc>1 && std::string(argv[1])=="--hotkey") {
+      ShowWindow(hwnd,SW_SHOWNORMAL); SetForegroundWindow(hwnd);
+      Pump(); Require(GetForegroundWindow()==hwnd,"own test window not foreground; no shortcuts registered");
+      controller->OverlayKey({VK_HOME,0,true}); Pump();
+      OverlayReceipt hotkey; uint64_t overflow{};
+      controller->OverlayTaps(0,overflow,&hotkey);
+      Require(hotkey.hotkeyRegistered && !hotkey.hotkeyError,"foreground Home registration failed");
+      controller->OverlayTextCapture(true); Pump();
+      Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"text editing retained Home"); UnregisterHotKey(hwnd,0xb123);
+      controller->OverlayTextCapture(false); Pump();
+      Require(controller->OverlayOwnsHotkey({VK_HOME,0,true}),"text editing did not restore shortcut");
+      std::thread configure([&]{controller->OverlayKey({VK_F2,1,true});}); configure.join(); Pump();
+      Require(controller->OverlayOwnsHotkey({VK_F2,1,true}),"cross-thread rebind failed");
+      Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"rebind retained old key"); UnregisterHotKey(hwnd,0xb123);
+      controller->OverlayKey({0,0,true}); Pump();
+      Require(RegisterHotKey(hwnd,0xb123,MOD_CONTROL|MOD_NOREPEAT,VK_F2),"disabled binding retained key"); UnregisterHotKey(hwnd,0xb123);
+      Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"conflict fixture");
+      controller->OverlayKey({VK_HOME,0,true}); Pump(); controller->OverlayTaps(0,overflow,&hotkey);
+      Require(!hotkey.hotkeyRegistered && hotkey.hotkeyError==ERROR_HOTKEY_ALREADY_REGISTERED
+          && !controller->OverlayOwnsHotkey({VK_HOME,0,true}),"conflict did not preserve native fallback");
+      UnregisterHotKey(hwnd,0xb123);
+      controller->OverlayKey({0,0,true}); Pump(); controller->OverlayKey({VK_HOME,0,true}); Pump();
+      Require(controller->OverlayOwnsHotkey({VK_HOME,0,true}),"registration did not recover after conflict");
+      controller->Retire(); Pump(); Require(!controller->Snapshot().available,"foreground retirement did not finish");
+      Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"retirement retained global shortcut"); UnregisterHotKey(hwnd,0xb123);
+      ShowWindow(hwnd,SW_HIDE); Pump();
+      controller=WindowControl::Bind(hwnd,false); Require(bool(controller),"rebind after foreground tests");
+      std::cout<<"PASS: foreground hotkey text suspension, cross-thread rebind, disabled binding, conflict fallback and retirement\n";
+    }
     controller->OverlayKey({VK_HOME,0,true});
     const auto child=CreateWindowW(wc.lpszClassName,L"input child",WS_CHILD,0,0,20,20,hwnd,nullptr,wc.hInstance,nullptr);
     const auto unrelated=CreateWindowW(wc.lpszClassName,L"unrelated",WS_OVERLAPPEDWINDOW,0,0,20,20,nullptr,nullptr,wc.hInstance,nullptr);

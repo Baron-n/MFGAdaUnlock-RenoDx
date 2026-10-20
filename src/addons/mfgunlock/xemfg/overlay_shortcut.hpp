@@ -10,7 +10,7 @@ struct OverlayChord {
   bool operator==(const OverlayChord&) const = default;
 };
 struct OverlayTapResult {
-  uint64_t activity{},presses{},releases{},matched{},native{},canceled{},dropped{};
+  uint64_t activity{},presses{},releases{},matched{},native{},canceled{},dropped{},hotkeys{};
   uint32_t queued{},handled{},blocked{},ready{},modifiers{};
   bool down{};
 };
@@ -63,6 +63,10 @@ public:
     ++totals.native; ++totals.activity;
     if(down) consumed=true;
     else for(size_t i=0;i<size;++i) if(taps[i].serial==serial) taps[i].consumed=true;
+  }
+  void Hotkey() {
+    ++totals.activity; ++totals.hotkeys;
+    if(size<taps.size()) taps[size++]={++serial,false}; else ++dropped;
   }
   OverlayTapResult Drain(bool blocked=false) {
     auto result=totals;

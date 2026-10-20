@@ -25,7 +25,8 @@ class FinalOutput final:public IDXGISwapChain4 {
   uint64_t nextConfig{};
   unsigned keyLogs{};
   unsigned inputLogs{};
-  uint64_t inputActivity{};
+  uint64_t inputActivity{UINT64_MAX};
+  uint64_t hotkeyChanges{};
   uint32_t shortcutBlockers{};
   bool overlayOpen{},recovering{};
   static thread_local FinalOutput* rendering;
@@ -86,8 +87,9 @@ class FinalOutput final:public IDXGISwapChain4 {
         OverlayReceipt receipt;
         uint64_t dropped{}; const auto taps=input->OverlayTaps(shortcutBlockers,dropped,&receipt);
         keyDropped.store(dropped);
-        if(receipt.taps.activity!=inputActivity || nativePressed) {
+        if(receipt.taps.activity!=inputActivity || nativePressed || receipt.hotkeyChanges!=hotkeyChanges) {
           inputActivity=receipt.taps.activity;
+          hotkeyChanges=receipt.hotkeyChanges;
           if(inputLogs++<64) xess_mod::WriteLog("native_overlay_input","\"key\":"+std::to_string(chord.key)
               +",\"presses\":"+std::to_string(receipt.taps.presses)+",\"releases\":"+std::to_string(receipt.taps.releases)
               +",\"matched\":"+std::to_string(receipt.taps.matched)+",\"native\":"+std::to_string(receipt.taps.native)
@@ -95,6 +97,8 @@ class FinalOutput final:public IDXGISwapChain4 {
               +",\"blocked\":"+std::to_string(receipt.taps.blocked)+",\"recover\":"+std::to_string(taps)
               +",\"blockers\":"+std::to_string(receipt.blockers)+",\"modifiers\":"+std::to_string(receipt.taps.modifiers)
               +",\"canceled\":"+std::to_string(receipt.taps.canceled)+",\"child_messages\":"+std::to_string(receipt.childMessages)
+              +",\"hotkeys\":"+std::to_string(receipt.taps.hotkeys)+",\"hotkey_registered\":"+(receipt.hotkeyRegistered?"true":"false")
+              +",\"hotkey_error\":"+std::to_string(receipt.hotkeyError)
               +",\"down\":"+(receipt.taps.down?"true":"false")+",\"native_pressed\":"+(nativePressed?"true":"false")
               +",\"requested_open\":"+(overlayOpen?"true":"false"));
         }
@@ -114,6 +118,8 @@ public:
   static bool OverlayChange(reshade::api::effect_runtime* value,bool open,reshade::api::input_source source) {
     auto* self=rendering;
     if(!self || self->runtime!=value) return false;
+    if(!self->recovering && value->is_key_pressed(self->chord.key) && !value->is_key_pressed(VK_ESCAPE))
+      if(auto input=self->window.lock(); input && input->OverlayOwnsHotkey(self->chord)) return true;
     self->overlayOpen=open; ++keyRequests;
     // ReShade labels the request by the last ImGui navigation source, even
     // when the configured keyboard shortcut caused it. Test the actual key.
@@ -127,6 +133,7 @@ public:
     if(rendering && rendering->runtime==value) {
       if(ImGui::IsAnyItemActive()) rendering->shortcutBlockers|=2;
       if(ImGui::GetIO().WantTextInput) rendering->shortcutBlockers|=4;
+      if(auto input=rendering->window.lock()) input->OverlayTextCapture(ImGui::GetIO().WantTextInput);
     }
   }
   FinalOutput(ComPtr<IDXGISwapChain4> value,ComPtr<ID3D12Device> d,ComPtr<ID3D12CommandQueue> q)

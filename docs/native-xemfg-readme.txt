@@ -1,4 +1,4 @@
-MFGAdaUnlock - Native ReShade XeMFG R1.7.3
+MFGAdaUnlock - Native ReShade XeMFG R1.7.4
 
 One ReShade addon: DLSS-G from official 1.4.5, or Intel XeMFG with XeLL,
 the validated MFG model port, NVIDIA Tensor route and output pacing.
@@ -63,7 +63,7 @@ incompatible actual constants disable FG instead of silently changing inputs.
 VALIDATION:
 Real ReShade + Intel model inference and Tensor launches passed isolated tests
 at 2x, 3x, 4x and 6x, with both tagging APIs, volatile inputs, incomplete-input
-bypass, FG disable, resize and context destruction. R1.7.3 full suite: 66 passed,
+bypass, FG disable, resize and context destruction. R1.7.4 full suite: 66 passed,
 3 optional checks skipped. Synthetic/occluded windows do not validate display
 cadence, real-game input conventions, HDR appearance, FPS or physical latency.
 The X1.3 gameplay approval belongs to the previous OptiScaler transport.
@@ -180,3 +180,18 @@ fixed in R1.7.2, but Home still sometimes failed. Child routing is a proven
 coverage defect; it is not yet established as the cause of every game failure.
 See overlay-routing.md. R1.7.2 is included for rollback. Pacing, models,
 latency routing, HUD and input-device registrations are unchanged.
+
+R1.7.4 adds a Windows-managed overlay shortcut while the game window is in
+the foreground. It uses ReShade's configured exact key/modifier binding.
+The OS RegisterHotKey API is system-wide; this addon registers only during
+the game window's active lifetime and unregisters on deactivation, text editing,
+disabled/rebound shortcuts or retirement. It does not install
+a global keyboard observer or register raw-input devices. A conflicting or
+unsupported binding retains normal ReShade/message recovery. F12 is reserved.
+This route handles presses that do not reach the ordinary keyboard messages.
+While registered it owns Home exactly once, including when ReShade captures
+game commands; closing the overlay releases them normally. Current testing
+uses real ReShade, an owned foreground window and a fixture that discards its
+legacy Home messages. Cyberpunk verification is still pending. The corrected
+user report is that animation continues while commands stop, not a render hang.
+See window-hotkey.md; the package includes R1.7.3 rollback.

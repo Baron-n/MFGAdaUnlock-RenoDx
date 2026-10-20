@@ -19,7 +19,21 @@
 #include <vector>
 using Microsoft::WRL::ComPtr;
 static bool keyTest{};
+static bool hotkeyTest{};
 static unsigned overlayOpens{},overlayCloses{};
+static unsigned commands{};
+static LRESULT CALLBACK DiscardLegacyHome(int code,WPARAM w,LPARAM l) {
+  if(code>=0 && w==PM_REMOVE) {
+    auto* message=reinterpret_cast<MSG*>(l);
+    if(message && (message->message==WM_KEYDOWN || message->message==WM_KEYUP) && message->wParam==VK_HOME)
+      message->message=WM_NULL;
+  }
+  return CallNextHookEx(nullptr,code,w,l);
+}
+static LRESULT CALLBACK TestWindowProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
+  if(message==WM_KEYDOWN && w==VK_F23) ++commands;
+  return DefWindowProcW(hwnd,message,w,l);
+}
 static bool OverlayChange(reshade::api::effect_runtime*,bool open,reshade::api::input_source) {
   if(open) ++overlayOpens; else ++overlayCloses;
   return false;
@@ -38,7 +52,8 @@ int main(int argc,char** argv) {
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
-    keyTest=argc>2 && std::string(argv[2])=="--overlay-keys";
+    hotkeyTest=argc>2 && std::string(argv[2])=="--overlay-hotkeys";
+    keyTest=argc>2 && (std::string(argv[2])=="--overlay-keys" || hotkeyTest);
     if(keyTest) {
       Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
       reshade::register_event<reshade::addon_event::reshade_open_overlay>(&OverlayChange);
@@ -80,7 +95,7 @@ int main(int argc,char** argv) {
     controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
     Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"queue");
-    WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.lpszClassName=L"XeMFGNativeSmoke"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
+    WNDCLASSW wc{}; wc.lpfnWndProc=TestWindowProc; wc.lpszClassName=L"XeMFGNativeSmoke"; wc.hInstance=GetModuleHandleW(nullptr); RegisterClassW(&wc);
     HWND hwnd=CreateWindowW(wc.lpszClassName,L"XeMFG native bridge smoke",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
     Require(hwnd,"window");
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
@@ -313,6 +328,45 @@ int main(int argc,char** argv) {
       Require(overlayInput(&childStatus,sizeof(childStatus)) && childStatus.recovered==5 && !childStatus.dropped,
           "child native press recovered twice or child tap not recovered");
       DestroyWindow(child);
+      if(hotkeyTest) {
+        // SendInput is used ONLY after confirming this test's own window is
+        // foreground. Never send keys to a game or another application.
+        ShowWindow(hwnd,SW_SHOWNORMAL); SetForegroundWindow(hwnd);
+        const auto focusDeadline=GetTickCount64()+3000;
+        auto pump=[&] { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); };
+        while(GetForegroundWindow()!=hwnd && GetTickCount64()<focusDeadline) { pump(); Sleep(5); }
+        Require(GetForegroundWindow()==hwnd,"own test window not foreground; no input sent");
+        const auto discard=SetWindowsHookExW(WH_GETMESSAGE,&DiscardLegacyHome,nullptr,GetCurrentThreadId());
+        Require(discard,"legacy-loss test fixture");
+        for(unsigned i=0;i<5;++i) { pump(); Check(chain->Present(0,0),"hotkey focus warmup"); wait(); }
+        auto press=[&](WORD key) {
+          Require(GetForegroundWindow()==hwnd,"focus left test window; no input sent");
+          INPUT inputs[2]{};
+          for(auto& input:inputs) { input.type=INPUT_KEYBOARD; input.ki.wVk=key; }
+          inputs[1].ki.dwFlags=KEYEVENTF_KEYUP;
+          Require(SendInput(2,inputs,sizeof(INPUT))==2,"own test keyboard input failed");
+          const auto end=GetTickCount64()+150;
+          do { pump(); Check(chain->Present(0,0),"hotkey output"); wait(); Sleep(2); } while(GetTickCount64()<end);
+        };
+        press(VK_F23); const auto beforeCommands=commands;
+        Require(beforeCommands>0,"closed overlay captures test game commands");
+        press(VK_HOME);
+        Require(overlayOpens==5 && overlayCloses==4,"registered Home did not open exactly once");
+        press(VK_F23); Require(commands==beforeCommands,"open overlay did not capture test commands");
+        press(VK_HOME);
+        Require(overlayOpens==5 && overlayCloses==5,"registered Home could not close input-capturing overlay");
+        press(VK_F23); Require(commands==beforeCommands+1,"closing overlay did not release game commands");
+        // Deactivation must release the system registration immediately.
+        SendMessageW(hwnd,WM_ACTIVATEAPP,FALSE,0);
+        Require(RegisterHotKey(hwnd,0xb123,MOD_NOREPEAT,VK_HOME),"foreground loss retained Home registration");
+        UnregisterHotKey(hwnd,0xb123);
+        SendMessageW(hwnd,WM_ACTIVATEAPP,TRUE,0); pump();
+        press(VK_HOME); press(VK_HOME);
+        Require(overlayOpens==6 && overlayCloses==6,"registered Home did not survive reactivation");
+        UnhookWindowsHookEx(discard);
+        ShowWindow(hwnd,SW_HIDE); pump();
+        std::cout<<"Foreground hotkey: opens=6 closes=6; game commands captured/released; deactivation unregisters Home\n";
+      }
     }
     chain.Reset();
     Require(overlayStatus(&os,sizeof(os)) && os.created>=2 && os.created==os.destroyed && os.failed==0,"manual ReShade runtime resize/teardown leaked");
