@@ -28,6 +28,9 @@ ap.add_argument('--stall-trace',action='store_true')
 ap.add_argument('--queue-proxy',action='store_true')
 ap.add_argument('--parallel-factory',action='store_true')
 ap.add_argument('--foreign-refs',action='store_true')
+ap.add_argument('--retained-output',action='store_true')
+ap.add_argument('--secondary-viewport',action='store_true')
+ap.add_argument('--normal-depth',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -51,7 +54,10 @@ if args.runtime_layout!='adjacent':
         path=storage/'libxess_fg.dll'
         content=bytearray(path.read_bytes()); content[0x40]^=1; path.write_bytes(content)
         manifest['_storage_/libxess_fg.dll']=hashlib.sha256(content).hexdigest()
-(d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
+(d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n'
+    +('InvertedDepth=0\n' if args.normal_depth else '')+f'[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
+if args.retained_output:
+    with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Compatibility]\nRetainNativeOutput=1\n')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[INPUT]\nInputProcessing=2\nKeyOverlay=36,0,0,0\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])
@@ -59,7 +65,7 @@ if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -71,8 +77,11 @@ if args.parallel_factory:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,parallel_factory_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and verified else 1)
-if args.foreign_refs:
+if args.foreign_refs or args.retained_output:
     verified='PASS: foreign native references block HWND recreation; only observer-owned releases permit recovery' in result.stdout
+    if args.retained_output:
+        verified='PASS: retained native HWND rebound to a new Intel context with observer references preserved' in result.stdout
+        verified=verified and any(e.get('event')=='native_output_reused' and e.get('result')==0 for e in events)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,foreign_reference_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and verified else 1)

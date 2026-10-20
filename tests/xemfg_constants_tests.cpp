@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
 #include "../src/addons/mfgunlock/xemfg/native_constants.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_game_defaults.hpp"
 #include <limits>
 #include <iostream>
 #include <stdexcept>
 using namespace mfgunlock::xemfg::native;
 void Require(bool b,const char* s){if(!b)throw std::runtime_error(s);}
 int main(){try {
+  Require(!DefaultInvertedDepth(L"C:/Games/tlou-ii.exe") && !DefaultInvertedDepth(L"AlanWake2.exe"),"observed conventional depth defaults");
+  Require(DefaultInvertedDepth(L"re9.exe") && DefaultInvertedDepth(L"unknown.exe"),"unobserved default changed");
   sl::Constants c;
   c.cameraPos={2,3,4};c.cameraRight={1,0,0};c.cameraUp={0,1,0};c.cameraFwd={0,0,1};
   for(unsigned i=0;i<4;++i) for(unsigned j=0;j<4;++j) reinterpret_cast<float*>(&c.cameraViewToClip)[i*4+j]=i==j?1.f:0.f;

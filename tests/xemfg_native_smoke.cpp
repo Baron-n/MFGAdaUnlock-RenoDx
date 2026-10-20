@@ -218,7 +218,7 @@ int main(int argc,char** argv) {
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
     hotkeyTest=flag("--overlay-foreground");
     keyTest=flag("--overlay-keys") || hotkeyTest;
-    retainNativeOutput=flag("--foreign-refs");
+    retainNativeOutput=flag("--foreign-refs") || flag("--retained-output");
     if(keyTest || retainNativeOutput) {
       Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
       if(retainNativeOutput) reshade::register_event<reshade::addon_event::init_effect_runtime>(&RetainNativeOutput);
@@ -461,6 +461,15 @@ int main(int argc,char** argv) {
       Require(foreignNativeA && foreignNativeB,"observer did not retain native references");
       chain.Reset();
       mfgunlock::xemfg::Status status;modelStatus(&status,sizeof(status));Require(status.contexts==0,"SDK context retained by a native reference");
+      if(flag("--retained-output")) {
+        const auto expectedNative=foreignNativeA.Get();
+        Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"retained native recreation");
+        Require(foreignNativeA.Get()==expectedNative,"observer native identity changed");
+        ComPtr<ID3D12Resource> buffer;Check(base->GetBuffer(0,IID_PPV_ARGS(&buffer)),"rebound output buffer");buffer.Reset();
+        Check(base.As(&chain),"rebound Intel interface");base.Reset();
+        Require(foreignNativeA && foreignNativeB,"observer references stolen");
+        retainNativeOutput=false;foreignNativeB.Reset();foreignNativeA.Reset();
+      } else {
       const auto refused=factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base);
       Require(FAILED(refused) && !base,"native HWND recreated while foreign native references remained");
       retainNativeOutput=false;foreignNativeB.Reset();foreignNativeA.Reset();
@@ -470,10 +479,11 @@ int main(int argc,char** argv) {
       Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"foreign reference trace flush");
       std::cout<<"PASS: foreign native references block HWND recreation; only observer-owned releases permit recovery"<<std::endl;
       return 0;
+      }
     }
     if(queueProxy) Require(queueProxy->References()==1,"Intel context retained the external queue wrapper");
     mfgunlock::xemfg::native::OverlayStatus os;
-    Require(overlayStatus(&os,sizeof(os)) && os.created==1 && os.failed==0,"final output has no manual ReShade runtime");
+    Require(overlayStatus(&os,sizeof(os)) && os.created==(flag("--retained-output")?2u:1u) && os.failed==0,"final output has no manual ReShade runtime");
     settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
     // The owner-thread controller is asynchronous; SDK/ReShade startup may
@@ -525,6 +535,10 @@ int main(int argc,char** argv) {
     auto tags=Import<PFun_slSetTagForFrame*>(fixture,"slSetTagForFrame");
     auto legacyTags=Import<PFun_slSetTag*>(fixture,"slSetTag");
     sl::ViewportHandle viewport{0}; sl::DLSSGOptions opt; opt.mode=sl::DLSSGMode::eOn; opt.numFramesToGenerate=3;
+    if(flag("--secondary-viewport")) {
+      sl::DLSSGOptions idle;idle.mode=sl::DLSSGMode::eOff;
+      Require(options(sl::ViewportHandle{1},idle)==sl::Result::eOk,"secondary viewport OFF");
+    }
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
     Require(reflex(ro)==sl::Result::eOk,"Reflex disable");
@@ -599,7 +613,7 @@ int main(int argc,char** argv) {
     sl::Constants c; DirectX::XMFLOAT4X4 projection;
     DirectX::XMStoreFloat4x4(&projection,DirectX::XMMatrixPerspectiveFovLH(1.0f,640.f/360.f,.1f,1000.f)); memcpy(&c.cameraViewToClip,&projection,64);
     c.cameraRight={1,0,0}; c.cameraUp={0,1,0}; c.cameraFwd={0,0,1}; c.cameraPos={0,0,0};
-    c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
+    c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=flag("--normal-depth")?sl::eFalse:sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
     c.motionVectors3D=sl::eFalse; c.reset=sl::eFalse;
     sl::Resource rd(sl::ResourceType::eTex2d,depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rm(sl::ResourceType::eTex2d,motion.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
@@ -608,6 +622,10 @@ int main(int argc,char** argv) {
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(flag("--secondary-viewport") && frame==5) {
+        sl::DLSSGOptions idle;idle.mode=sl::DLSSGMode::eOff;
+        Require(options(sl::ViewportHandle{1},idle)==sl::Result::eOk,"secondary OFF while primary enabled");
+      }
       if(keyTest && (frame==3 || frame==7 || frame==11 || frame==15)) {
         PostMessageW(hwnd,WM_KEYDOWN,VK_HOME,1);
       }
@@ -707,7 +725,7 @@ int main(int argc,char** argv) {
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
-    Require(cs.modeUpdates<=2,"identical XeLL configuration reapplied every frame");
+    Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.
     const uint64_t compositionTransitions=flag("--producer-shadow")?6:4;
@@ -838,6 +856,7 @@ int main(int argc,char** argv) {
       std::cout<<"Historical markers: original calls preserved, real inference and duplicate forwarding verified"<<std::endl;
     }
     if(legacyFactory) std::cout<<"Legacy factory: inference, resize, fallback and recreation verified"<<std::endl;
+    if(flag("--retained-output"))std::cout<<"PASS: retained native HWND rebound to a new Intel context with observer references preserved; inference and resize verified"<<std::endl;
     if(queueProxy) {Require(queueProxy->References()==1,"external queue wrapper retained after teardown");std::cout<<"Queue native identity: wrapper unwrapped; inference and lifetime verified"<<std::endl;}
     std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;

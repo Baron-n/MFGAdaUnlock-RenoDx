@@ -2,6 +2,9 @@
 // Independent Streamline/DXGI transport. No OptiScaler source is used here.
 #include "native_internal.hpp"
 #include "native_overlay.hpp"
+#include "native_factory.hpp"
+#include "native_continuity.hpp"
+#include "native_game_defaults.hpp"
 #include "native_reflex_profile.hpp"
 #include "backend_api.hpp"
 #include "../backend_selection.hpp"
@@ -11,7 +14,6 @@
 #include <set>
 
 namespace mfgunlock::xemfg::native {
-static std::atomic<void*> observedFactoryEntry{};
 // Intel excludes CreateContext, Init and Destroy from its thread-safe API
 // contract. Also serialize output selection with initialization: two factory
 // threads must not both observe an empty Active() before publishing an owner.
@@ -69,6 +71,8 @@ void Output::RetirePresentation() {
     RuntimeCall trace("xefg_destroy",diagnosticOutput);
     const auto disabled=a.xefgSwapChainSetEnabled(fg,0);
     const auto result=a.xefgSwapChainDestroy(fg);
+    ConfirmNativeRetirement(hwnd,result==0);
+    if(result!=0)State().retirementFailed=true;
     trace.Result(result);
     xess_mod::WriteLog("native_output_retired","\"output\":"+std::to_string(diagnosticOutput)
         +",\"disable_result\":"+std::to_string(disabled)+",\"destroy_result\":"+std::to_string(result)
@@ -82,8 +86,8 @@ Output::~Output() {
   if(fg) {
       // Preserve every dependency if the SDK refuses retirement. Destruction
       // must not convert a leaked SDK reference into a freed XeLL/device.
-      struct Pending { ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue; xell_context_handle_t ll; };
-      new Pending{device,queue,ll};
+      struct Pending { ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue; ComPtr<IDXGIFactory2> factory; xell_context_handle_t ll; };
+      new Pending{device,queue,factory,ll};
       xess_mod::WriteLog("native_retirement_pending","\"context\":"+std::to_string(uintptr_t(fg)));
       return;
   }
@@ -108,6 +112,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   }
   std::unique_lock lifecycle(sdkLifecycle,std::defer_lock);
   { RuntimeCall trace("sdk_lifecycle_lock");lifecycle.lock(); }
+  if(State().retirementFailed) {Report("XeMFG context retirement failed; restart the game before creating another output");return E_FAIL;}
   if(Active()) return E_NOINTERFACE; // One selected Streamline viewport/output in this implementation.
   if(!OwnsPresentationHooks()) {
     Report("XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit");
@@ -124,17 +129,15 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
       || !single_overlay::native::Unwrap(factory,transportFactory)) {
     Report("XeMFG cannot identify the presentation queue/factory safely"); return E_NOINTERFACE;
   }
-  // A different factory implementation must remain observable by our final
-  // output hook. Otherwise retain the caller's factory so ReShade is not lost
-  // merely because its public native interface was discoverable.
-  if(transportFactory.Get()!=factory
-      && (*reinterpret_cast<void***>(transportFactory.Get()))[15]!=observedFactoryEntry.load()) transportFactory=factory;
+  // FinalOutputFactory observes the SDK call explicitly, including another
+  // thread/vtable implementation. Keeping an outer SL factory here would
+  // return another proxy and prevent admission of the native final renderer.
   const bool queueChanged=queue.Get()!=transportQueue.Get(),factoryChanged=factory!=transportFactory.Get();
   queue=std::move(transportQueue);
   if(queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT) return E_NOINTERFACE;
   auto& s=State();
   if(!s.api.Load()) { Report("XeMFG provider pair or model hooks unavailable"); return E_NOINTERFACE; }
-  auto o=std::make_shared<Output>(); o->queue=queue;
+  auto o=std::make_shared<Output>(); o->queue=queue;o->hwnd=hwnd;
   static std::atomic<uint64_t> outputGeneration{0}; o->diagnosticOutput=++outputGeneration;
   xess_mod::WriteLog("native_transport_identity","\"output\":"+std::to_string(o->diagnosticOutput)
       +",\"queue_unwrapped\":"+(queueChanged?"true":"false")+",\"factory_unwrapped\":"+(factoryChanged?"true":"false"));
@@ -170,9 +173,10 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)
       |(o->jitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
   init.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
+  o->factory=FinalOutputFactory(transportFactory.Get());
   const auto code=[&] {
     RuntimeCall trace("xefg_init",o->diagnosticOutput);
-    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),transportFactory.Get(),&init);
+    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),o->factory.Get(),&init);
     trace.Result(r);return r;
   }();
   if(code!=0) {
@@ -208,9 +212,18 @@ static LegacyFactoryCreate originalLegacyFactory{};
 static thread_local bool internalCreate{};
 static thread_local HWND creatingWindow{};
 struct CreationScope {
+  bool previousInternal{internalCreate};HWND previousWindow{creatingWindow};
   explicit CreationScope(HWND window) { internalCreate=true; creatingWindow=window; }
-  ~CreationScope() { internalCreate=false; creatingWindow=nullptr; }
+  ~CreationScope() { internalCreate=previousInternal; creatingWindow=previousWindow; }
 };
+HRESULT CreateFinalNativeOutput(IDXGIFactory2* factory,IUnknown* queue,HWND window,const DXGI_SWAP_CHAIN_DESC1* desc,
+    const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
+  CreationScope scope(nullptr); // Also guards calls on a separate SDK thread.
+  auto result=ReuseNativeOutput(queue,window,desc,out);
+  if(result==DXGI_ERROR_NOT_FOUND) result=factory->CreateSwapChainForHwnd(queue,window,desc,full,restrictOutput,out);
+  if(SUCCEEDED(result)) WrapFinalOutput(queue,window,out);
+  return result;
+}
 static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
@@ -226,6 +239,7 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
   // Unsupported integration remains native with our NVIDIA requests forced off.
   // It is explicitly reported; never announce an active XeMFG output here.
   creatingWindow=nullptr; // Native fallback must not become Intel's final output.
+  ClearRetainedNative(w);
   return originalFactory(f,d,w,desc,full,restrictOutput,out);
 }
 static HRESULT STDMETHODCALLTYPE LegacyFactoryHook(IDXGIFactory* factory,IUnknown* source,
@@ -270,6 +284,7 @@ static HRESULT STDMETHODCALLTYPE LegacyFactoryHook(IDXGIFactory* factory,IUnknow
       +",\"format\":"+std::to_string(modern.Format)+",\"flags\":"+std::to_string(modern.Flags));
   if(hr==E_NOINTERFACE) {
     creatingWindow=nullptr;
+    ClearRetainedNative(desc->OutputWindow);
     return originalLegacyFactory(factory,source,desc,out);
   }
   if(FAILED(hr)) return hr;
@@ -287,7 +302,6 @@ bool Install() {
     Report("XeMFG factory hook unavailable; restart with early ReShade addon loading"); return false;
   }
   const bool legacy=originalLegacyFactory || Hook(table[10],reinterpret_cast<void*>(&LegacyFactoryHook),reinterpret_cast<void**>(&originalLegacyFactory));
-  observedFactoryEntry=table[15];
   const bool hwnd=originalFactory || Hook(table[15],reinterpret_cast<void*>(&FactoryHook),reinterpret_cast<void**>(&originalFactory));
   if(!legacy || !hwnd) {
     Report("XeMFG factory entrypoint hook incomplete; restart with early ReShade addon loading"); return false;
@@ -310,8 +324,10 @@ static DWORD WINAPI DiscoverWorker(void*) {
 void Attach(HMODULE module) {
   CaptureStreamlineStartup();
   auto& s=State(); auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
+  ConfigureNativeContinuity(int(GetPrivateProfileIntW(L"Compatibility",L"RetainNativeOutput",UINT(-1),ini.c_str())));
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
-  s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",1,ini.c_str())!=0;
+  wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable)));
+  s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",DefaultInvertedDepth(executable)?1:0,ini.c_str())!=0;
   s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",0,ini.c_str())!=0;
   LoadControls();
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);

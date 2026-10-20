@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_factory.cpp native_continuity.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -171,7 +171,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --legacy-markers --latency-output ${route})
     set_tests_properties(xemfg_native_historical_markers_${route} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   endforeach()
-  foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs)
+  foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs retained-output secondary-viewport normal-depth)
     add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
       --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>

@@ -26,7 +26,7 @@ class QueueTrace {
   struct Impl;
   Impl* impl{};
 public:
-  QueueTrace(ID3D12Device*,ID3D12CommandQueue*,uint64_t output);
+  QueueTrace(ID3D12Device*,ID3D12CommandQueue*,uint64_t output,const char* queueName="source");
   ~QueueTrace();
   void Begin(uint32_t frame);
   void End();

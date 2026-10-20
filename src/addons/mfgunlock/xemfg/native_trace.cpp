@@ -7,6 +7,7 @@
 #include <mutex>
 #include <thread>
 #include <string>
+#include <vector>
 #include <d3d12.h>
 #include <wrl/client.h>
 namespace mfgunlock::xemfg::native {
@@ -26,6 +27,7 @@ void Log(const char* event,const std::string& fields) noexcept { xess_mod::Write
 struct Progress {
   Microsoft::WRL::ComPtr<ID3D12Fence> fence;
   uint64_t output{};
+  const char* queueName{"source"};
   std::atomic<uint64_t> begin{},end{},frame{};
 };
 std::array<std::atomic<std::shared_ptr<Progress>>,16> progress;
@@ -53,9 +55,11 @@ void StartTraceWorker() {
         std::string fields="\"call\":\""+std::string(name)+"\",\"ticket\":"+std::to_string(ticket)
             +",\"output\":"+std::to_string(context)+",\"frame\":"+std::to_string(frame)
             +",\"thread\":"+std::to_string(tid)+",\"elapsed_us\":"+std::to_string(Micros(now-stamp));
-        for(auto& entry:progress) if(auto p=entry.load(); p && p->output==context)
-          fields+=",\"gpu_begin_fence\":"+std::to_string(p->begin.load())+",\"gpu_end_fence\":"+std::to_string(p->end.load())
-              +",\"gpu_completed\":"+std::to_string(p->fence->GetCompletedValue());
+        for(auto& entry:progress) if(auto p=entry.load(); p && p->output==context) {
+          const std::string prefix=strcmp(p->queueName,"source")==0?"gpu_":"presentation_gpu_";
+          fields+=",\""+prefix+"begin_fence\":"+std::to_string(p->begin.load())+",\""+prefix+"end_fence\":"+std::to_string(p->end.load())
+              +",\""+prefix+"completed\":"+std::to_string(p->fence->GetCompletedValue());
+        }
         Log("runtime_call_pending",fields);
       }
     }
@@ -97,6 +101,17 @@ struct QueueTrace::Impl {
   uint64_t serial{},frequency{};
   unsigned active{~0u},registry{~0u};
   bool usable{},unknownSubmission{};
+  static void Reap(Impl* retired=nullptr) {
+    static std::mutex lock;static auto* pending=new std::vector<Impl*>;
+    std::lock_guard guard(lock);
+    for(auto it=pending->begin();it!=pending->end();) {
+      auto* p=*it;const auto value=p->state->fence->GetCompletedValue();
+      if(value==UINT64_MAX || (!p->unknownSubmission && value>=p->serial)) {delete p;it=pending->erase(it);}
+      else ++it;
+    }
+    if(retired)pending->push_back(retired);
+    if(pending->size()>=4)gpuEnabled=false;
+  }
   void Poll() {
     const auto completed=state->fence->GetCompletedValue();
     if(completed==UINT64_MAX) { usable=false; return; }
@@ -107,16 +122,19 @@ struct QueueTrace::Impl {
         uint64_t pair[2]; memcpy(pair,static_cast<char*>(bytes)+i*16,16);
         D3D12_RANGE written{};readback->Unmap(0,&written);
         if(pair[1]>=pair[0]) Log("gpu_queue_span","\"output\":"+std::to_string(state->output)+",\"frame\":"+std::to_string(s.frame)
-            +",\"queue\":\"source\",\"duration_us\":"+std::to_string(double(pair[1]-pair[0])*1.e6/frequency)
+            +",\"queue\":\""+state->queueName+"\",\"duration_us\":"+std::to_string(double(pair[1]-pair[0])*1.e6/frequency)
+            +",\"end_gpu_tick\":"+std::to_string(pair[1])+",\"observed_cpu_qpc\":"+std::to_string(Now())
             +",\"fence\":"+std::to_string(s.end));
       }
       s.begin=s.end=0;
     }
   }
 };
-QueueTrace::QueueTrace(ID3D12Device* device,ID3D12CommandQueue* queue,uint64_t output) {
+QueueTrace::QueueTrace(ID3D12Device* device,ID3D12CommandQueue* queue,uint64_t output,const char* queueName) {
+  Impl::Reap();
   if(!GpuTraceEnabled()) return;
   auto p=std::make_unique<Impl>();p->queue=queue;p->state=std::make_shared<Progress>();p->state->output=output;
+  p->state->queueName=queueName;
   if(FAILED(queue->GetTimestampFrequency(&p->frequency)) || !p->frequency
       || FAILED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&p->state->fence)))) return;
   D3D12_QUERY_HEAP_DESC query{};query.Type=D3D12_QUERY_HEAP_TYPE_TIMESTAMP;query.Count=16;
@@ -134,6 +152,10 @@ QueueTrace::QueueTrace(ID3D12Device* device,ID3D12CommandQueue* queue,uint64_t o
     if(progress[i].compare_exchange_strong(empty,p->state)) {p->registry=i;break;}
   }
   p->usable=true;impl=p.release();
+  UINT64 gpu{},cpu{};
+  if(SUCCEEDED(queue->GetClockCalibration(&gpu,&cpu))) Log("gpu_queue_clock","\"output\":"+std::to_string(output)
+      +",\"queue\":\""+queueName+"\",\"gpu_tick\":"+std::to_string(gpu)+",\"cpu_qpc\":"+std::to_string(cpu)
+      +",\"gpu_frequency\":"+std::to_string(impl->frequency)+",\"cpu_frequency\":"+std::to_string(Frequency()));
 }
 QueueTrace::~QueueTrace() {
   if(!impl) return;
@@ -142,8 +164,9 @@ QueueTrace::~QueueTrace() {
   // Never release an allocator/query/readback still referenced by the GPU,
   // and never add a diagnostic wait to a game. A failed signal is unknown.
   if(impl->unknownSubmission || (complete!=UINT64_MAX && complete<impl->serial)) {
-    gpuEnabled=false; // Bound quarantine to the first failed diagnostic arena.
-    Log("gpu_trace_retirement_pending","\"output\":"+std::to_string(impl->state->output));return;
+    const auto output=impl->state->output;
+    Impl::Reap(impl); // Reap completed arenas on the next output; never wait here.
+    Log("gpu_trace_retirement_pending","\"output\":"+std::to_string(output));return;
   }
   delete impl;
 }

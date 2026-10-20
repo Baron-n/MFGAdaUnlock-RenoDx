@@ -45,10 +45,12 @@ struct Frame {
   xefg_swapchain_frame_constant_data_t data{};
 };
 struct Output {
+  HWND hwnd{};
   std::recursive_mutex io;
   std::recursive_mutex presents;
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12CommandQueue> queue;
+  ComPtr<IDXGIFactory2> factory;
   std::shared_ptr<WindowControl> window;
   std::unique_ptr<QueueTrace> gpuTrace;
   DWORD windowBindError{};
@@ -85,6 +87,7 @@ struct Bridge {
   std::weak_ptr<Output> output;
   std::atomic<uint32_t> recording{0}, presenting{0}, viewport{UINT32_MAX};
   std::atomic<bool> nativeOff{false}, reflexOff{false}, requested{false};
+  std::atomic<bool> retirementFailed{false};
   std::atomic<bool> reflexOptionsReady{false};
   // Output changes are saved by the UI and take effect only after restart.
   // This avoids replaying a game's Reflex setter on an arbitrary UI thread.

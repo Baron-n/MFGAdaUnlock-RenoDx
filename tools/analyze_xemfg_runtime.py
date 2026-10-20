@@ -25,6 +25,9 @@ def analyze(events,pid=None):
         e=dict(e); completed=e.get('gpu_completed');begin=e.get('gpu_begin_fence')
         e['source_queue_progress']=('unavailable' if completed is None or not begin else
             'device_removed' if completed==(1<<64)-1 else 'begin_fence_completed' if completed>=begin else 'begin_fence_pending')
+        final=e.get('presentation_gpu_completed');beginFinal=e.get('presentation_gpu_begin_fence')
+        e['presentation_queue_progress']=('unavailable' if final is None or not beginFinal else
+            'device_removed' if final==(1<<64)-1 else 'begin_fence_completed' if final>=beginFinal else 'begin_fence_pending')
         pending.append(e)
     statuses=by['output_status']; active=[e for e in statuses if e.get('enabled')]
     issues=[]
@@ -39,7 +42,10 @@ def analyze(events,pid=None):
         constant_statuses=issues,marker_entrypoints=by['native_marker_hook'],
         slow_calls={name:dict(samples=len(es),max_duration_us=max(e['duration_us'] for e in es),
             failed=[e for e in es if e.get('result_known') and (e.get('failed') or e['result']<0)]) for name,es in calls.items()},
-        pending_calls=pending,gpu_source_queue_samples=len(by['gpu_queue_span']),
+        pending_calls=pending,gpu_source_queue_samples=sum(e.get('queue','source')=='source' for e in by['gpu_queue_span']),
+        gpu_presentation_queue_samples=sum(e.get('queue')=='presentation' for e in by['gpu_queue_span']),
+        queue_clocks=by['gpu_queue_clock'],sampled_input_calls=by['native_input_call'],viewport_options=by['native_viewport_options'],
+        native_output_continuity=by['native_output_retained']+by['native_output_reused'],
         initialization_failures=by['startup_rejected']+by['native_swapchain_init_failed'],
         lifetime_events=by['native_output_retired']+by['native_retirement_pending']+by['native_final_output_retired'],
         limits=['SDK outputs are not displayed cadence.', 'Source-queue spans do not isolate XeFG kernels or private queues.',

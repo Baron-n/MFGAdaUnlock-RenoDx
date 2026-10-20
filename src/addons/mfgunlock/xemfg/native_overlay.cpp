@@ -3,6 +3,7 @@
 // Effects and input run at the final output; never draw into an FG input.
 #include "native_internal.hpp"
 #include "native_overlay.hpp"
+#include "native_continuity.hpp"
 #include "../backend_selection.hpp"
 #include <deps/imgui/imgui.h>
 #include <reshade.hpp>
@@ -20,6 +21,8 @@ class FinalOutput final:public IDXGISwapChain4 {
   DXGI_COLOR_SPACE_TYPE color{DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709};
   bool colorKnown{};
   unsigned requestLogs{};
+  uint64_t diagnosticOutput{};
+  std::unique_ptr<QueueTrace> gpuTrace;
   static thread_local FinalOutput* rendering;
   void Color() {
     if(!runtime || !colorKnown) return;
@@ -39,7 +42,10 @@ class FinalOutput final:public IDXGISwapChain4 {
     reshade::destroy_effect_runtime(runtime); runtime=nullptr; ++destroyed;
   }
   void Render(UINT flags) {
-    RuntimeCall trace("reshade_final_update");
+    if(TraceEnabled() && !diagnosticOutput) if(auto owner=Active())diagnosticOutput=owner->diagnosticOutput;
+    if(GpuTraceEnabled() && !gpuTrace)gpuTrace=std::make_unique<QueueTrace>(device.Get(),queue.Get(),diagnosticOutput,"presentation");
+    if(gpuTrace && !(flags&DXGI_PRESENT_TEST))gpuTrace->Begin(State().presenting.load());
+    RuntimeCall trace("reshade_final_update",diagnosticOutput);
     if(runtime && !(flags&DXGI_PRESENT_TEST)) {
       struct Scope { FinalOutput* previous; Scope(FinalOutput* value):previous(rendering){rendering=value;} ~Scope(){rendering=previous;} } scope(this);
       // ReShade owns its shortcut, active widgets and input capture. Updating
@@ -60,10 +66,14 @@ public:
       :chain(std::move(value)),device(std::move(d)),queue(std::move(q)) { Create(); }
   ~FinalOutput() {
     Destroy();
+    ComPtr<IDXGISwapChain4> retained;
+    if(NativeContinuityEnabled()) retained=chain;
     auto* native=chain.Detach();
     const auto remaining=native?native->Release():0;
+    const auto externalRemaining=retained && remaining?remaining-1:remaining;
+    if(retained && remaining>1) RetainNativeOutput(std::move(retained),queue.Get());
     xess_mod::WriteLog("native_final_output_retired","\"native\":"+std::to_string(uintptr_t(native))
-        +",\"remaining_refs\":"+std::to_string(remaining));
+        +",\"remaining_refs\":"+std::to_string(externalRemaining));
   }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
     if(!out) return E_POINTER; *out=nullptr;
@@ -80,11 +90,13 @@ public:
     { std::lock_guard guard(lock); Render(flags); }
     // DXGI may wait on the window thread. The SDK owns external Present/Resize
     // ordering; do not hold our runtime lock across the native call.
-    RuntimeCall trace("native_present");const auto r=chain->Present(sync,flags);trace.Result(r);return r;
+    RuntimeCall trace("native_present",diagnosticOutput);const auto r=chain->Present(sync,flags);trace.Result(r);
+    {std::lock_guard guard(lock);if(gpuTrace)gpuTrace->End();}return r;
   }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* parameters) override {
     { std::lock_guard guard(lock); Render(flags); }
-    RuntimeCall trace("native_present1");const auto r=chain->Present1(sync,flags,parameters);trace.Result(r);return r;
+    RuntimeCall trace("native_present1",diagnosticOutput);const auto r=chain->Present1(sync,flags,parameters);trace.Result(r);
+    {std::lock_guard guard(lock);if(gpuTrace)gpuTrace->End();}return r;
   }
   HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e) override {
     { std::lock_guard guard(lock); Destroy(); }

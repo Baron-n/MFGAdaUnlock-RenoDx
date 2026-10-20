@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
 #include "native_constants.hpp"
+#include "native_continuity.hpp"
 #include <cmath>
 #include <algorithm>
 #include <psapi.h>
@@ -67,6 +68,7 @@ sl::Result ShutdownHook() {
   // A plugin's shutdown may itself resolve a function on another thread.
   { std::lock_guard guard(discovery); presentationIsolated=false; }
   xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"drained\"");
+  ClearRetainedNative();
   const auto result=shutdown();
   xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"complete\",\"result\":"+std::to_string(uint32_t(result)));
   return result;
@@ -96,6 +98,12 @@ bool SelectViewport(uint32_t v) {
   s.viewport.compare_exchange_strong(expected,v);
   return s.viewport.load()==v;
 }
+bool SelectedViewport(uint32_t v) {return State().viewport.load()==v;}
+void TraceInput(const char* api,uint32_t id,uint32_t viewport=UINT32_MAX,int marker=-1) {
+  if(!TraceEnabled() || id%64>=2)return;
+  xess_mod::WriteLog("native_input_call","\"api\":\""+std::string(api)+"\",\"id\":"+std::to_string(id)
+      +",\"viewport\":"+std::to_string(viewport)+",\"marker\":"+std::to_string(marker)+",\"thread\":"+std::to_string(GetCurrentThreadId()));
+}
 std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) {
   switch(type) {
     case sl::kBufferTypeDepth: return XEFG_SWAPCHAIN_RES_DEPTH;
@@ -106,7 +114,7 @@ std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) 
   }
 }
 void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
-  if(!id || !tags || count>64 || !SelectViewport(viewport)) return;
+  if(!id || !tags || count>64 || !SelectedViewport(viewport)) return;
   auto o=Active(); if(!o) return;
   std::lock_guard lock(o->io); auto* frame=FindFrame(*o,id); if(!frame) return;
   if(o->retired || !o->fg) return;
@@ -206,16 +214,19 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
   }
 }
 sl::Result TagHook(const sl::ViewportHandle& v,const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
+  TraceInput("slSetTag",State().recording.load(),uint32_t(v));
   const auto r=setTag(v,t,n,c);
   Tags(State().recording.load(),uint32_t(v),t,n,c); return r;
 }
 sl::Result TagFrameHook(const sl::FrameToken& f,const sl::ViewportHandle& v,
     const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
+  TraceInput("slSetTagForFrame",FrameId(uint32_t(f)),uint32_t(v));
   const auto r=setTagFrame(f,v,t,n,c); Tags(FrameId(uint32_t(f)),uint32_t(v),t,n,c); return r;
 }
 sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl::ViewportHandle& v) {
+  TraceInput("slSetConstants",FrameId(uint32_t(f)),uint32_t(v));
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
-  if(SelectViewport(uint32_t(v))) if(auto o=Active()) {
+  if(SelectedViewport(uint32_t(v))) if(auto o=Active()) {
     std::lock_guard lock(o->io);
     if(o->retired) return r;
     if(auto* frame=FindFrame(*o,id)) {
@@ -238,11 +249,17 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
 sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts) {
   if(opts.structType!=sl::DLSSGOptions::s_structType || opts.structVersion<1 || opts.structVersion>5)
     return sl::Result::eErrorUnsupportedInterface;
-  auto& s=State(); if(!SelectViewport(uint32_t(v))) return sl::Result::eErrorFeatureNotSupported;
+  auto& s=State();
+  // OFF from a menu/secondary viewport cannot claim the selected FG output.
+  static std::atomic<uint32_t> optionBudget{};
+  if(optionBudget.fetch_add(1)<16) xess_mod::WriteLog("native_viewport_options","\"viewport\":"+std::to_string(uint32_t(v))
+      +",\"mode\":"+std::to_string(uint32_t(opts.mode))+",\"selected\":"+std::to_string(s.viewport.load()));
+  if(opts.mode!=sl::DLSSGMode::eOff && !SelectViewport(uint32_t(v))) return sl::Result::eErrorFeatureNotSupported;
   // A known V1 prefix is enough to turn NVIDIA generation off. Do not copy
   // the newer structure from an older/smaller allocation supplied by a game.
   sl::DLSSGOptions disabled; disabled.structVersion=1; disabled.mode=sl::DLSSGMode::eOff;
   const auto r=setOptions(v,disabled);
+  if(!SelectedViewport(uint32_t(v))) return r;
   s.nativeOff=r==sl::Result::eOk;
   s.requested=logicalLoaded && opts.mode!=sl::DLSSGMode::eOff;
   static std::atomic<uint64_t> previous{UINT64_MAX};
@@ -291,11 +308,13 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
   return result;
 }
 sl::Result SleepHook(const sl::FrameToken& f) {
+  TraceInput("slReflexSleep",FrameId(uint32_t(f)));
   auto o=Active(); if(!o) return reflexSleep(f);
   State().inputTick=GetTickCount64();
   return SleepSourceFrame(o,FrameId(uint32_t(f)),reflexSleep,&f);
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
+  TraceInput("latency_marker",FrameId(uint32_t(f)),UINT32_MAX,int(marker));
   const auto id=FrameId(uint32_t(f)); auto& s=State(); const auto value=uint32_t(marker);
   if(marker==sl::PCLMarker::eRenderSubmitStart) s.recording=id;
   if(marker==sl::PCLMarker::ePresentStart) s.presenting=id;
