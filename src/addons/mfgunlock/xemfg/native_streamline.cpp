@@ -68,6 +68,9 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     const auto& t=tags[i]; auto type=ResourceType(t.type); if(!type) continue;
     const auto bit=1u<<*type;
     const bool optional=*type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR || *type==XEFG_SWAPCHAIN_RES_UI;
+    const char* rejection="metadata";
+    D3D12_RESOURCE_DESC observed{};
+    int sdkResult{};
     const auto reject=[&](uint32_t issues) {
       if(!optional || (frame->resources&bit)) frame->failed=true;
       // Cannot retract an earlier successful tag for this same frame: bypass
@@ -76,32 +79,45 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
         frame->hudIssues|=issues; ++State().hudRejected;
         if(o->hudLogBudget<8) { ++o->hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(*type)+",\"issues\":"+std::to_string(issues)); }
       }
+      if(o->rejectedTagLogBudget<12) {
+        ++o->rejectedTagLogBudget;
+        xess_mod::WriteLog("native_tag_rejected","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(*type)
+            +",\"reason\":\""+rejection+"\",\"lifecycle\":"+std::to_string(t.lifecycle)
+            +",\"tag_version\":"+std::to_string(t.structVersion)+",\"resource_version\":"+std::to_string(t.resource?t.resource->structVersion:0)
+            +",\"state\":"+std::to_string(t.resource?t.resource->state:UINT_MAX)
+            +",\"format\":"+std::to_string(observed.Format)+",\"width\":"+std::to_string(observed.Width)
+            +",\"height\":"+std::to_string(observed.Height)+",\"array_size\":"+std::to_string(observed.DepthOrArraySize)
+            +",\"extent_x\":"+std::to_string(t.extent.left)+",\"extent_y\":"+std::to_string(t.extent.top)
+            +",\"extent_width\":"+std::to_string(t.extent.width)+",\"extent_height\":"+std::to_string(t.extent.height)
+            +",\"command\":"+std::string(command?"true":"false")+",\"sdk_result\":"+std::to_string(sdkResult));
+      }
     };
     if(!t.resource || !t.resource->native) { frame->resources&=~bit; continue; }
     if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || t.resource->structVersion!=1
         || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
     ComPtr<ID3D12Resource> resource;
     if(!single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(t.resource->native),resource)) {
-      if(id<6) xess_mod::WriteLog("native_tag_rejected","\"reason\":\"resource_unwrap\"");
+      rejection="resource_unwrap";
       reject(HudMetadata); continue;
     }
     const auto desc=resource->GetDesc();
+    observed=desc;
     ComPtr<ID3D12Device> device, nativeDevice; resource->GetDevice(IID_PPV_ARGS(&device));
     single_overlay::native::Unwrap(device.Get(),nativeDevice);
     ComPtr<IUnknown> identity, expectedIdentity;
     if(nativeDevice) nativeDevice.As(&identity); o->device.As(&expectedIdentity);
     if(identity.Get()!=expectedIdentity.Get() || desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D
-        || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { reject(HudMetadata); continue; }
+        || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { rejection="device_or_shape"; reject(HudMetadata); continue; }
     xefg_swapchain_d3d12_resource_data_t data{};
     data.type=*type; data.pResource=resource.Get();
     data.incomingState=static_cast<D3D12_RESOURCE_STATES>(t.resource->state);
     data.resourceBase={t.extent.left,t.extent.top};
     data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
     if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
-        || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { reject(HudExtent); continue; }
+        || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { rejection="extent"; reject(HudExtent); continue; }
     if(optional) {
       const auto issues=CheckHudInput(desc,o->format,o->width,o->height,data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
-      if(issues) { reject(issues); continue; }
+      if(issues) { rejection="optional_hud"; reject(issues); continue; }
     }
     ComPtr<ID3D12CommandList> list;
     if(t.lifecycle==sl::eValidUntilPresent) data.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
@@ -110,14 +126,14 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
       // using the producer's list and restoring its resource state. A COM
       // AddRef alone would not preserve the contents of a volatile resource.
       if(!command || !single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(command),list)
-          || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { reject(HudMetadata); continue; }
+          || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { rejection="volatile_command"; reject(HudMetadata); continue; }
       data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
-    } else { reject(HudMetadata); continue; }
+    } else { rejection="lifecycle"; reject(HudMetadata); continue; }
     const auto code=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);
     if(id<6) xess_mod::WriteLog("native_tag","\"type\":"+std::to_string(*type)+",\"result\":"+std::to_string(code)
         +",\"format\":"+std::to_string(desc.Format)+",\"width\":"+std::to_string(data.resourceSize.x)
         +",\"height\":"+std::to_string(data.resourceSize.y)+",\"lifecycle\":"+std::to_string(t.lifecycle));
-    if(code<0) { frame->failed=true; reject(HudMetadata); }
+    if(code<0) { sdkResult=code; rejection="sdk_tag"; frame->failed=true; reject(HudMetadata); }
     else {
       frame->resources|=bit;
       if(optional && !(o->hudKindsSeen&bit)) {
@@ -158,12 +174,30 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   const auto r=setOptions(v,disabled);
   s.nativeOff=r==sl::Result::eOk;
   s.requested=opts.mode!=sl::DLSSGMode::eOff;
+  static std::atomic<uint64_t> previous{UINT64_MAX};
+  const uint64_t signature=uint64_t(uint32_t(opts.mode))|(uint64_t(uint32_t(r))<<32);
+  if(previous.exchange(signature)!=signature)
+    xess_mod::WriteLog("native_game_options","\"viewport\":"+std::to_string(uint32_t(v))+",\"mode\":"+std::to_string(uint32_t(opts.mode))
+        +",\"version\":"+std::to_string(opts.structVersion)+",\"native_disable_result\":"+std::to_string(uint32_t(r)));
   return r;
 }
 sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl::DLSSGOptions*) {
   const auto r=getState(v,state,nullptr); if(r!=sl::Result::eOk) return r;
   if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1 || state.structVersion>4) return r;
   const auto status=Snapshot();
+  const auto originalStatus=uint32_t(state.status);
+  // The NVIDIA engine is deliberately disabled. Its Reflex/backbuffer hooks
+  // do not own the Intel output, so their absence is not a XeMFG failure.
+  // Preserve all other errors; never mask format, resolution or input faults.
+  if(State().nativeOff && status.output) {
+    constexpr auto nativeOnly=uint32_t(sl::DLSSGStatus::eFailReflexNotDetectedAtRuntime)
+        |uint32_t(sl::DLSSGStatus::eFailGetCurrentBackBufferIndexNotCalled);
+    state.status=sl::DLSSGStatus(originalStatus&~nativeOnly);
+  }
+  static std::atomic<uint64_t> previous{UINT64_MAX};
+  const uint64_t signature=uint64_t(originalStatus)|(uint64_t(uint32_t(state.status))<<32);
+  if(previous.exchange(signature)!=signature)
+    xess_mod::WriteLog("native_game_state","\"native_status\":"+std::to_string(originalStatus)+",\"reported_status\":"+std::to_string(uint32_t(state.status)));
   state.numFramesActuallyPresented=status.submitted;
   if(state.structVersion>=2) state.numFramesToGenerateMax=5;
   if(state.structVersion>=4) state.bIsDynamicMFGSupported=sl::eFalse;
@@ -272,7 +306,10 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   constexpr uint32_t required=(1u<<XEFG_SWAPCHAIN_RES_DEPTH)|(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR);
   const bool nativeReflex=s.latencyOutput.load()==LatencyOutput::Reflex;
   const bool latencyReady=s.reflexOptionsReady && (nativeReflex?s.gameReflexMode!=0:s.reflexOff.load());
-  bool ready=compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
+  // Present identity belongs to the source frame, including passthrough.
+  // Missing FG inputs must not leave the Intel proxy on the previous ID.
+  const auto presentIdResult=id && id>o->last?a.xefgSwapChainSetPresentId(o->fg,id):XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  bool ready=presentIdResult>=0 && compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
   if(ready) {
     auto& f=*frame;
     // RenderSubmit END can legally arrive after Present starts or returns.
@@ -288,8 +325,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       xefg_swapchain_d3d12_resource_data_t region{}; region.type=XEFG_SWAPCHAIN_RES_BACKBUFFER;
       region.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT; region.resourceSize={o->width,o->height};
       ready=a.xefgSwapChainD3D12TagFrameResource(o->fg,nullptr,id,&region)>=0
-          && a.xefgSwapChainTagFrameConstants(o->fg,id,&data)>=0
-          && a.xefgSwapChainSetPresentId(o->fg,id)>=0;
+          && a.xefgSwapChainTagFrameConstants(o->fg,id,&data)>=0;
     }
   }
   if(ready!=o->enabled) {
@@ -304,6 +340,10 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     else { a.xefgSwapChainSetEnabled(o->fg,0); o->enabled=false; }
   }
   const auto* f=frame;
+  if(id && !ready && o->bypassPresentLogBudget<8) {
+    ++o->bypassPresentLogBudget;
+    xess_mod::WriteLog("native_bypass_present_id","\"id\":"+std::to_string(id)+",\"result\":"+std::to_string(presentIdResult));
+  }
   const uint32_t admission=(f?f->resources:0)|((f?f->markers:0)<<8)
       |(uint32_t(f&&f->constants)<<16)|(uint32_t(f&&f->valid)<<17)
       |(uint32_t(f&&f->failed)<<18)|(uint32_t(f&&f->sleeping)<<19)
@@ -322,7 +362,10 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     s.status.multiplier=s.multiplier; ++s.status.frames; if(!ready) ++s.status.rejected; }
   if(ready) Report(nativeReflex?"XeMFG active: Streamline inputs and native Reflex; pacing state is reported separately":
       "XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
+  else if(!s.requested) Report("XeMFG paused: the game is not requesting frame generation");
   else if(s.requested && nativeReflex && !latencyReady) Report("XeMFG bypass: enable native NVIDIA Reflex in the game for the selected latency output");
+  else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_DEPTH))) Report("XeMFG bypass: this frame has no accepted depth input");
+  else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR))) Report("XeMFG bypass: this frame has no accepted motion vectors");
   else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
   o->last=id;
 }

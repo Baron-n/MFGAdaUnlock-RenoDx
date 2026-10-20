@@ -66,6 +66,7 @@ policy_activation=policy==['sdk','adaptive']
 # of observation from either proving passthrough or witnessing a violation.
 passthrough=all(e['deadline_ns']==e['sdk_deadline_ns'] and not e['flip_metered'] for e in sdk_deadlines) if sdk_deadlines else None
 hud_filter=len([e for e in events if e.get('event')=='native_hud_filtered'])>=2
+passthrough_identity=any(e.get('event')=='native_bypass_present_id' and e.get('id')==35 and e.get('result')==0 for e in events)
 native_keys=(('Overlay key transitions: opens=2 closes=2' in result.stdout
     and 'Overlay keys after resize/FG-off: opens=3 closes=3' in result.stdout
     and 'Production panel draws=' in result.stdout) if args.overlay_keys else None)
@@ -80,8 +81,8 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
     'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted,
     'sdk_policy_activation_verified':policy_activation,'sdk_deadline_records':len(sdk_deadlines),
-    'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,
+    'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,'passthrough_identity_verified':passthrough_identity,
     'native_reshade_keys_verified':native_keys,'native_reshade_child_verified':native_child,'foreground_reshade_verified':foreground_verified,
     'production_panel_verified':'Production panel draws=' in result.stdout},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and native_keys is not False and native_child is not False and foreground_verified is not False else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False else 1)

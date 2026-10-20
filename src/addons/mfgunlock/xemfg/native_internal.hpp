@@ -56,6 +56,8 @@ struct Output {
   uint32_t lastAdmission{UINT32_MAX};
   DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
   uint32_t hudLogBudget{},hudKindsSeen{};
+  uint32_t rejectedTagLogBudget{};
+  uint32_t bypassPresentLogBudget{};
   uint64_t admissionTick{};
   uint64_t epoch{};
   uint64_t diagnosticOutput{};

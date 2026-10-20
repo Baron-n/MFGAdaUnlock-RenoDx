@@ -16,15 +16,16 @@ def sha(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--revision', choices=('R1.8', 'R1.9'), default='R1.8')
+    ap.add_argument('--revision', choices=('R1.8', 'R1.9', 'R1.9.1'), default='R1.8')
     for name in ('output', 'evidence', 'previous-addon', 'official-addon', 'intel-sdk'):
         ap.add_argument('--' + name, type=Path, required=True)
     a = ap.parse_args()
-    compat = a.revision == 'R1.9'
+    compat = a.revision != 'R1.8'
+    handoff = a.revision == 'R1.9.1'
     revision = a.revision
-    previous = 'R1.8' if compat else 'R1.7.5'
+    previous = 'R1.9' if handoff else 'R1.8' if compat else 'R1.7.5'
     total = 89 if compat else 80
-    report_name = 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
+    report_name = 'game-status-report.md' if handoff else 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
     root = Path(__file__).resolve().parent.parent
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
@@ -49,6 +50,8 @@ def main():
             raise ValueError('Stale SDK evidence: ' + key)
         if not all(result[k] for k in ('control_preferences_persisted', 'sdk_policy_activation_verified', 'hud_filter_verified')):
             raise ValueError('SDK control contract failed: ' + key)
+        if handoff and not result.get('passthrough_identity_verified'):
+            raise ValueError('Passthrough present identity not witnessed: ' + key)
         route = key.split('-')[0]
         if result['latency_output'] != route or f'Latency route: Reflex -> {route};' not in result['stdout']:
             raise ValueError('Latency route not witnessed: ' + key)
@@ -63,7 +66,7 @@ def main():
             fields = ('startup_rejection_verified', 'model_unpublished') if layout in ('mutated-storage', 'missing') else ('runtime_selection_verified', 'control_preferences_persisted', 'hud_filter_verified')
             if not all(result.get(k) for k in fields):
                 raise ValueError('Compatibility contract failed: ' + layout)
-    previous_hash = '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
+    previous_hash = '513d6dde26309a2737c29a23f31e46322a779bc27ee6605488a2ff0490a9fed1' if handoff else '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
     if sha(a.previous_addon) != previous_hash:
         raise ValueError(previous + ' rollback differs')
     if sha(a.official_addon) != '9715987f6323a2699dd5b7636412258a6b97a180a4d70c0f79d286714e2972e2':
@@ -72,7 +75,7 @@ def main():
         raise ValueError('Refuse to overwrite a sealed package')
     assets = {
         'renodx-mfgunlock.addon64': addon,
-        report_name: root / ('docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
+        report_name: root / ('docs/research/xemfg-r1.9.1-game-status-2026-10-20.md' if handoff else 'docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
         f'rollback/renodx-mfgunlock-{previous.lower()}.addon64': a.previous_addon,
         'rollback/renodx-mfgunlock-1.4.5.addon64': a.official_addon,
         'Restore-MFGBackup.ps1': root / 'tools/Restore-MFGBackup.ps1',
@@ -127,11 +130,15 @@ def main():
             'Gameplay activation in each game still requires a fresh scene/log; no new pacing or latency gain is claimed.\n'
             f'Read {report_name}. Rollback addon: {previous} or official DLSS-G 1.4.5 in rollback/.\n'
             'For game runtime rollback, use Restore-MFGBackup.ps1 with the installer backup directory.\n')
+    if handoff:
+        readme += ('R1.9.1: updates the Intel Present ID even when a batch is bypassed; suppresses only NVIDIA-owned Reflex/backbuffer warnings after NVIDIA FG is disabled.\n'
+            'Other status errors and all input validation remain. New bounded diagnostics distinguish depth rejection from game options/state.\n'
+            'Pragmata R1.9 failed to interpolate and the user observed flashing. R1.9.1 is a targeted correction requiring a fresh game test, not a confirmed flicker fix.\n')
     (a.output / 'README.txt').write_text(readme, encoding='utf-8')
     source = {p.relative_to(root).as_posix(): sha(p) for folder in ('src', 'tests', 'tools', 'docs')
               for p in sorted((root / folder).rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
     manifest = dict(identity='Native ReShade XeMFG '+revision, revision=revision, source_commit=git('rev-parse', 'HEAD'),
-        branch=git('branch', '--show-current'), base_commit='8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
+        branch=git('branch', '--show-current'), base_commit='1d007337be46ef0445b51544efa86b27506a3acb' if handoff else '8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
         official_1_4_5_commit='0fe65579d287581107babe267ee3e48c9135bf8a',
         addon_sha256=digest, optiscaler_dependency=False, asi_dependency=False, runtime_dlls_bundled=False,
         gameplay_validated=False, displayed_pacing_gain_measured=False, physical_latency_gain_measured=False,

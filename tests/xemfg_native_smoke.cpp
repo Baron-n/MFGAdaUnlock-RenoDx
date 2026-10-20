@@ -323,6 +323,12 @@ int main(int argc,char** argv) {
     settings.flipMetering=true; Require(configure(&settings,sizeof(settings)),"flip toggle on");
     sl::DLSSGState live; Require(getState(viewport,live,nullptr)==sl::Result::eOk,"GetState bridge");
     Require(live.numFramesActuallyPresented==ms.presented && live.numFramesToGenerateMax==5,"requested and submitted counts confused");
+    auto fixtureState=Import<void(*)(uint32_t)>(fixture,"FixtureFgStatus");
+    fixtureState(2|16);
+    Require(getState(viewport,live,nullptr)==sl::Result::eOk && uint32_t(live.status)==0,"disabled NVIDIA-only status leaked to Intel output");
+    fixtureState(2|16|1|4|8);
+    Require(getState(viewport,live,nullptr)==sl::Result::eOk && uint32_t(live.status)==(1|4|8),"real format/resolution/input errors were masked");
+    fixtureState(0);
     live.structVersion=1; live.numFramesToGenerateMax=0xdeadbeef;
     Require(getState(viewport,live,nullptr)==sl::Result::eOk && live.numFramesToGenerateMax==0xdeadbeef,"V1 state extension overwritten");
     sl::DLSSGOptions off; off.mode=sl::DLSSGMode::eOff; options(viewport,off);
