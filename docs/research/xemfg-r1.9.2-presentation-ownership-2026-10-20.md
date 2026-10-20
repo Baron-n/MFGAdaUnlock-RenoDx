@@ -30,6 +30,8 @@ A fixture também testa desligar/religar a feature, conservar os controles de Re
 
 Uma execução restrita chegou às quatro recriações, mas ficou esperando no encerramento NGX. O dump mostrava a espera dentro da telemetria NVIDIA. Reexecutar com as permissões normais, permitindo cache NGX, completou o encerramento; não foi adicionado um bypass de shutdown para esconder essa limitação do ambiente de teste.
 
+Emissão final: SHA-256 do addon `e7e3a6c437d2dc19a3eabdb1dc03bf298539c2a129275acd3c8ca3b38fdad15c`, versão de arquivo 1.4.5.21. A suíte concluiu **91 testes aprovados e três opcionais ignorados**, sem falhas, em 290,74 s. As quatro combinações de Streamline real completaram inferência, recriação e shutdown. Os opcionais ignorados são `provider_identity`, `engineering_manifest` e `release_1_4_5_manifest`; isso não equivale a validar novamente aqueles artefatos históricos.
+
 **Ainda não validado em gameplay:** boot e interpolação do Pragmata, motivo da recusa de depth na R1.9, piscadas, Control Resonant e demais jogos Capcom. O novo teste remove uma lacuna concreta, mas não fornece pixels, cadência exibida ou latência física desses jogos. A primeira verificação no Pragmata deve confirmar boot estável antes de examinar os inputs da cena. CUDA conserva a cobertura numérica anterior de nove de 17 programas.
 
 Rollback recomendado no Pragmata: fechar o jogo e restaurar o snapshot do instalador, contendo addon oficial 1.4.5 e o par Intel original. A R1.9.1 fica arquivada para proveniência, não como fallback recomendado. Sem nova release automática.

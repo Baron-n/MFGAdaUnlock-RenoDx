@@ -22,9 +22,15 @@ cases=ET.parse(root/f'build/ctest-native-{a.revision.lower()}.xml').getroot().fi
 if len(cases)!=94 or any(c.find('failure') is not None for c in cases):
     raise ValueError('Complete passing CTest report required')
 by_name={c.attrib['name']:c for c in cases}
+last_test=(build/'Testing/Temporary/LastTest.log').read_text(encoding='utf-8')
 def receipt(name):
     text=by_name[name].findtext('system-out','')
     found=re.findall(r'Evidence: ([^\r\n]+)',text)
+    if not found:
+        # CTest truncates successful JUnit stdout at 1024 bytes. Its full
+        # LastTest log remains authoritative and contains the same run header.
+        section=re.search(r'^\d+/\d+ Testing: '+re.escape(name)+r'\r?\n(.*?)(?=^\d+/\d+ Testing: |\Z)',last_test,re.M|re.S)
+        if section: found=re.findall(r'Evidence: ([^\r\n]+)',section[1])
     if len(found)!=1: raise ValueError('Missing unambiguous evidence: '+name)
     directory=Path(found[0].strip())
     result=json.loads((directory/'result.json').read_text())
