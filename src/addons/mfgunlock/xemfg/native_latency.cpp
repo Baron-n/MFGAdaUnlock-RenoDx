@@ -13,6 +13,7 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
   if(reflex && (!nativeSleep || !token)) return sl::Result::eErrorInvalidState;
   {
     std::lock_guard guard(o->io);
+    if(o->retired) return sl::Result::eErrorInvalidState;
     auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
     if(frame->sleeping) return sl::Result::eOk;
     if(o->sleepActive || frame->sleepInFlight) return sl::Result::eErrorInvalidState;
@@ -51,6 +52,7 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
 bool ForwardSourceMarker(const std::shared_ptr<Output>& o,uint32_t id,uint32_t marker) {
   if(marker>6) return false;
   auto& s=State(); std::lock_guard guard(o->io);
+  if(o->retired) return false;
   auto* frame=FindFrame(*o,id); if(!frame) return false;
   // XeLL requires sleep to finish before any marker of the SAME frame.
   // Older frames may still submit their real END timestamp during this sleep.

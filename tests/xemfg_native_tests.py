@@ -18,6 +18,7 @@ ap.add_argument('--runtime-layout',choices=('adjacent','storage-only','preloaded
 ap.add_argument('--overlay-keys',action='store_true')
 ap.add_argument('--overlay-foreground',action='store_true')
 ap.add_argument('--capcom-flags',action='store_true')
+ap.add_argument('--retire-sleep',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -46,11 +47,17 @@ if args.runtime_layout!='adjacent':
 ctypes.windll.kernel32.SetErrorMode(3)
 flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])
 if args.capcom_flags: flags+=['--capcom-flags']
+if args.retire_sleep: flags+=['--retire-sleep']
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.retire_sleep:
+    verified=any(e.get('event')=='native_output_retired' and e.get('sleep_in_flight') and e.get('destroy_result')==0 for e in events)
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,retirement_during_sleep_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified and 'same HWND rebound before sleep returned' in result.stdout else 1)
 if args.runtime_layout in ('mutated-storage','missing'):
     expected='unreviewed_Intel_runtime_pair' if args.runtime_layout=='mutated-storage' else 'missing_Intel_runtime:libxess_fg.dll'
     refused=any(e.get('event')=='startup_rejected' and e.get('reason')==expected for e in events)

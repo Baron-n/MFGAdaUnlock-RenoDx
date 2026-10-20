@@ -17,6 +17,8 @@ p.add_argument('--stock-streamline',action='store_true')
 p.add_argument('--generate',action='store_true')
 p.add_argument('--latency-output',choices=('XeLL','Reflex'),default='XeLL')
 p.add_argument('--early-addon',action='store_true')
+p.add_argument('--companion',type=Path)
+p.add_argument('--force-borderless',action='store_true')
 a=p.parse_args()
 d=a.directory.resolve()/datetime.datetime.now().strftime('real-streamline-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -24,13 +26,16 @@ inputs={a.exe:a.exe.name,a.reshade:'dxgi.dll',
         a.sdk_fg:'libxess_fg.dll',a.sdk_ll:'libxell.dll'}
 if not a.stock_streamline:
     inputs[a.addon]='renodx-mfgunlock-native.addon64'
+if a.companion:
+    if a.companion.suffix.lower()!='.addon64': raise ValueError('Expected a ReShade addon companion')
+    inputs[a.companion]=a.companion.name
 for name in ('sl.interposer.dll','sl.common.dll','sl.reflex.dll','sl.pcl.dll','sl.dlss_g.dll','nvngx_dlssg.dll'):
     inputs[a.streamline/name]=name
 manifest={}
 for source,name in inputs.items():
     shutil.copy2(source,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
-(d/'MFGAdaUnlock.ini').write_text('[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier=4\nForceBorderless=0\n[Latency]\nOutput='+a.latency_output+'\n')
+(d/'MFGAdaUnlock.ini').write_text('[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier=4\nForceBorderless='+('1' if a.force_borderless else '0')+'\n[Latency]\nOutput='+a.latency_output+'\n')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[OVERLAY]\nTutorialProgress=4\n')
 ctypes.windll.kernel32.SetErrorMode(3)
 process=subprocess.Popen([str(d/a.exe.name),'4','--real-streamline',*(['--isolate-nvidia-hooks'] if a.isolate_nvidia_hooks else []),*(['--stock-streamline'] if a.stock_streamline else []),*(['--generate'] if a.generate else []),*(['--early-addon'] if a.early_addon else [])],cwd=d,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,creationflags=0x08000000)

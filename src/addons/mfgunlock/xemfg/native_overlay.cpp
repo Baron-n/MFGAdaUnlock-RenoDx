@@ -57,7 +57,13 @@ public:
   }
   FinalOutput(ComPtr<IDXGISwapChain4> value,ComPtr<ID3D12Device> d,ComPtr<ID3D12CommandQueue> q)
       :chain(std::move(value)),device(std::move(d)),queue(std::move(q)) { Create(); }
-  ~FinalOutput() { Destroy(); }
+  ~FinalOutput() {
+    Destroy();
+    auto* native=chain.Detach();
+    const auto remaining=native?native->Release():0;
+    xess_mod::WriteLog("native_final_output_retired","\"native\":"+std::to_string(uintptr_t(native))
+        +",\"remaining_refs\":"+std::to_string(remaining));
+  }
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
     if(!out) return E_POINTER; *out=nullptr;
     if(id==__uuidof(IUnknown)||id==__uuidof(IDXGIObject)||id==__uuidof(IDXGIDeviceSubObject)

@@ -20,6 +20,7 @@
 #include <vector>
 #include <filesystem>
 #include <dbghelp.h>
+#include <future>
 using Microsoft::WRL::ComPtr;
 static bool keyTest{};
 static bool hotkeyTest{};
@@ -387,6 +388,34 @@ int main(int argc,char** argv) {
     Require(configure(&pending,sizeof(pending)),"save alternate latency output");
     controlStatus(&cs,sizeof(cs)); Require(cs.latencyRestartPending && cs.activeLatencyOutput==settings.output,"UI-thread latency switch applied live");
     Require(configure(&settings,sizeof(settings)),"restore requested route");
+    if(flag("--retire-sleep")) {
+      Require(nativeReflex,"retirement stress requires native Reflex output");
+      auto hold=Import<void(*)(bool)>(fixture,"FixtureHoldSleep");
+      auto entered=Import<bool(*)()>(fixture,"FixtureSleepEntered");
+      hold(true);
+      Token pendingToken; pendingToken.id=400;
+      auto pendingSleep=std::async(std::launch::async,[&] { return sleep(pendingToken); });
+      const auto deadline=GetTickCount64()+3000;
+      while(!entered() && GetTickCount64()<deadline) ::Sleep(1);
+      Require(entered(),"source sleep did not enter the gate");
+      chain.Reset();
+      mfgunlock::xemfg::Status retired; modelStatus(&retired,sizeof(retired));
+      if(retired.contexts) { hold(false); pendingSleep.wait(); throw std::runtime_error("latency lease retained the old FG presentation context"); }
+      // Keep the old source call suspended while a new output binds the HWND.
+      Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"replacement during old source sleep");
+      Check(base.As(&chain),"new output during old source sleep"); base.Reset();
+      hold(false);
+      const auto result=pendingSleep.get();
+      Require(result==sl::Result::eErrorInvalidState,"retired source sleep published a stale frame");
+      sl::DLSSGOptions retiredOff; retiredOff.mode=sl::DLSSGMode::eOff;
+      Require(options(viewport,retiredOff)==sl::Result::eOk,"replacement native FG off");
+      Check(chain->Present(0,0),"new passthrough output"); chain.Reset();
+      modelStatus(&retired,sizeof(retired)); Require(!retired.contexts,"replacement context retained");
+      DestroyWindow(hwnd);
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"retirement evidence flush");
+      std::cout<<"PASS: source sleep lease kept XeLL alive; old FG context retired; same HWND rebound before sleep returned"<<std::endl;
+      return 0;
+    }
     ComPtr<ID3D12Fence> fence; Check(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence)),"fence");
     auto event=CreateEventW(nullptr,FALSE,FALSE,nullptr); uint64_t value=0;
     auto wait=[&] { Check(queue->Signal(fence.Get(),++value),"signal"); if(fence->GetCompletedValue()<value) {Check(fence->SetEventOnCompletion(value,event),"event"); Require(WaitForSingleObject(event,30000)==WAIT_OBJECT_0,"GPU timeout");} };

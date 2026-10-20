@@ -52,22 +52,32 @@ bool Api::Load() {
 #undef F
   return true;
 }
-Output::~Output() {
-  // Only the outer application's COM lifetime owns this object. The SDK joins
-  // its workers before the XeLL context and queue can be destroyed.
+void Output::RetirePresentation() {
+  std::lock_guard presenting(presents);
+  std::lock_guard inputs(io);
+  if(retired) return;
+  retired=true; enabled=false; ++epoch;
   auto& a=State().api;
   if(window) window->Retire();
   if(fg) {
-    a.xefgSwapChainSetEnabled(fg,0);
+    const auto disabled=a.xefgSwapChainSetEnabled(fg,0);
     const auto result=a.xefgSwapChainDestroy(fg);
-    if(result!=0) {
+    xess_mod::WriteLog("native_output_retired","\"output\":"+std::to_string(diagnosticOutput)
+        +",\"disable_result\":"+std::to_string(disabled)+",\"destroy_result\":"+std::to_string(result)
+        +",\"sleep_in_flight\":"+(sleepActive?"true":"false"));
+    if(result==0) fg=nullptr;
+  }
+}
+Output::~Output() {
+  RetirePresentation();
+  auto& a=State().api;
+  if(fg) {
       // Preserve every dependency if the SDK refuses retirement. Destruction
       // must not convert a leaked SDK reference into a freed XeLL/device.
       struct Pending { ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue; xell_context_handle_t ll; };
       new Pending{device,queue,ll};
-      xess_mod::WriteLog("native_retirement_pending","\"result\":"+std::to_string(result));
+      xess_mod::WriteLog("native_retirement_pending","\"context\":"+std::to_string(uintptr_t(fg)));
       return;
-    }
   }
   if(ll) a.xellDestroyContext(ll);
 }

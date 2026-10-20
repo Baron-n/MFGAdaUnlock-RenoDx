@@ -68,7 +68,10 @@ struct Output {
   bool uiCompositionKnown{true}, uiCompositionApplied{}, uiCompositionAvailable{};
   int uiCompositionResult{};
   uint64_t uiCompositionUpdates{};
-  bool invert{}, jitter{}, enabled{}, compatible{true};
+  bool invert{}, jitter{}, enabled{}, compatible{true},retired{};
+  // The application proxy owns presentation. Shared operation leases may keep
+  // XeLL alive after this method has released the window/Intel FG context.
+  void RetirePresentation();
   ~Output();
 };
 struct Bridge {

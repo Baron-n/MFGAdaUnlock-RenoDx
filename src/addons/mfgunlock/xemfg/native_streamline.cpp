@@ -130,6 +130,7 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
   if(!id || !tags || count>64 || !SelectViewport(viewport)) return;
   auto o=Active(); if(!o) return;
   std::lock_guard lock(o->io); auto* frame=FindFrame(*o,id); if(!frame) return;
+  if(o->retired || !o->fg) return;
   frame->viewport=viewport;
   for(uint32_t i=0;i<count;++i) {
     const auto& t=tags[i]; auto type=ResourceType(t.type); if(!type) continue;
@@ -227,6 +228,7 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
   if(SelectViewport(uint32_t(v))) if(auto o=Active()) {
     std::lock_guard lock(o->io);
+    if(o->retired) return r;
     if(auto* frame=FindFrame(*o,id)) { frame->constants=true; frame->valid=Constants(c,*o,*frame); }
   }
   return r;
@@ -394,6 +396,7 @@ void DiscoverStreamline() {
 }
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
+  if(o->retired || !o->fg) return;
   const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
   s.lastHudIssues=frame?frame->hudIssues:0;
   s.lastHudInputs=frame?frame->resources&((1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)|(1u<<XEFG_SWAPCHAIN_RES_UI)):0;
@@ -468,6 +471,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
 }
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
   std::lock_guard lock(o->io); xefg_swapchain_present_status_t status{};
+  if(o->retired || !o->fg) return;
   const auto queryResult=State().api.xefgSwapChainGetLastPresentStatus(o->fg,&status);
   if(queryResult==0) {
     auto& s=State(); std::lock_guard guard(s.lock);

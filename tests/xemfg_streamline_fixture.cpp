@@ -6,7 +6,9 @@
 #include <sl_pcl.h>
 #include <atomic>
 #include <cstring>
+#include <windows.h>
 static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{};
+static std::atomic<bool> holdSleep{},sleepEntered{};
 static std::atomic<uint32_t> fgStatus{};
 static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
 static std::atomic<uint32_t> queriesAfterShutdown{};
@@ -36,7 +38,17 @@ static __declspec(noinline) sl::Result State(const sl::ViewportHandle&,sl::DLSSG
 static __declspec(noinline) sl::Result Reflex(const sl::ReflexOptions& o) {
   ++calls; reflexMode=uint32_t(o.mode); reflexLimit=o.frameLimitUs; return sl::Result::eOk;
 }
-static __declspec(noinline) sl::Result Sleep(const sl::FrameToken& f) { ++reflexSleeps; calls+=uint32_t(f)+1; return sl::Result::eOk; }
+static __declspec(noinline) sl::Result ReflexSleep(const sl::FrameToken& f) {
+  ++reflexSleeps; calls+=uint32_t(f)+1;
+  if(holdSleep) {
+    sleepEntered=true;
+    const auto deadline=GetTickCount64()+10000;
+    while(holdSleep && GetTickCount64()<deadline) ::Sleep(1);
+  }
+  return sl::Result::eOk;
+}
+EXPORT void FixtureHoldSleep(bool hold) { holdSleep=hold; if(hold) sleepEntered=false; }
+EXPORT bool FixtureSleepEntered() { return sleepEntered; }
 static __declspec(noinline) sl::Result Marker(sl::PCLMarker m,const sl::FrameToken& f) {
   calls+=uint32_t(f)+uint32_t(m)+1; return sl::Result::eOk;
 }
@@ -46,7 +58,7 @@ EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
   else if(!strcmp(name,"slReflexSetOptions")) fn=reinterpret_cast<void*>(&Reflex);
-  else if(!strcmp(name,"slReflexSleep")) fn=reinterpret_cast<void*>(&Sleep);
+  else if(!strcmp(name,"slReflexSleep")) fn=reinterpret_cast<void*>(&ReflexSleep);
   else if(!strcmp(name,"slPCLSetMarker")) fn=reinterpret_cast<void*>(&Marker);
   else { fn=nullptr; return sl::Result::eErrorFeatureMissing; }
   return sl::Result::eOk;

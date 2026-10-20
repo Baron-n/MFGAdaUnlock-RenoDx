@@ -9,7 +9,7 @@ import sys
 import xml.etree.ElementTree as ET
 
 p=argparse.ArgumentParser()
-p.add_argument('--revision',required=True,choices=['R1.9.2'])
+p.add_argument('--revision',required=True,choices=['R1.9.2','R1.9.3'])
 p.add_argument('--output',type=Path,required=True)
 p.add_argument('--alternate-ll',type=Path,required=True)
 a=p.parse_args()
@@ -19,7 +19,7 @@ addon=build/'xemfg/Release/renodx-mfgunlock-native.addon64'
 sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
 digest=sha(addon)
 cases=ET.parse(root/f'build/ctest-native-{a.revision.lower()}.xml').getroot().findall('.//testcase')
-if len(cases)!=94 or any(c.find('failure') is not None for c in cases):
+if len(cases)!=(95 if a.revision=='R1.9.3' else 94) or any(c.find('failure') is not None for c in cases):
     raise ValueError('Complete passing CTest report required')
 by_name={c.attrib['name']:c for c in cases}
 last_test=(build/'Testing/Temporary/LastTest.log').read_text(encoding='utf-8')
@@ -62,6 +62,7 @@ summary=dict(addon_sha256=digest,ctest=dict(total=len(cases),failed=0,
     sdk_cases=sdk,compat_cases=compat,streamline_cases=streamline,
     capcom_flags=receipt('xemfg_native_capcom_flags'),
     gameplay_validated=False,displayed_pacing_measured=False,physical_latency_measured=False)
+if a.revision=='R1.9.3': summary['retirement_case']=receipt('xemfg_native_retire_source_sleep')
 a.output.mkdir(parents=True,exist_ok=True)
 (a.output/'validation-summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
 print('Validation:',a.output/'validation-summary.json')

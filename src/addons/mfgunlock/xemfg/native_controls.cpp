@@ -91,9 +91,11 @@ ControlStatus ControlsSnapshot() {
   result.cudaLaunches=cuda.launches; result.cudaFallbacks=cuda.fallbacks;
   strncpy_s(result.cudaReason,cuda.reason.c_str(),_TRUNCATE);
   auto output=Active();
+  void* pacingHandle{};
   if(output) {
     std::unique_lock guard(output->io,std::try_to_lock);
     if(guard.owns_lock()) {
+      pacingHandle=output->fg;
       result.uiCompositionAvailable=output->uiCompositionAvailable;
       result.uiCompositionApplied=output->uiCompositionApplied;
       result.uiCompositionKnown=output->uiCompositionKnown;
@@ -103,7 +105,7 @@ ControlStatus ControlsSnapshot() {
   }
   if(output && output->window) result.window=output->window->Snapshot();
   else if(output) result.window.error=output->windowBindError;
-  const auto flip=sdk_pacing::Snapshot(output?output->fg:nullptr);
+  const auto flip=sdk_pacing::Snapshot(pacingHandle);
   result.flipAvailable=flip.available; result.flipInstalled=flip.installed;
   result.flipRegistered=flip.registered; result.flipQueue=flip.queue; result.flipBusy=flip.busy;
   result.flipRequested=flip.requested; result.flipEnabled=flip.enabled;
@@ -226,7 +228,7 @@ void DrawControls(PanelPage page) {
     if(ImGui::Button("Copy diagnostic report")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9.2\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9.3\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
