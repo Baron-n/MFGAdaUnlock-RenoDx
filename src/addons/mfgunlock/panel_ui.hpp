@@ -57,14 +57,14 @@ inline void Section(const char* title,const char* description=nullptr) {
   ImGui::Spacing(); ImGui::TextUnformatted(title);
   if(description) Description(description);
 }
-// Keep all settings in the host ReShade window. Presentation groups do not
-// create child windows, accept navigation or acquire an independent focus.
+// ReShade ImGui cards. Read-only overview cards explicitly reject input/focus.
 struct Card {
-  bool visible=true;
-  Card(const char* id,ImGuiWindowFlags=0) {
-    ImGui::PushID(id); ImGui::BeginGroup();
+  bool visible;
+  Card(const char* id,ImGuiWindowFlags flags=0) {
+    visible=ImGui::BeginChild(id,ImVec2(0,0),ImGuiChildFlags_AutoResizeY|ImGuiChildFlags_AlwaysUseWindowPadding,
+        ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|flags);
   }
-  ~Card() { ImGui::EndGroup(); ImGui::PopID(); ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); }
+  ~Card() { ImGui::EndChild(); ImGui::Spacing(); }
   explicit operator bool() const { return visible; }
 };
 struct NoNavigation {
@@ -107,7 +107,8 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
   ImGui::PushTextWrapPos(); ImGui::TextColored(active?Accent:Warning,"%s",state); ImGui::PopTextWrapPos();
   const char* values[]={multiplier,backend,renderer};
   const char* labels[]={"Multiplier","Backend","Renderer"};
-  // Readouts stay outside keyboard navigation; actual settings remain navigable.
+  // These are readouts, including the child-container item added by EndChild.
+  // Keep real settings outside this scope so keyboard navigation still works.
   NoNavigation summaries;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
     Card card("##compact_overview",ImGuiWindowFlags_NoInputs);
@@ -123,8 +124,10 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
   if(ImGui::BeginTable("##mfg_summary_cards",3,ImGuiTableFlags_SizingStretchSame|ImGuiTableFlags_NoPadOuterX)) {
     for(int i=0;i<3;++i) {
       ImGui::TableNextColumn(); ImGui::PushID(i);
+      ImGui::BeginChild("summary",ImVec2(0,ImGui::GetTextLineHeight()*2.f+ImGui::GetStyle().ItemSpacing.y+ImGui::GetStyle().WindowPadding.y*2),ImGuiChildFlags_AlwaysUseWindowPadding,
+          ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse|ImGuiWindowFlags_NoInputs);
       ImGui::TextColored(i==0?Accent:ImVec4(.93f,.95f,.98f,1),"%s",values[i]);
-      Description(labels[i]); ImGui::PopID();
+      Description(labels[i]); ImGui::EndChild(); ImGui::PopID();
     }
     ImGui::EndTable();
   }

@@ -1,4 +1,4 @@
-"""Seal the R1.8 candidate and exact local validation; bundle no runtime DLLs."""
+"""Seal a native candidate and exact local validation; bundle no runtime DLLs."""
 import argparse
 import hashlib
 import json
@@ -16,9 +16,15 @@ def sha(path):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument('--revision', choices=('R1.8', 'R1.9'), default='R1.8')
     for name in ('output', 'evidence', 'previous-addon', 'official-addon', 'intel-sdk'):
         ap.add_argument('--' + name, type=Path, required=True)
     a = ap.parse_args()
+    compat = a.revision == 'R1.9'
+    revision = a.revision
+    previous = 'R1.8' if compat else 'R1.7.5'
+    total = 89 if compat else 80
+    report_name = 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
     root = Path(__file__).resolve().parent.parent
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
@@ -27,11 +33,11 @@ def main():
     addon = root / 'build/tests/xemfg/Release/renodx-mfgunlock-native.addon64'
     digest = sha(addon)
     validation = json.loads((a.evidence / 'validation-summary.json').read_text(encoding='utf-8'))
-    if validation['addon_sha256'] != digest or validation['ctest'] != dict(total=80, passed=77, skipped=3, failed=0):
+    if validation['addon_sha256'] != digest or validation['ctest'] != dict(total=total, passed=total-3, skipped=3, failed=0):
         raise ValueError('Missing matching complete suite')
-    xml = ET.parse(root / 'build/ctest-native-r1.8.xml').getroot()
+    xml = ET.parse(root / f'build/ctest-native-{revision.lower()}.xml').getroot()
     cases = xml.findall('.//testcase')
-    if len(cases) != 80 or any(c.find('failure') is not None for c in cases):
+    if len(cases) != total or any(c.find('failure') is not None for c in cases):
         raise ValueError('CTest XML differs from validation')
     expected = {f'{route}-{m}x-61aeeab7' for route in ('XeLL', 'Reflex') for m in (2, 3, 4, 6)}
     expected |= {'XeLL-4x-d2030dcd', 'Reflex-4x-d2030dcd'}
@@ -46,16 +52,28 @@ def main():
         route = key.split('-')[0]
         if result['latency_output'] != route or f'Latency route: Reflex -> {route};' not in result['stdout']:
             raise ValueError('Latency route not witnessed: ' + key)
-    if sha(a.previous_addon) != 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080':
-        raise ValueError('R1.7.5 rollback differs')
+    if compat:
+        expected_layouts = {'storage-only', 'preloaded-storage', 'mutated-storage', 'missing', 'preloaded-storage-Reflex'}
+        if set(validation['compat_cases']) != expected_layouts:
+            raise ValueError('Incomplete runtime layout coverage')
+        for layout, receipt in validation['compat_cases'].items():
+            result = json.loads((Path(receipt['directory']) / 'result.json').read_text())
+            if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64'] != digest:
+                raise ValueError('Stale compatibility evidence: ' + layout)
+            fields = ('startup_rejection_verified', 'model_unpublished') if layout in ('mutated-storage', 'missing') else ('runtime_selection_verified', 'control_preferences_persisted', 'hud_filter_verified')
+            if not all(result.get(k) for k in fields):
+                raise ValueError('Compatibility contract failed: ' + layout)
+    previous_hash = '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
+    if sha(a.previous_addon) != previous_hash:
+        raise ValueError(previous + ' rollback differs')
     if sha(a.official_addon) != '9715987f6323a2699dd5b7636412258a6b97a180a4d70c0f79d286714e2972e2':
         raise ValueError('Official rollback differs')
     if a.output.exists() or Path(str(a.output) + '.zip').exists():
         raise ValueError('Refuse to overwrite a sealed package')
     assets = {
         'renodx-mfgunlock.addon64': addon,
-        'pacing-reflex-report.md': root / 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md',
-        'rollback/renodx-mfgunlock-r1.7.5.addon64': a.previous_addon,
+        report_name: root / ('docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
+        f'rollback/renodx-mfgunlock-{previous.lower()}.addon64': a.previous_addon,
         'rollback/renodx-mfgunlock-1.4.5.addon64': a.official_addon,
         'Restore-MFGBackup.ps1': root / 'tools/Restore-MFGBackup.ps1',
         'notices/MFGAdaUnlock-MIT.txt': root / 'LICENSE',
@@ -66,11 +84,13 @@ def main():
         'notices/Intel-headers-MIT.txt': a.intel_sdk / 'inc/MIT.txt',
         'notices/Intel-SDK-LICENSE.txt': a.intel_sdk / 'LICENSE.txt',
         'evidence/validation-summary.json': a.evidence / 'validation-summary.json',
-        'evidence/ctest.log': root / 'build/ctest-native-r1.8.log',
-        'evidence/ctest.xml': root / 'build/ctest-native-r1.8.xml',
+        'evidence/ctest.log': root / f'build/ctest-native-{revision.lower()}.log',
+        'evidence/ctest.xml': root / f'build/ctest-native-{revision.lower()}.xml',
         'evidence/last-test.log': root / 'build/tests/Testing/Temporary/LastTest.log',
     }
-    for label, receipt in validation['sdk_cases'].items():
+    if compat:
+        assets['Install-NativeXeMfgLocal.ps1'] = root / 'tools/Install-NativeXeMfgLocal.ps1'
+    for label, receipt in (validation['sdk_cases'] | validation.get('compat_cases', {})).items():
         directory = Path(receipt['directory'])
         for name in ('result.json', 'MFGAdaUnlock-XeMFG.log', 'ReShade.log'):
             assets[f'evidence/{label}/{name}'] = directory / name
@@ -81,7 +101,7 @@ def main():
         dest = a.output / name
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, dest)
-    (a.output / 'README.txt').write_text(
+    readme = (
         'MFG Unlock 1.4.5 + XeMFG R1.8 - local candidate\n\n'
         'New: XeMFG with Reflex -> Reflex or Reflex -> XeLL; driver-metered queue-ahead; CUDA PSO recorder recognition.\n'
         'Reflex output: enable Reflex in game; Latency > Advanced latency routing > Latency output > Reflex; restart.\n'
@@ -94,12 +114,24 @@ def main():
         'Real SDK tests prove dispatch and ABI routing; no gameplay FPS, displayed pacing or physical latency gain is claimed.\n'
         'The 1.6.2 beta was inspected statically; this is not a complete port of its unpublished changes.\n'
         'Read pacing-reflex-report.md for profile limitations and evidence.\n'
-        'Rollback: close the game and restore R1.7.5 or official 1.4.5 from rollback; install only one MFG addon.\n',
-        encoding='utf-8')
+        'Rollback: close the game and restore R1.7.5 or official 1.4.5 from rollback; install only one MFG addon.\n')
+    if compat:
+        readme = (f'MFG Unlock 1.4.5 + XeMFG {revision} - local candidate\n\n'
+            'Compact cards restored. Runtime selection follows the exact admitted loaded pair, including _storage_.\n'
+            'Unknown or missing Intel pairs remain refused; the panel now explains startup failures.\n'
+            'Reflex -> Reflex and Reflex -> XeLL from R1.8 remain available. Restart after selecting the output.\n'
+            'UI Composition remains optional and off by default. No OptiScaler or ASI dependency.\n'
+            'Supported XeFG: 1.3.1.78; XeLL: 1.3.0.5 or 1.3.2.10, admitted by exact hashes.\n'
+            'No runtime DLLs included. The local installer can refresh the root and existing _storage_ copies with backup.\n'
+            '86 tests passed; 3 optional historical checks skipped. Real SDK layout tests include mutated/missing runtime rejection.\n'
+            'Gameplay activation in each game still requires a fresh scene/log; no new pacing or latency gain is claimed.\n'
+            f'Read {report_name}. Rollback addon: {previous} or official DLSS-G 1.4.5 in rollback/.\n'
+            'For game runtime rollback, use Restore-MFGBackup.ps1 with the installer backup directory.\n')
+    (a.output / 'README.txt').write_text(readme, encoding='utf-8')
     source = {p.relative_to(root).as_posix(): sha(p) for folder in ('src', 'tests', 'tools', 'docs')
               for p in sorted((root / folder).rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
-    manifest = dict(identity='Native ReShade XeMFG R1.8', revision='R1.8', source_commit=git('rev-parse', 'HEAD'),
-        branch=git('branch', '--show-current'), base_commit='d3588a20bc950c0f13fcba627fd4d2c6d40c8088',
+    manifest = dict(identity='Native ReShade XeMFG '+revision, revision=revision, source_commit=git('rev-parse', 'HEAD'),
+        branch=git('branch', '--show-current'), base_commit='8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
         official_1_4_5_commit='0fe65579d287581107babe267ee3e48c9135bf8a',
         addon_sha256=digest, optiscaler_dependency=False, asi_dependency=False, runtime_dlls_bundled=False,
         gameplay_validated=False, displayed_pacing_gain_measured=False, physical_latency_gain_measured=False,

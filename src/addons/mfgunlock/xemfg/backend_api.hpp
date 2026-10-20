@@ -15,5 +15,8 @@ LogStatus LogSnapshot() noexcept;
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 // Overlay readers must not wait behind an SDK call that may join/present.
 bool TryModelStatus(Status& out);
+struct NativeRuntimePair { void* frameGeneration{}; void* latency{}; };
+bool NativeRuntimeModules(NativeRuntimePair& out);
+bool ModelStartupFailed() noexcept;
 #endif
 }

@@ -3,6 +3,7 @@
 #include "native_internal.hpp"
 #include "native_overlay.hpp"
 #include "native_reflex_profile.hpp"
+#include "backend_api.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
@@ -34,7 +35,10 @@ bool Hook(void* entry,void* replacement,void** original) {
 }
 bool Api::Load() {
   if(!EnsureModel()) return false;
-  auto fg=GetModuleHandleW(L"libxess_fg.dll"), ll=GetModuleHandleW(L"libxell.dll");
+  NativeRuntimePair selected;
+  if(!NativeRuntimeModules(selected)) return false;
+  auto fg=static_cast<HMODULE>(selected.frameGeneration),ll=static_cast<HMODULE>(selected.latency);
+  fgModule=fg; llModule=ll;
 #define F(n,m) n=reinterpret_cast<decltype(n)>(GetProcAddress(m,#n)); if(!n) return false;
   F(xefgSwapChainD3D12CreateContext,fg) F(xefgSwapChainD3D12InitFromSwapChainDesc,fg)
   F(xefgSwapChainD3D12GetSwapChainPtr,fg) F(xefgSwapChainD3D12TagFrameResource,fg)
@@ -109,7 +113,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
         if(messages.fetch_add(1)<100) xess_mod::WriteLog("native_sdk_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(message?message:"")+"\"");
       },nullptr);
   const bool nativeReflex=s.latencyOutput==LatencyOutput::Reflex;
-  if(nativeReflex && !reflex_profile::Available(GetModuleHandleW(L"libxess_fg.dll"))) {
+  if(nativeReflex && !reflex_profile::Available(a.fgModule)) {
     Report("Native Reflex output unavailable for this XeFG profile; select XeLL and restart");
     return E_NOINTERFACE;
   }
@@ -133,7 +137,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   DXGI_SWAP_CHAIN_DESC1 actual{};
   if(SUCCEEDED(chain->GetDesc1(&actual))) { o->width=actual.Width; o->height=actual.Height; o->format=actual.Format; }
   using Debug=xefg_swapchain_result_t(*)(xefg_swapchain_handle_t,uint32_t,uint32_t,void*);
-  if(auto debug=reinterpret_cast<Debug>(GetProcAddress(GetModuleHandleW(L"libxess_fg.dll"),"xefgSwapChainEnableDebugFeature")))
+  if(auto debug=reinterpret_cast<Debug>(GetProcAddress(a.fgModule,"xefgSwapChainEnableDebugFeature")))
     debug(o->fg,0,0,nullptr);
   // Keep Intel's default (composition disabled). The user's opt-in preference
   // is consumed at Present, after the matching frame's inputs are known.
@@ -192,7 +196,7 @@ static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,
   if(Active()) ++State().outputPresents;
 }
 static DWORD WINAPI DiscoverWorker(void*) {
-  for(unsigned i=0;i<80;++i) { DiscoverStreamline(); Sleep(250); }
+  for(unsigned i=0;i<80;++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;
 }
 void Attach(HMODULE module) {

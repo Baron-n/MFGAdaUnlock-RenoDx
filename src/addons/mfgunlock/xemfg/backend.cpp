@@ -35,6 +35,7 @@ std::once_flag initializeOnce;
 std::once_flag startupOnce;
 HMODULE bootstrapFg{};
 bool bootstrapCreate{};
+std::atomic<bool> startupFailed{};
 bool InsideLoader() noexcept {
   using Query = BOOLEAN (NTAPI*)();
   const auto query = reinterpret_cast<Query>(GetProcAddress(
@@ -411,7 +412,19 @@ void Start() {
 #endif
 #ifdef MFGUNLOCK_NATIVE_XEMFG
   const auto dir=mfgunlock::backend::Directory();
-  const auto fgPath=dir/L"libxess_fg.dll", llPath=dir/L"libxell.dll";
+  // Some mod loaders map the game's exact DLLs from _storage_. Prefer the
+  // already mapped instance; the native API must use this same validated pair.
+  const auto runtimePath=[&](const wchar_t* name,HMODULE mapped) {
+    if(mapped) return ModulePath(mapped);
+    for(const auto& parent : {dir,dir/L"_storage_"}) {
+      const auto candidate=parent/name;
+      if(std::filesystem::is_regular_file(candidate)) return candidate;
+    }
+    throw std::runtime_error(std::string("missing_Intel_runtime:")+std::filesystem::path(name).string());
+  };
+  const auto mappedFg=bootstrapCreate?bootstrapFg:GetModuleHandleW(L"libxess_fg.dll");
+  const auto mappedLl=GetModuleHandleW(L"libxell.dll");
+  const auto fgPath=runtimePath(L"libxess_fg.dll",mappedFg), llPath=runtimePath(L"libxell.dll",mappedLl);
 #else
   const auto dir=ModulePath(host).parent_path();
   const auto fgPath=std::filesystem::exists(dir/L"OptiScaler/libxess_fg.dll")?dir/L"OptiScaler/libxess_fg.dll":dir/L"libxess_fg.dll";
@@ -421,12 +434,26 @@ void Start() {
   if (fh!="ec5e0c65e075570c6ede72618bb666d0be0c2e10b2ea9762c0fe8cb8e375ab27"
       || (lh!="61aeeab7fdcfb6d1742f86c14c68c663d759607d01a6132645c857291eaebb86"
           && lh!="d2030dcd694fda8f2ec7e044b13e6db8f0b56d4ba9113a5efad334e3f3ded8c7")) throw std::runtime_error("unreviewed_Intel_runtime_pair");
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+  fg=mappedFg?mappedFg:LoadLibraryExW(fgPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+  ll=mappedLl?mappedLl:LoadLibraryExW(llPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+#else
   fg=LoadLibraryExW(fgPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
   ll=LoadLibraryExW(llPath.c_str(),nullptr,LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR|LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+#endif
   if (!fg || !ll) throw std::runtime_error("Intel_runtime_load");
   if (bootstrapCreate && bootstrapFg!=fg) throw std::runtime_error("bootstrap_provider_differs");
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+  // LoadLibrary hooks may return a byte-identical mapped copy with another path.
+  // Revalidate its own file and then the loaded instruction profiles below.
+  if(HashFile(ModulePath(fg))!=fh || HashFile(ModulePath(ll))!=lh)
+    throw std::runtime_error("loaded_runtime_identity_differs");
+  xess_mod::WriteLog("runtime_selection","\"provider_path\":\""+escape(ModulePath(fg).string())+
+      "\",\"xell_path\":\""+escape(ModulePath(ll).string())+"\",\"provider_sha256\":\""+fh+"\",\"xell_sha256\":\""+lh+"\"");
+#else
   if (!std::filesystem::equivalent(ModulePath(fg),fgPath)
       || !std::filesystem::equivalent(ModulePath(ll),llPath)) throw std::runtime_error("loaded_runtime_path_differs");
+#endif
   Pin(self); Pin(host); Pin(fg); Pin(ll);
   xess_layout::entryRedirectFilter.store(&HostRedirect);
   if (!xess_layout::Pair(fg,ll)) throw std::runtime_error("Intel_instruction_profile_rejected");
@@ -470,8 +497,8 @@ void CompleteStartup() noexcept {
   if (InsideLoader()) return;
   std::call_once(startupOnce,[] {
     try { Start(); }
-    catch (const std::exception& e) { std::lock_guard lock(mutex); Detail(e.what()); xess_mod::WriteLog("startup_rejected","\"reason\":\""+escape(e.what())+"\""); }
-    catch (...) { std::lock_guard lock(mutex); Detail("unexpected_startup_failure"); }
+    catch (const std::exception& e) { std::lock_guard lock(mutex); Detail(e.what()); startupFailed=true; xess_mod::WriteLog("startup_rejected","\"reason\":\""+escape(e.what())+"\""); }
+    catch (...) { std::lock_guard lock(mutex); Detail("unexpected_startup_failure"); startupFailed=true; }
     // Start discovery/publication before creating an additional thread. Startup
     // records already fit in the bounded queue; also drain a rejected startup.
     try { StartLog(); } catch(...) {}
@@ -556,6 +583,12 @@ bool TryModelStatus(Status& out) {
   if(!guard.owns_lock()) return false;
   out=Get().status; return true;
 }
+bool NativeRuntimeModules(NativeRuntimePair& out) {
+  std::lock_guard guard(mutex);
+  if(!Get().status.hooks) return false;
+  out={fg,ll}; return fg && ll;
+}
+bool ModelStartupFailed() noexcept { return startupFailed.load(); }
 void AttachModel(HMODULE module) {
   self=module;
   InitializeASI();

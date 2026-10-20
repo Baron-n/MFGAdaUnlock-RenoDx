@@ -123,9 +123,27 @@ set_tests_properties(xemfg_panel_large_font PROPERTIES RUN_SERIAL TRUE)
 add_test(NAME xemfg_panel_keyboard_navigation COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/navigation.png" 0 930 20 navigation)
 add_test(NAME xemfg_panel_keyboard_navigation_compact COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/navigation-compact.png" 0 460 22 navigation)
 set_tests_properties(xemfg_panel_keyboard_navigation xemfg_panel_keyboard_navigation_compact PROPERTIES RUN_SERIAL TRUE)
+foreach(scenario IN ITEMS expanded performance pacing tooltip multiplier)
+  set(page 0)
+  if(scenario STREQUAL "expanded")
+    set(page 2)
+  elseif(scenario STREQUAL "performance")
+    set(page 3)
+  endif()
+  add_test(NAME xemfg_panel_${scenario} COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/${scenario}.png" ${page} 800 16 ${scenario})
+  set_tests_properties(xemfg_panel_${scenario} PROPERTIES RUN_SERIAL TRUE)
+endforeach()
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  foreach(layout IN ITEMS storage-only preloaded-storage mutated-storage missing)
+    add_test(NAME xemfg_native_runtime_${layout} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --runtime-layout ${layout})
+    set_tests_properties(xemfg_native_runtime_${layout} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
   foreach(multiplier IN ITEMS 2 3 4 6)
   add_test(NAME xemfg_native_reshade_${multiplier}x COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
+#include "backend_api.hpp"
 #include "../panel_ui.hpp"
 #include <sstream>
 namespace mfgunlock::xemfg::native {
@@ -7,13 +8,23 @@ static std::atomic<uint64_t> panelDraws{};
 void Draw() {
   ++panelDraws;
   auto& s=State(); const auto status=Snapshot();
+  const bool unavailable=ModelStartupFailed();
   const bool generating=status.enabled && status.sdkResult>=0 && status.submitted>1;
   const auto multiplier=std::to_string(s.multiplier.load())+"x";
   ui::Hero(multiplier.c_str(),"XeMFG","DX12",generating?"Generating frames":
-      status.output?"Ready - waiting for frame generation":"Waiting for the game",generating);
-  if(!status.output && strstr(status.detail,"provider pair"))
-    ui::Notice("XeMFG could not start with this game's Intel runtimes. Switch to DLSS-G and restart, or use a supported XeFG / XeLL runtime pair.");
-  else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG is currently supported through Streamline in DirectX 12.");
+      unavailable?"XeMFG unavailable":status.output?"Ready - waiting for frame generation":"Waiting for the game",generating);
+  if(unavailable) {
+    mfgunlock::xemfg::Status model;
+    TryModelStatus(model);
+    if(strstr(model.detail,"missing_Intel_runtime") || strstr(model.detail,"hash_file_open"))
+      ui::Notice("Intel frame generation files are missing. Install the supported XeFG and XeLL runtime pair beside the game executable, then restart.");
+    else if(strstr(model.detail,"unreviewed_Intel_runtime_pair"))
+      ui::Notice("This game's Intel runtime pair is unsupported. Update XeFG and XeLL together, including the mod loader's active copies, then restart.");
+    else if(strstr(model.detail,"remove_OptiScaler") || strstr(model.detail,"other_mfg_plugin") || strstr(model.detail,"remove_companion"))
+      ui::Notice("Another frame-generation loader is active. Use this addon with ReShade directly, then restart the game.");
+    else ui::Notice("XeMFG could not initialize. Open Diagnostics and copy the report to see the reason.");
+  }
+  else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG currently uses Streamline inputs in DirectX 12.");
   else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
   static PanelPage page=PanelPage::General;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
@@ -40,7 +51,7 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.8");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.9");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

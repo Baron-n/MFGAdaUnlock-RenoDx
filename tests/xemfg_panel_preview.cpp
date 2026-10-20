@@ -14,6 +14,7 @@
 
 namespace xess_mod { void WriteLog(const char*,const std::string&) noexcept {} }
 namespace mfgunlock::xemfg {
+bool ModelStartupFailed() noexcept { return false; }
 LogStatus LogSnapshot() noexcept { return {}; }
 bool TryModelStatus(Status& out) { out.model=out.initialized=out.enabled=1; return true; }
 namespace native {
@@ -139,8 +140,10 @@ int wmain(int argc,wchar_t** argv) {
         if(GImGui->NavId) ++controlFrames;
       }
       for(auto* window:GImGui->Windows)
-        if(window->Active && (window->Flags&ImGuiWindowFlags_ChildWindow))
-          throw std::runtime_error("panel created a child window");
+        if(window->Active && (window->Flags&ImGuiWindowFlags_ChildWindow)
+            && (strstr(window->Name,"/summary_") || strstr(window->Name,"##compact_overview"))
+            && (window->Flags&ImGuiWindowFlags_NoInputs)!=ImGuiWindowFlags_NoInputs)
+          throw std::runtime_error("read-only card accepts input");
       if(scenario==L"navigation" && frame<2) {
         if(auto* table=GImGui->Tables.GetByKey(ImGui::GetID("##mfg_summary_cards"))) click=table->OuterRect.GetCenter();
         else { ImGui::PushID("##compact_overview");
@@ -150,25 +153,29 @@ int wmain(int argc,wchar_t** argv) {
       auto* bar=GImGui->TabBars.GetByKey(ImGui::GetID("##xemfg_pages"));
       if(bar && bar->Tabs.Size==4) click=ImVec2(bar->BarRect.Min.x+bar->Tabs[page].Offset+bar->Tabs[page].Width*.5f,bar->BarRect.GetCenter().y);
       if(frame==9 && bar && bar->SelectedTabId!=bar->Tabs[page].ID) throw std::runtime_error("requested preview tab was not selected");
-      auto groupId=[&](const char* group,const char* name) {
-        ImGui::PushID(group); auto id=ImGui::GetID(name); ImGui::PopID(); return id;
+      auto groupWindow=[&](const char* group) -> ImGuiWindow* {
+        for(auto* window:GImGui->Windows)
+          if((window->Flags&ImGuiWindowFlags_ChildWindow) && strstr(window->Name,group)) return window;
+        return nullptr;
       };
-      const auto expandedId=groupId("##xe_latency","Advanced latency routing");
-      const auto performanceId=groupId("##xe_model_details","Performance capture (advanced)");
-      const auto pacingId=groupId("##xe_presentation","Advanced pacing comparison");
-      auto& storage=ImGui::GetCurrentWindow()->StateStorage;
       if(frame>=8) {
-        if(scenario==L"expanded") storage.SetInt(expandedId,1);
-        if(scenario==L"performance") storage.SetInt(performanceId,1);
-        if(scenario==L"pacing") storage.SetInt(pacingId,1);
+        const char* group=scenario==L"expanded"?"##xe_latency":scenario==L"performance"?"##xe_model_details":"##xe_presentation";
+        const char* heading=scenario==L"expanded"?"Advanced latency routing":scenario==L"performance"?"Performance capture (advanced)":"Advanced pacing comparison";
+        if(scenario==L"expanded" || scenario==L"performance" || scenario==L"pacing")
+          if(auto* window=groupWindow(group)) window->StateStorage.SetInt(window->GetID(heading),1);
         if(scenario==L"tooltip" || scenario==L"multiplier") {
-          auto* table=GImGui->Tables.GetByKey(groupId("##xemfg_generation",scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection"));
+          auto* window=groupWindow("##xemfg_generation");
+          auto* table=window?GImGui->Tables.GetByKey(window->GetID(scenario==L"multiplier"?"##xe_multiplier_row":"##backend_selection")):nullptr;
           if(table && table->ColumnsCount==2)
             io.AddMousePosEvent((table->Columns[1].MinX+table->Columns[1].MaxX)*.5f,table->OuterRect.GetCenter().y);
         }
       }
-      if(frame==47 && scenario==L"expanded" && !storage.GetInt(expandedId)) throw std::runtime_error("advanced routing was not expanded");
-      if(frame==47 && scenario==L"performance" && !storage.GetInt(performanceId)) throw std::runtime_error("performance capture was not expanded");
+      if(frame==47 && (scenario==L"expanded" || scenario==L"performance" || scenario==L"pacing")) {
+        const char* group=scenario==L"expanded"?"##xe_latency":scenario==L"performance"?"##xe_model_details":"##xe_presentation";
+        const char* heading=scenario==L"expanded"?"Advanced latency routing":scenario==L"performance"?"Performance capture (advanced)":"Advanced pacing comparison";
+        auto* window=groupWindow(group);
+        if(!window || !window->StateStorage.GetInt(window->GetID(heading))) throw std::runtime_error("advanced group was not expanded");
+      }
       if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
       if(frame==47 && scenario==L"tooltip") {
         bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;

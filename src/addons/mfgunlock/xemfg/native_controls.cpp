@@ -224,7 +224,11 @@ void DrawControls(PanelPage page) {
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.7.5\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
+      mfgunlock::xemfg::Status model;
+      const bool modelAvailable=TryModelStatus(model);
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9\nstartup_failed="<<ModelStartupFailed()
+          <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
+          <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
           <<" launches="<<status.cudaLaunches<<" fallbacks="<<status.cudaFallbacks<<" detail="<<status.cudaReason
           <<"\nqueue_ahead="<<status.queueAheadActive<<" deadlines="<<status.queueAheadDeadlines

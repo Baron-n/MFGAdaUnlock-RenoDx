@@ -19,6 +19,7 @@
 
 namespace mfgunlock::xemfg::native {
 struct Api {
+  HMODULE fgModule{},llModule{};
 #define F(n) decltype(&n) n{};
   F(xefgSwapChainD3D12CreateContext) F(xefgSwapChainD3D12InitFromSwapChainDesc)
   F(xefgSwapChainD3D12GetSwapChainPtr) F(xefgSwapChainD3D12TagFrameResource)

@@ -47,10 +47,15 @@ int main(int argc,char** argv) {
   try {
     const unsigned multiplier=argc>1?unsigned(std::stoul(argv[1])):4;
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
+    const auto flag=[&](const char* name) { for(int i=2;i<argc;++i) if(std::string(argv[i])==name) return true; return false; };
+    if(flag("--preload-runtimes")) {
+      Require(LoadLibraryW(L".\\_storage_\\libxess_fg.dll")!=nullptr,"preload stored XeFG");
+      Require(LoadLibraryW(L".\\_storage_\\libxell.dll")!=nullptr,"preload stored XeLL");
+    }
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
-    hotkeyTest=argc>2 && std::string(argv[2])=="--overlay-foreground";
-    keyTest=argc>2 && (std::string(argv[2])=="--overlay-keys" || hotkeyTest);
+    hotkeyTest=flag("--overlay-foreground");
+    keyTest=flag("--overlay-keys") || hotkeyTest;
     if(keyTest) {
       Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
       reshade::register_event<reshade::addon_event::reshade_open_overlay>(&OverlayChange);
@@ -70,6 +75,20 @@ int main(int argc,char** argv) {
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addon,"ReShade did not load the addon");
     auto panelDraws=Import<uint64_t(*)()>(addon,"MFGAXePanelDraws");
     auto modelStatus=Import<mfgunlock::xemfg::GetStatus>(addon,"MFGAXeGetStatus");
+    if(flag("--expect-startup-rejection")) {
+      mfgunlock::xemfg::Status status;
+      const auto deadline=GetTickCount64()+10000;
+      do {
+        modelStatus(&status,sizeof(status));
+        if(strstr(status.detail,"unreviewed_Intel_runtime_pair") || strstr(status.detail,"missing_Intel_runtime:")) break;
+        Sleep(20);
+      } while(GetTickCount64()<deadline);
+      Require(!status.hooks && !status.model && !status.initialized,"rejected runtime published model hooks");
+      Require(strstr(status.detail,"unreviewed_Intel_runtime_pair") || strstr(status.detail,"missing_Intel_runtime:"),"expected startup refusal missing");
+      Sleep(250); // Allow the bounded asynchronous log writer to flush evidence.
+      std::cout<<"PASS: runtime rejected safely: "<<status.detail<<std::endl;
+      return 0;
+    }
     using BridgeStatus=bool(*)(mfgunlock::xemfg::native::Status*,uint32_t);
     auto bridgeStatus=Import<BridgeStatus>(addon,"MFGAXeNativeStatus");
     using ControlsStatus=bool(*)(mfgunlock::xemfg::native::ControlStatus*,uint32_t);
