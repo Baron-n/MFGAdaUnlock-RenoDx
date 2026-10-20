@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
+#include "native_constants.hpp"
 #include <cmath>
 #include <algorithm>
 #include <psapi.h>
@@ -17,6 +18,11 @@ PFun_slDLSSGGetState* getState{};
 PFun_slReflexSetOptions* reflexOptions{};
 PFun_slReflexSleep* reflexSleep{};
 PFun_slPCLSetMarker* pclMarker{};
+// Public pre-PCL Streamline ABI: 32-bit ReflexMarker and FrameToken reference.
+// Keep a separate original: some plugins export both entrypoints with distinct bodies.
+using LegacyMarker=sl::Result(uint32_t,const sl::FrameToken&);
+LegacyMarker* legacyMarker{};
+void* markerEntries[2]{};
 PFun_slInit* initialize{};
 PFun_slSetD3DDevice* setDevice{};
 PFun_slShutdown* shutdown{};
@@ -89,33 +95,6 @@ bool SelectViewport(uint32_t v) {
   auto& s=State(); auto expected=UINT32_MAX;
   s.viewport.compare_exchange_strong(expected,v);
   return s.viewport.load()==v;
-}
-bool Finite(float value) { return std::isfinite(value) && std::abs(value)<1.e30f; }
-bool Constants(const sl::Constants& c,Output& o,Frame& frame) {
-  if(c.structType!=sl::Constants::s_structType || c.structVersion<1 || c.structVersion>2) return false;
-  if(c.cameraMotionIncluded!=sl::eTrue || c.motionVectors3D!=sl::eFalse
-      || c.depthInverted==sl::eInvalid || (c.depthInverted==sl::eTrue)!=o.invert
-      || (c.motionVectorsJittered==sl::eTrue)!=o.jitter || c.reset==sl::eInvalid) return false;
-  auto& data=frame.data;
-  memcpy(data.projectionMatrix,&c.cameraViewToClip,sizeof(data.projectionMatrix));
-  // Streamline supplies a world position and camera basis, not a view matrix.
-  const sl::float3 basis[]={c.cameraRight,c.cameraUp,c.cameraFwd};
-  for(unsigned col=0;col<3;++col) {
-    const auto b=basis[col];
-    data.viewMatrix[col]=b.x; data.viewMatrix[4+col]=b.y; data.viewMatrix[8+col]=b.z;
-    data.viewMatrix[12+col]=-(b.x*c.cameraPos.x+b.y*c.cameraPos.y+b.z*c.cameraPos.z);
-  }
-  data.viewMatrix[3]=data.viewMatrix[7]=data.viewMatrix[11]=0; data.viewMatrix[15]=1;
-  data.jitterOffsetX=c.jitterOffset.x; data.jitterOffsetY=c.jitterOffset.y;
-  // SL normalizes motion to image coordinates. We use Intel's pixel mode;
-  // multiply by the valid MV extent at Present (not the output resolution).
-  data.motionVectorScaleX=c.mvecScale.x; data.motionVectorScaleY=c.mvecScale.y;
-  data.resetHistory=c.reset==sl::eTrue;
-  data.frameRenderTime=0; // No invented timing derived from generated frames.
-  for(float x:data.viewMatrix) if(!Finite(x)) return false;
-  for(float x:data.projectionMatrix) if(!Finite(x)) return false;
-  return Finite(data.jitterOffsetX)&&Finite(data.jitterOffsetY)
-      &&Finite(data.motionVectorScaleX)&&Finite(data.motionVectorScaleY);
 }
 std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) {
   switch(type) {
@@ -204,7 +183,10 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
       }
       data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
     } else { rejection="lifecycle"; reject(HudMetadata); continue; }
-    const auto code=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);
+    const auto code=[&] {
+      RuntimeCall trace("xefg_tag_resource",o->diagnosticOutput,id);
+      const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);trace.Result(r);return r;
+    }();
     if(id<6) xess_mod::WriteLog("native_tag","\"type\":"+std::to_string(*type)+",\"result\":"+std::to_string(code)
         +",\"format\":"+std::to_string(desc.Format)+",\"width\":"+std::to_string(data.resourceSize.x)
         +",\"height\":"+std::to_string(data.resourceSize.y)+",\"lifecycle\":"+std::to_string(t.lifecycle));
@@ -236,7 +218,20 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   if(SelectViewport(uint32_t(v))) if(auto o=Active()) {
     std::lock_guard lock(o->io);
     if(o->retired) return r;
-    if(auto* frame=FindFrame(*o,id)) { frame->constants=true; frame->valid=Constants(c,*o,*frame); }
+    if(auto* frame=FindFrame(*o,id)) {
+      frame->constants=true;
+      frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
+      frame->valid=frame->constantIssues==0;
+      if(frame->constantIssues!=o->lastConstantIssues && o->constantLogBudget<12) {
+        o->lastConstantIssues=frame->constantIssues; ++o->constantLogBudget;
+        std::string flags;
+        if(!(frame->constantIssues&ConstantMetadata)) flags=",\"camera_motion\":"+std::to_string(int(c.cameraMotionIncluded))
+            +",\"motion_3d\":"+std::to_string(int(c.motionVectors3D))+",\"inverted\":"+std::to_string(int(c.depthInverted))
+            +",\"jittered\":"+std::to_string(int(c.motionVectorsJittered))+",\"reset\":"+std::to_string(int(c.reset));
+        xess_mod::WriteLog("native_constants_status","\"id\":"+std::to_string(id)+",\"issues\":"+std::to_string(frame->constantIssues)
+            +",\"version\":"+std::to_string(c.structVersion)+flags);
+      }
+    }
   }
   return r;
 }
@@ -313,6 +308,10 @@ sl::Result MarkerHook(sl::PCLMarker marker,const sl::FrameToken& f) {
   CaptureMarker(marker,f);
   return pclMarker(marker,f); // Preserve native PCL/Reflex markers; the selected output owns the sleep.
 }
+sl::Result LegacyMarkerHook(uint32_t marker,const sl::FrameToken& frame) {
+  if(marker<uint32_t(sl::PCLMarker::eMaximum)) CaptureMarker(static_cast<sl::PCLMarker>(marker),frame);
+  return legacyMarker(marker,frame);
+}
 sl::Result EvaluateHook(sl::Feature feature,const sl::FrameToken& f,const sl::BaseStructure** inputs,
     uint32_t count,sl::CommandBuffer* command) {
   if(inputs && count<=16 && (feature==sl::kFeatureReflex || feature==sl::kFeaturePCL)) {
@@ -331,6 +330,23 @@ sl::Result EvaluateHook(sl::Feature feature,const sl::FrameToken& f,const sl::Ba
   return evaluate(feature,f,inputs,count,command);
 }
 bool Feature(const char* name,void* entry) {
+  if(strcmp(name,"slPCLSetMarker")==0 || strcmp(name,"slReflexSetMarker")==0) {
+    const bool legacy=strcmp(name,"slReflexSetMarker")==0;
+    auto** target=legacy?reinterpret_cast<void**>(&legacyMarker):reinterpret_cast<void**>(&pclMarker);
+    if(*target) return markerEntries[legacy]==entry;
+    HMODULE pin{};
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(entry),&pin)) return false;
+    const auto other=legacy?reinterpret_cast<void*>(pclMarker):reinterpret_cast<void*>(legacyMarker);
+    bool installed{};
+    if(other && markerEntries[!legacy]==entry) { *target=other; installed=true; }
+    else installed=Hook(entry,legacy?reinterpret_cast<void*>(&LegacyMarkerHook):reinterpret_cast<void*>(&MarkerHook),target);
+    if(installed) {
+      markerEntries[legacy]=entry;
+      xess_mod::WriteLog("native_marker_hook",std::string("\"api\":\"")+name+"\",\"aliased\":"+(other && markerEntries[!legacy]==entry?"true":"false"));
+    }
+    return installed;
+  }
 #define H(n,f) if(strcmp(name,#n)==0) return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&n));
   // Function pointer variable names intentionally differ from exported names.
 #undef H
@@ -341,7 +357,6 @@ bool Feature(const char* name,void* entry) {
   return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&p)); }
   H("slDLSSGSetOptions",OptionsHook,setOptions) H("slDLSSGGetState",StateHook,getState)
   H("slReflexSetOptions",ReflexOptionsHook,reflexOptions) H("slReflexSleep",SleepHook,reflexSleep)
-  H("slPCLSetMarker",MarkerHook,pclMarker)
 #undef H
   return false;
 }
@@ -393,13 +408,14 @@ void DiscoverStreamline() {
   if(getFeature) {
     struct Entry {sl::Feature feature; const char* name;};
     for(const auto& e:{Entry{sl::kFeatureDLSS_G,"slDLSSGSetOptions"},Entry{sl::kFeatureDLSS_G,"slDLSSGGetState"},
-        Entry{sl::kFeatureReflex,"slReflexSetOptions"},Entry{sl::kFeatureReflex,"slReflexSleep"},Entry{sl::kFeaturePCL,"slPCLSetMarker"}}) {
+        Entry{sl::kFeatureReflex,"slReflexSetOptions"},Entry{sl::kFeatureReflex,"slReflexSleep"},
+        Entry{sl::kFeaturePCL,"slPCLSetMarker"},Entry{sl::kFeatureReflex,"slReflexSetMarker"}}) {
       void* fn{}; if(getFeature(e.feature,e.name,fn)==sl::Result::eOk && fn) Feature(e.name,fn);
     }
   }
   auto& s=State(); std::lock_guard lock(s.lock);
   s.status.streamline=setOptions && getState && reflexOptions && reflexSleep
-      && (pclMarker || evaluate) && setConstants && (setTag || setTagFrame);
+      && (pclMarker || legacyMarker || evaluate) && setConstants && (setTag || setTagFrame);
 }
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
@@ -473,6 +489,8 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   else if(s.requested && nativeReflex && !latencyReady) Report("XeMFG bypass: enable native NVIDIA Reflex in the game for the selected latency output");
   else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_DEPTH))) Report("XeMFG bypass: this frame has no accepted depth input");
   else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR))) Report("XeMFG bypass: this frame has no accepted motion vectors");
+  else if(frame && frame->constantIssues) Report("XeMFG bypass: camera/motion constants incompatible; inspect native_constants_status");
+  else if(frame && !frame->markers) Report("XeMFG bypass: no matching source-frame latency markers");
   else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
   o->last=id;
 }

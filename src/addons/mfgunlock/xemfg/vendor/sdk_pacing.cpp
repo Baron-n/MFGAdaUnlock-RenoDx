@@ -14,6 +14,9 @@
 #include <dxgi1_4.h>
 #include <memory>
 #include <mutex>
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+#include "../native_trace.hpp"
+#endif
 
 namespace sdk_pacing
 {
@@ -356,7 +359,16 @@ void ConfigureFlip(Owner& owner, uint32_t outputs, int64_t batchNs, const char* 
     auto& flip = owner.flip;
     NvFlipConfigV2 config{kFlipConfigVersion2, outputs, 0, outputs ? outputs : 1u,
         outputs && batchNs > 0 ? float(double(batchNs)/1e6) : -1.0f, 0.0f};
-    const int status = CallSetFlipConfig(function, owner.flipQueue.Get(), &config);
+    const int status = [&] {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        mfgunlock::xemfg::native::RuntimeCall trace("nvapi_flip_config");
+#endif
+        const auto r=CallSetFlipConfig(function, owner.flipQueue.Get(), &config);
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        trace.Result(r);
+#endif
+        return r;
+    }();
     ++flip.calls;
     const bool statusChanged = status != flip.status, feedbackChanged = config.flipConfigFeedbackMask != flip.feedback;
     flip.status = status; flip.feedback = config.flipConfigFeedbackMask;
@@ -523,7 +535,12 @@ HRESULT Dispatch(Route& current, const Invocation& call)
                 QueryPerformanceCounter(&before);
                 bool paced{};
                 if (owner->retired.load(std::memory_order_acquire)) break;
-                try { paced = current.pace(call.presenter, extra.bundle, extra.firstFence, extra.summary, extra.index); }
+                try {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+                    mfgunlock::xemfg::native::RuntimeCall trace("xefg_extra_pace",0,call.frame);
+#endif
+                    paced = current.pace(call.presenter, extra.bundle, extra.firstFence, extra.summary, extra.index);
+                }
                 catch (...)
                 {
                     owner->disabled.store(true, std::memory_order_release);
@@ -543,6 +560,9 @@ HRESULT Dispatch(Route& current, const Invocation& call)
         catch (...) {} // The added pacing must not replace the original Present result.
     }
     SetLastError(incomingError);
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    mfgunlock::xemfg::native::RuntimeCall trace("xefg_presenter",0,call.frame);
+#endif
     return current.original(call.presenter, call.sync, call.flags, call.frame, call.parameters, call.resource, call.generated);
 }
 

@@ -11,6 +11,11 @@
 #include <set>
 
 namespace mfgunlock::xemfg::native {
+static std::atomic<void*> observedFactoryEntry{};
+// Intel excludes CreateContext, Init and Destroy from its thread-safe API
+// contract. Also serialize output selection with initialization: two factory
+// threads must not both observe an empty Active() before publishing an owner.
+static std::recursive_mutex sdkLifecycle;
 Bridge& State() { static auto* s=new Bridge; return *s; }
 Status Snapshot() { auto& s=State(); std::lock_guard lock(s.lock); auto status=s.status; status.outputPresents=s.outputPresents; return status; }
 void Report(const char* reason) {
@@ -60,8 +65,11 @@ void Output::RetirePresentation() {
   auto& a=State().api;
   if(window) window->Retire();
   if(fg) {
+    std::lock_guard lifecycle(sdkLifecycle);
+    RuntimeCall trace("xefg_destroy",diagnosticOutput);
     const auto disabled=a.xefgSwapChainSetEnabled(fg,0);
     const auto result=a.xefgSwapChainDestroy(fg);
+    trace.Result(result);
     xess_mod::WriteLog("native_output_retired","\"output\":"+std::to_string(diagnosticOutput)
         +",\"disable_result\":"+std::to_string(disabled)+",\"destroy_result\":"+std::to_string(result)
         +",\"sleep_in_flight\":"+(sleepActive?"true":"false"));
@@ -79,11 +87,12 @@ Output::~Output() {
       xess_mod::WriteLog("native_retirement_pending","\"context\":"+std::to_string(uintptr_t(fg)));
       return;
   }
-  if(ll) a.xellDestroyContext(ll);
+  if(ll) { std::lock_guard lifecycle(sdkLifecycle);a.xellDestroyContext(ll); }
 }
 HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** result) {
+  RuntimeCall createTrace("create_output");
   if(!result || !desc || !hwnd || restrictOutput) return E_NOINTERFACE;
   const bool forceBorderless=ControlsSettings().forceBorderless;
   if(full && !full->Windowed && !forceBorderless) {
@@ -97,6 +106,8 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
     return E_NOINTERFACE;
   }
+  std::unique_lock lifecycle(sdkLifecycle,std::defer_lock);
+  { RuntimeCall trace("sdk_lifecycle_lock");lifecycle.lock(); }
   if(Active()) return E_NOINTERFACE; // One selected Streamline viewport/output in this implementation.
   if(!OwnsPresentationHooks()) {
     Report("XeMFG needs early Streamline initialization to own presentation; restart with the addon loaded before slInit");
@@ -104,11 +115,29 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   }
   ComPtr<ID3D12CommandQueue> queue;
   if(!source || FAILED(source->QueryInterface(IID_PPV_ARGS(&queue)))) return E_NOINTERFACE;
+  ComPtr<ID3D12CommandQueue> transportQueue;
+  ComPtr<IDXGIFactory2> transportFactory;
+  // The public unwrapping contracts identify the same underlying queue and
+  // factory. Retain those identities, not a presentation wrapper owned by a
+  // different layer, inside Intel's long-lived context.
+  if(!single_overlay::native::Unwrap(queue.Get(),transportQueue)
+      || !single_overlay::native::Unwrap(factory,transportFactory)) {
+    Report("XeMFG cannot identify the presentation queue/factory safely"); return E_NOINTERFACE;
+  }
+  // A different factory implementation must remain observable by our final
+  // output hook. Otherwise retain the caller's factory so ReShade is not lost
+  // merely because its public native interface was discoverable.
+  if(transportFactory.Get()!=factory
+      && (*reinterpret_cast<void***>(transportFactory.Get()))[15]!=observedFactoryEntry.load()) transportFactory=factory;
+  const bool queueChanged=queue.Get()!=transportQueue.Get(),factoryChanged=factory!=transportFactory.Get();
+  queue=std::move(transportQueue);
   if(queue->GetDesc().Type!=D3D12_COMMAND_LIST_TYPE_DIRECT) return E_NOINTERFACE;
   auto& s=State();
   if(!s.api.Load()) { Report("XeMFG provider pair or model hooks unavailable"); return E_NOINTERFACE; }
   auto o=std::make_shared<Output>(); o->queue=queue;
   static std::atomic<uint64_t> outputGeneration{0}; o->diagnosticOutput=++outputGeneration;
+  xess_mod::WriteLog("native_transport_identity","\"output\":"+std::to_string(o->diagnosticOutput)
+      +",\"queue_unwrapped\":"+(queueChanged?"true":"false")+",\"factory_unwrapped\":"+(factoryChanged?"true":"false"));
   ComPtr<ID3D12Device> device;
   if(FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))
       || !single_overlay::native::Unwrap(device.Get(),o->device)) return E_NOINTERFACE;
@@ -141,7 +170,11 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)
       |(o->jitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
   init.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
-  const auto code=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),factory,&init);
+  const auto code=[&] {
+    RuntimeCall trace("xefg_init",o->diagnosticOutput);
+    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),transportFactory.Get(),&init);
+    trace.Result(r);return r;
+  }();
   if(code!=0) {
     xess_mod::WriteLog("native_swapchain_init_failed","\"result\":"+std::to_string(code));
     Report("XeFG swapchain initialization failed; inspect the XeMFG log"); return E_NOINTERFACE;
@@ -254,6 +287,7 @@ bool Install() {
     Report("XeMFG factory hook unavailable; restart with early ReShade addon loading"); return false;
   }
   const bool legacy=originalLegacyFactory || Hook(table[10],reinterpret_cast<void*>(&LegacyFactoryHook),reinterpret_cast<void**>(&originalLegacyFactory));
+  observedFactoryEntry=table[15];
   const bool hwnd=originalFactory || Hook(table[15],reinterpret_cast<void*>(&FactoryHook),reinterpret_cast<void**>(&originalFactory));
   if(!legacy || !hwnd) {
     Report("XeMFG factory entrypoint hook incomplete; restart with early ReShade addon loading"); return false;
@@ -269,6 +303,7 @@ static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,
   if(Active()) ++State().outputPresents;
 }
 static DWORD WINAPI DiscoverWorker(void*) {
+  StartTraceWorker();
   for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;
 }
@@ -280,6 +315,8 @@ void Attach(HMODULE module) {
   s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",0,ini.c_str())!=0;
   LoadControls();
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);
+  ConfigureTrace(GetPrivateProfileIntW(L"Diagnostics",L"StallTrace",0,ini.c_str())!=0,
+      GetPrivateProfileIntW(L"Diagnostics",L"GpuTiming",0,ini.c_str())!=0);
   AttachModel(module);
   reshade::register_event<reshade::addon_event::init_device>(&DeviceEvent);
   reshade::register_event<reshade::addon_event::present>(&OutputPresent);

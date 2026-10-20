@@ -16,6 +16,9 @@
 #include <string_view>
 #include <utility>
 #include <vector>
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+#include "../../native_trace.hpp"
+#endif
 
 namespace xefg_cuda
 {
@@ -532,7 +535,17 @@ bool Launch(ID3D12GraphicsCommandList* list, const Recording& r, UINT x, UINT y,
     params.limitH = y*layer.intelH;
     std::memcpy(params.constants, r.constants, sizeof(params.constants));
     const uint32_t gridX = (params.limitW + layer.tileW - 1)/layer.tileW, gridY = (params.limitH + layer.tileH - 1)/layer.tileH;
-    if (gNvapi.launch(list, gKernels[layer.kernel], gridX, gridY, layer.gridZ, &params, sizeof(params)) != 0)
+    const auto launchResult=[&] {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        mfgunlock::xemfg::native::RuntimeCall trace("nvapi_cuda_launch");
+#endif
+        const auto result=gNvapi.launch(list, gKernels[layer.kernel], gridX, gridY, layer.gridZ, &params, sizeof(params));
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+        trace.Result(result);
+#endif
+        return result;
+    }();
+    if (launchResult != 0)
     { Fallback(kLaunch, "launch", layer); return false; }
     gLaunches.fetch_add(1, std::memory_order_relaxed);
     return true;

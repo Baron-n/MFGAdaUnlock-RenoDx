@@ -24,11 +24,19 @@
 #include <array>
 #include <algorithm>
 using Microsoft::WRL::ComPtr;
+#include "xemfg_queue_proxy.hpp"
 static bool keyTest{};
 static bool hotkeyTest{};
 static unsigned overlayOpens{},overlayCloses{};
 static unsigned commands{};
 static bool selectPanel{};
+static bool retainNativeOutput{};
+static ComPtr<IDXGISwapChain> foreignNativeA,foreignNativeB;
+static void RetainNativeOutput(reshade::api::effect_runtime* chain) {
+  if(!retainNativeOutput || foreignNativeA) return;
+  auto* native=reinterpret_cast<IUnknown*>(chain->get_native());
+  if(native && SUCCEEDED(native->QueryInterface(IID_PPV_ARGS(&foreignNativeA)))) foreignNativeB=foreignNativeA;
+}
 static LONG WINAPI CaptureIsolatedException(EXCEPTION_POINTERS* exception) {
   if(exception->ExceptionRecord->ExceptionCode!=EXCEPTION_ACCESS_VIOLATION) return EXCEPTION_CONTINUE_SEARCH;
   static LONG count{}; const auto index=InterlockedIncrement(&count);
@@ -177,6 +185,8 @@ int main(int argc,char** argv) {
       Require(LoadLibraryW(L".\\_storage_\\libxell.dll")!=nullptr,"preload stored XeLL");
     }
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
+    if(flag("--legacy-markers") && !flag("--real-streamline")) Import<void(*)(uint32_t)>(fixture,"FixtureMarkerRoute")(1);
+    if(flag("--alias-markers")) Import<void(*)(uint32_t)>(fixture,"FixtureMarkerRoute")(2);
     if(flag("--early-addon")) {
       auto module=LoadLibraryW(L".\\dxgi.dll"); Require(module,"early ReShade");
       ComPtr<IDXGIFactory4> earlyFactory;
@@ -208,8 +218,12 @@ int main(int argc,char** argv) {
     auto reshade=LoadLibraryW(L".\\dxgi.dll"); Require(reshade,"ReShade");
     hotkeyTest=flag("--overlay-foreground");
     keyTest=flag("--overlay-keys") || hotkeyTest;
-    if(keyTest) {
+    retainNativeOutput=flag("--foreign-refs");
+    if(keyTest || retainNativeOutput) {
       Require(reshade::register_addon(GetModuleHandleW(nullptr),reshade),"register keyboard test observer");
+      if(retainNativeOutput) reshade::register_event<reshade::addon_event::init_effect_runtime>(&RetainNativeOutput);
+    }
+    if(keyTest) {
       reshade::register_event<reshade::addon_event::reshade_open_overlay>(&OverlayChange);
       reshade::register_event<reshade::addon_event::reshade_overlay>(&OverlayGui);
       selectPanel=true;
@@ -231,6 +245,7 @@ int main(int argc,char** argv) {
     Require(device!=nullptr,"NVIDIA device");
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64");
     if(!flag("--stock-streamline")) Require(addon,"ReShade did not load the addon");
+    if(flag("--stall-trace")) Import<void(*)(bool,bool)>(addon,"MFGAXeStallTraceEnable")(true,true);
     Require(Import<PFun_slSetD3DDevice*>(fixture,"slSetD3DDevice")(device.Get())==sl::Result::eOk,"Streamline device initialization");
     if(flag("--real-streamline")) {
       bool loaded{};
@@ -243,7 +258,8 @@ int main(int argc,char** argv) {
       void *reflexFn{},*sleepFn{},*markerFn{};
       Require(resolveReal(sl::kFeatureReflex,"slReflexSetOptions",reflexFn)==sl::Result::eOk && reflexFn,"real Reflex options");
       Require(resolveReal(sl::kFeatureReflex,"slReflexSleep",sleepFn)==sl::Result::eOk && sleepFn,"real Reflex sleep");
-      Require(resolveReal(sl::kFeaturePCL,"slPCLSetMarker",markerFn)==sl::Result::eOk && markerFn,"real PCL markers");
+      Require(resolveReal(flag("--legacy-markers")?sl::kFeatureReflex:sl::kFeaturePCL,
+          flag("--legacy-markers")?"slReflexSetMarker":"slPCLSetMarker",markerFn)==sl::Result::eOk && markerFn,"real latency markers");
       auto tokenFn=Import<PFun_slGetNewFrameToken*>(fixture,"slGetNewFrameToken");
       auto model=addon?Import<mfgunlock::xemfg::GetStatus>(addon,"MFGAXeGetStatus"):nullptr;
       auto bridge=addon?Import<bool(*)(mfgunlock::xemfg::native::Status*,uint32_t)>(addon,"MFGAXeNativeStatus"):nullptr;
@@ -303,7 +319,10 @@ int main(int argc,char** argv) {
             sl::Resource depth(sl::ResourceType::eTex2d,inputs->depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             sl::Resource motion(sl::ResourceType::eTex2d,inputs->motion.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
             sl::ResourceTag tags[]={{&depth,sl::kBufferTypeDepth,sl::eValidUntilPresent},{&motion,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}};
-            Require(Import<PFun_slSetTagForFrame*>(fixture,"slSetTagForFrame")(*token,sl::ViewportHandle{0},tags,2,nullptr)==sl::Result::eOk,"real frame inputs");
+            if(auto tagFrame=reinterpret_cast<PFun_slSetTagForFrame*>(GetProcAddress(fixture,"slSetTagForFrame")))
+              Require(tagFrame(*token,sl::ViewportHandle{0},tags,2,nullptr)==sl::Result::eOk,"real frame inputs");
+            else
+              Require(Import<PFun_slSetTag*>(fixture,"slSetTag")(sl::ViewportHandle{0},tags,2,nullptr)==sl::Result::eOk,"real legacy frame inputs");
           }
           back.Reset();
           mark(sl::PCLMarker::eRenderSubmitEnd); mark(sl::PCLMarker::ePresentStart);
@@ -388,6 +407,31 @@ int main(int argc,char** argv) {
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
     if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
+    if(flag("--parallel-factory")) {
+      const auto secondWindow=CreateWindowW(wc.lpszClassName,L"Independent factory caller",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
+      Require(secondWindow,"second factory window");
+      std::promise<void> start;auto gate=start.get_future().share();
+      auto create=[&](HWND window) {
+        gate.wait();ComPtr<IDXGISwapChain1> result;
+        Check(factory->CreateSwapChainForHwnd(queue.Get(),window,&desc,nullptr,nullptr,&result),"parallel creation");return result;
+      };
+      auto first=std::async(std::launch::async,create,hwnd);
+      auto second=std::async(std::launch::async,create,secondWindow);start.set_value();
+      const auto end=GetTickCount64()+30000;
+      while((first.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready
+          || second.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready) && GetTickCount64()<end) {
+        MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);Sleep(1);
+      }
+      auto a=first.get(),b=second.get();
+      mfgunlock::xemfg::Status status;modelStatus(&status,sizeof(status));
+      Require(status.contexts==1,"concurrent factory callers published multiple Intel owners");
+      a.Reset();b.Reset();modelStatus(&status,sizeof(status));Require(status.contexts==0,"parallel output teardown leaked");
+      DestroyWindow(secondWindow);DestroyWindow(hwnd);
+      Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"parallel shutdown");
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"parallel trace flush");
+      std::cout<<"PASS: simultaneous factory callers published one Intel owner; both outputs and contexts retired"<<std::endl;
+      return 0;
+    }
     ComPtr<IDXGISwapChain1> base;
     if(legacyFactory) {
       // An unsupported XeFG format must still return the original native
@@ -406,10 +450,28 @@ int main(int argc,char** argv) {
     // Simulate a game's exclusive startup request. The persisted force policy
     // must turn it into a valid Intel windowed output before SDK init.
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=FALSE;
-    Check(CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
+    ComPtr<ID3D12CommandQueue> proxyQueue;
+    NativeQueueProxy* queueProxy{};
+    if(flag("--queue-proxy")) {queueProxy=new NativeQueueProxy(queue.Get());proxyQueue.Attach(queueProxy);}
+    Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
+    if(retainNativeOutput) {
+      Require(foreignNativeA && foreignNativeB,"observer did not retain native references");
+      chain.Reset();
+      mfgunlock::xemfg::Status status;modelStatus(&status,sizeof(status));Require(status.contexts==0,"SDK context retained by a native reference");
+      const auto refused=factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base);
+      Require(FAILED(refused) && !base,"native HWND recreated while foreign native references remained");
+      retainNativeOutput=false;foreignNativeB.Reset();foreignNativeA.Reset();
+      Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"recreate after owned observer releases");
+      base.Reset();modelStatus(&status,sizeof(status));Require(status.contexts==0,"recovered output leaked");
+      DestroyWindow(hwnd);Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"foreign reference shutdown");
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"foreign reference trace flush");
+      std::cout<<"PASS: foreign native references block HWND recreation; only observer-owned releases permit recovery"<<std::endl;
+      return 0;
+    }
+    if(queueProxy) Require(queueProxy->References()==1,"Intel context retained the external queue wrapper");
     mfgunlock::xemfg::native::OverlayStatus os;
     Require(overlayStatus(&os,sizeof(os)) && os.created==1 && os.failed==0,"final output has no manual ReShade runtime");
     settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
@@ -450,7 +512,15 @@ int main(int argc,char** argv) {
     auto getState=feature.operator()<PFun_slDLSSGGetState*>(sl::kFeatureDLSS_G,"slDLSSGGetState");
     auto reflex=feature.operator()<PFun_slReflexSetOptions*>(sl::kFeatureReflex,"slReflexSetOptions");
     auto sleep=feature.operator()<PFun_slReflexSleep*>(sl::kFeatureReflex,"slReflexSleep");
-    auto marker=feature.operator()<PFun_slPCLSetMarker*>(sl::kFeaturePCL,"slPCLSetMarker");
+    auto marker=feature.operator()<PFun_slPCLSetMarker*>(flag("--legacy-markers")?sl::kFeatureReflex:sl::kFeaturePCL,
+        flag("--legacy-markers")?"slReflexSetMarker":"slPCLSetMarker");
+    auto secondaryMarker=(flag("--mixed-markers") || flag("--alias-markers"))?
+        feature.operator()<PFun_slPCLSetMarker*>(sl::kFeatureReflex,"slReflexSetMarker"):nullptr;
+    const auto primaryMarker=marker;
+    const auto mark=[&](sl::PCLMarker value,const sl::FrameToken& token) {
+      Require(primaryMarker(value,token)==sl::Result::eOk,"original marker result");
+      if(secondaryMarker) Require(secondaryMarker(value,token)==sl::Result::eOk,"secondary marker result");
+    };
     auto constants=Import<PFun_slSetConstants*>(fixture,"slSetConstants");
     auto tags=Import<PFun_slSetTagForFrame*>(fixture,"slSetTagForFrame");
     auto legacyTags=Import<PFun_slSetTag*>(fixture,"slSetTag");
@@ -565,8 +635,8 @@ int main(int argc,char** argv) {
       }
       Token token; token.id=frame;
       Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
-      marker(sl::PCLMarker::eSimulationStart,token); marker(sl::PCLMarker::eSimulationEnd,token);
-      marker(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
+      mark(sl::PCLMarker::eSimulationStart,token); mark(sl::PCLMarker::eSimulationEnd,token);
+      mark(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
       allocator->Reset(); list->Reset(allocator.Get(),nullptr);
       ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"backbuffer");
       device->CreateRenderTargetView(back.Get(),nullptr,rtv);
@@ -592,10 +662,10 @@ int main(int argc,char** argv) {
       }
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
       const bool lateSubmitEnd=frame>=17;
-      if(!lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
-      marker(sl::PCLMarker::ePresentStart,token);
-      Check(chain->Present(0,0),"Present"); marker(sl::PCLMarker::ePresentEnd,token); wait();
-      if(lateSubmitEnd) marker(sl::PCLMarker::eRenderSubmitEnd,token);
+      if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
+      mark(sl::PCLMarker::ePresentStart,token);
+      Check(chain->Present(0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
+      if(lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
       if(frame==9 || frame==17 || frame==18 || frame==25) {
         controlStatus(&cs,sizeof(cs));
         const bool composed=frame==9 || frame==18;
@@ -763,7 +833,12 @@ int main(int argc,char** argv) {
     std::cout<<"Presentation owner: Intel only; feature requests preserved; discovery stopped before shutdown"<<std::endl;
     Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"diagnostic log did not drain at test boundary");
     Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");
+    if(flag("--legacy-markers") || secondaryMarker) {
+      Require(Import<uint32_t(*)()>(fixture,"FixtureHistoricalMarkerCalls")()>=48*6 || flag("--alias-markers"),"original historical marker skipped");
+      std::cout<<"Historical markers: original calls preserved, real inference and duplicate forwarding verified"<<std::endl;
+    }
     if(legacyFactory) std::cout<<"Legacy factory: inference, resize, fallback and recreation verified"<<std::endl;
+    if(queueProxy) {Require(queueProxy->References()==1,"external queue wrapper retained after teardown");std::cout<<"Queue native identity: wrapper unwrapped; inference and lifetime verified"<<std::endl;}
     std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl; return 1; }

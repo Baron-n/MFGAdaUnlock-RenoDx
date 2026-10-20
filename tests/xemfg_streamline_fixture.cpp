@@ -12,6 +12,7 @@ static std::atomic<bool> holdSleep{},sleepEntered{};
 static std::atomic<uint32_t> fgStatus{};
 static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
 static std::atomic<uint32_t> queriesAfterShutdown{};
+static std::atomic<uint32_t> markerRoute{},modernMarkers{},historicalMarkers{};
 #define EXPORT extern "C" __declspec(dllexport) __declspec(noinline)
 EXPORT sl::Result slInit(const sl::Preferences&,uint64_t) {
   initialized=true; fgLoaded=reflexLoaded=true; return sl::Result::eOk;
@@ -50,8 +51,15 @@ static __declspec(noinline) sl::Result ReflexSleep(const sl::FrameToken& f) {
 EXPORT void FixtureHoldSleep(bool hold) { holdSleep=hold; if(hold) sleepEntered=false; }
 EXPORT bool FixtureSleepEntered() { return sleepEntered; }
 static __declspec(noinline) sl::Result Marker(sl::PCLMarker m,const sl::FrameToken& f) {
+  ++modernMarkers;
   calls+=uint32_t(f)+uint32_t(m)+1; return sl::Result::eOk;
 }
+static __declspec(noinline) sl::Result HistoricalMarker(uint32_t m,const sl::FrameToken& f) {
+  ++historicalMarkers; calls+=uint32_t(f)+m+2; return sl::Result::eOk;
+}
+EXPORT void FixtureMarkerRoute(uint32_t mode) { markerRoute=mode; }
+EXPORT uint32_t FixtureMarkerCalls() { return modernMarkers; }
+EXPORT uint32_t FixtureHistoricalMarkerCalls() { return historicalMarkers; }
 EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   if(!initialized) { ++queriesAfterShutdown; fn=nullptr; return sl::Result::eErrorNotInitialized; }
   ++calls;
@@ -59,7 +67,8 @@ EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
   else if(!strcmp(name,"slReflexSetOptions")) fn=reinterpret_cast<void*>(&Reflex);
   else if(!strcmp(name,"slReflexSleep")) fn=reinterpret_cast<void*>(&ReflexSleep);
-  else if(!strcmp(name,"slPCLSetMarker")) fn=reinterpret_cast<void*>(&Marker);
+  else if(!strcmp(name,"slPCLSetMarker") && markerRoute!=1) fn=reinterpret_cast<void*>(&Marker);
+  else if(!strcmp(name,"slReflexSetMarker")) fn=markerRoute==2?reinterpret_cast<void*>(&Marker):reinterpret_cast<void*>(&HistoricalMarker);
   else { fn=nullptr; return sl::Result::eErrorFeatureMissing; }
   return sl::Result::eOk;
 }

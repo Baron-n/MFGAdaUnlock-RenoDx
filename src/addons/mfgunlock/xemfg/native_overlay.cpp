@@ -39,6 +39,7 @@ class FinalOutput final:public IDXGISwapChain4 {
     reshade::destroy_effect_runtime(runtime); runtime=nullptr; ++destroyed;
   }
   void Render(UINT flags) {
+    RuntimeCall trace("reshade_final_update");
     if(runtime && !(flags&DXGI_PRESENT_TEST)) {
       struct Scope { FinalOutput* previous; Scope(FinalOutput* value):previous(rendering){rendering=value;} ~Scope(){rendering=previous;} } scope(this);
       // ReShade owns its shortcut, active widgets and input capture. Updating
@@ -79,11 +80,11 @@ public:
     { std::lock_guard guard(lock); Render(flags); }
     // DXGI may wait on the window thread. The SDK owns external Present/Resize
     // ordering; do not hold our runtime lock across the native call.
-    return chain->Present(sync,flags);
+    RuntimeCall trace("native_present");const auto r=chain->Present(sync,flags);trace.Result(r);return r;
   }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* parameters) override {
     { std::lock_guard guard(lock); Render(flags); }
-    return chain->Present1(sync,flags,parameters);
+    RuntimeCall trace("native_present1");const auto r=chain->Present1(sync,flags,parameters);trace.Result(r);return r;
   }
   HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT a,UINT b,UINT c,DXGI_FORMAT d,UINT e) override {
     { std::lock_guard guard(lock); Destroy(); }

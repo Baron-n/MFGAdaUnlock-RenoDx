@@ -21,6 +21,13 @@ ap.add_argument('--capcom-flags',action='store_true')
 ap.add_argument('--retire-sleep',action='store_true')
 ap.add_argument('--producer-shadow',action='store_true')
 ap.add_argument('--legacy-factory',action='store_true')
+ap.add_argument('--legacy-markers',action='store_true')
+ap.add_argument('--mixed-markers',action='store_true')
+ap.add_argument('--alias-markers',action='store_true')
+ap.add_argument('--stall-trace',action='store_true')
+ap.add_argument('--queue-proxy',action='store_true')
+ap.add_argument('--parallel-factory',action='store_true')
+ap.add_argument('--foreign-refs',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -52,11 +59,23 @@ if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs'):
+    if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.parallel_factory:
+    verified='PASS: simultaneous factory callers published one Intel owner; both outputs and contexts retired' in result.stdout
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,parallel_factory_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
+if args.foreign_refs:
+    verified='PASS: foreign native references block HWND recreation; only observer-owned releases permit recovery' in result.stdout
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,foreign_reference_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.retire_sleep:
     verified=any(e.get('event')=='native_output_retired' and e.get('sleep_in_flight') and e.get('destroy_result')==0 for e in events)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,retirement_during_sleep_verified=verified),indent=2))
@@ -93,6 +112,7 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('XeFG','SdkDeadlines',fallback='')=='0')
 legacy_verified=(('Legacy factory: inference, resize, fallback and recreation verified' in result.stdout
     and 'Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
+markers_verified=('Historical markers: original calls preserved, real inference and duplicate forwarding verified' in result.stdout) if args.legacy_markers or args.mixed_markers or args.alias_markers else None
 # Async diagnostics deliberately drop records rather than block a producer.
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
@@ -104,6 +124,9 @@ legacy_verified=(('Legacy factory: inference, resize, fallback and recreation ve
     'production_panel_verified':'Production panel draws=' in result.stdout,
     'producer_shadow_verified':args.producer_shadow and result.returncode==0 and 'Heap producer commands: accepted; non-code implementation: rejected; generation resumed' in result.stdout,
     'legacy_factory_verified':legacy_verified,
+    'historical_markers_verified':markers_verified,
+    'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
+    'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)

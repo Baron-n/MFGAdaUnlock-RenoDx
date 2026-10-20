@@ -4,6 +4,7 @@
 #include "native_controls.hpp"
 #include "frame_store.hpp"
 #include "native_diagnostics.hpp"
+#include "native_trace.hpp"
 #include "hud_inputs.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
@@ -39,6 +40,7 @@ struct Frame {
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
   uint32_t hudIssues{};
+  uint32_t constantIssues{};
   LatencyOutput latencyOutput{LatencyOutput::XeLL};
   xefg_swapchain_frame_constant_data_t data{};
 };
@@ -48,6 +50,7 @@ struct Output {
   ComPtr<ID3D12Device> device;
   ComPtr<ID3D12CommandQueue> queue;
   std::shared_ptr<WindowControl> window;
+  std::unique_ptr<QueueTrace> gpuTrace;
   DWORD windowBindError{};
   xefg_swapchain_handle_t fg{};
   xell_context_handle_t ll{};
@@ -57,6 +60,7 @@ struct Output {
   DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
   uint32_t hudLogBudget{},hudKindsSeen{};
   uint32_t rejectedTagLogBudget{};
+  uint32_t constantLogBudget{},lastConstantIssues{UINT32_MAX};
   uint32_t bypassPresentLogBudget{};
   uint64_t admissionTick{};
   uint64_t epoch{};

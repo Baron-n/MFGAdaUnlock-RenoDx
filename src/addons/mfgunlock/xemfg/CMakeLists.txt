@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -78,14 +78,22 @@ add_executable(xemfg_overlay_shortcut_tests "${CMAKE_SOURCE_DIR}/xemfg_overlay_s
 target_compile_definitions(xemfg_overlay_shortcut_tests PRIVATE NOMINMAX)
 add_test(NAME xemfg_overlay_shortcuts COMMAND xemfg_overlay_shortcut_tests)
 set_tests_properties(xemfg_window_controls PROPERTIES TIMEOUT 20)
-add_executable(xemfg_latency_tests "${CMAKE_SOURCE_DIR}/xemfg_latency_tests.cpp" native_latency.cpp)
+add_executable(xemfg_latency_tests "${CMAKE_SOURCE_DIR}/xemfg_latency_tests.cpp" native_latency.cpp native_trace.cpp)
 target_compile_definitions(xemfg_latency_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_latency_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_link_libraries(xemfg_latency_tests PRIVATE d3d12 dxgi)
 add_test(NAME xemfg_latency_translation COMMAND xemfg_latency_tests)
+add_executable(xemfg_constants_tests "${CMAKE_SOURCE_DIR}/xemfg_constants_tests.cpp")
+target_compile_definitions(xemfg_constants_tests PRIVATE NOMINMAX)
+target_include_directories(xemfg_constants_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${RENODX_SOURCE_DIR}/external/Streamline/include")
+add_test(NAME xemfg_constants_translation COMMAND xemfg_constants_tests)
+add_executable(xemfg_trace_tests "${CMAKE_SOURCE_DIR}/xemfg_trace_tests.cpp" native_trace.cpp)
+target_compile_definitions(xemfg_trace_tests PRIVATE NOMINMAX)
+target_link_libraries(xemfg_trace_tests PRIVATE d3d12 dxgi)
+add_test(NAME xemfg_stall_trace COMMAND xemfg_trace_tests)
 set_tests_properties(xemfg_latency_translation PROPERTIES TIMEOUT 20)
-add_executable(xemfg_ui_tests "${CMAKE_SOURCE_DIR}/xemfg_ui_tests.cpp" native_ui.cpp)
+add_executable(xemfg_ui_tests "${CMAKE_SOURCE_DIR}/xemfg_ui_tests.cpp" native_ui.cpp native_trace.cpp)
 target_compile_definitions(xemfg_ui_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_ui_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
@@ -105,7 +113,7 @@ add_executable(xemfg_async_log_tests "${CMAKE_SOURCE_DIR}/xemfg_async_log_tests.
 add_test(NAME xemfg_async_log COMMAND xemfg_async_log_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)
 add_test(NAME xemfg_cpu_diagnostics COMMAND xemfg_diagnostics_tests)
-add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp
+add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_trace.cpp
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_draw.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_tables.cpp"
@@ -136,6 +144,7 @@ endforeach()
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME xemfg_runtime_analysis COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_runtime_analysis_tests.py")
   add_test(NAME xemfg_native_capcom_flags COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
     --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
@@ -154,6 +163,22 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --producer-shadow --capcom-flags)
   set_tests_properties(xemfg_native_producer_shadow PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  foreach(route IN ITEMS XeLL Reflex)
+    add_test(NAME xemfg_native_historical_markers_${route} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --legacy-markers --latency-output ${route})
+    set_tests_properties(xemfg_native_historical_markers_${route} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
+  foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs)
+    add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --${scenario})
+    set_tests_properties(xemfg_native_${scenario} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
   foreach(route IN ITEMS XeLL Reflex)
     add_test(NAME xemfg_native_legacy_${route} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

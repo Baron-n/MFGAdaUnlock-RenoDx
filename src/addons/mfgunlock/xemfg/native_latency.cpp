@@ -31,8 +31,16 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
   // Native Reflex is the only latency wait in this route. XeLL sleep with
   // low latency OFF and interval zero retains the separate diagnostic marker context.
   // XeFG is bound to its profiled external-latency path in this route.
-  const auto nativeResult=reflex?nativeSleep(*token):sl::Result::eOk;
-  const auto result=nativeResult==sl::Result::eOk?a.xellSleep(o->ll,id):XELL_RESULT_ERROR_UNKNOWN;
+  const auto nativeResult=[&] {
+    if(!reflex) return sl::Result::eOk;
+    RuntimeCall trace("reflex_sleep",o->diagnosticOutput,id);
+    const auto r=nativeSleep(*token);trace.Result(int(r),r!=sl::Result::eOk);return r;
+  }();
+  const auto result=[&] {
+    if(nativeResult!=sl::Result::eOk) return XELL_RESULT_ERROR_UNKNOWN;
+    RuntimeCall trace("xell_sleep",o->diagnosticOutput,id);
+    const auto r=a.xellSleep(o->ll,id);trace.Result(r);return r;
+  }();
   const auto sleepUs=std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()-start).count();
   s.lastSleepUs=sleepUs;
   {

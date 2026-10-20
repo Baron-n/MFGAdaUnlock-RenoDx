@@ -53,8 +53,7 @@ public:
   HRESULT STDMETHODCALLTYPE GetDevice(REFIID a,void** b) override { return chain->GetDevice(a,b); }
   HRESULT STDMETHODCALLTYPE Present(UINT sync,UINT flags) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present(sync,flags);
-    CpuProbe probe; std::lock_guard lock(owner->presents); probe.Locked();
-    BeforePresent(owner); probe.Prepared(); auto hr=chain->Present(sync,flags); probe.Returned(); AfterPresent(owner,&probe,hr); return hr;
+    return SourcePresent(sync,flags,nullptr,false);
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
   HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
@@ -86,8 +85,25 @@ public:
   HRESULT STDMETHODCALLTYPE GetCoreWindow(REFIID a,void** b) override { return chain->GetCoreWindow(a,b); }
   HRESULT STDMETHODCALLTYPE Present1(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params) override {
     if(flags&DXGI_PRESENT_TEST) return chain->Present1(sync,flags,params);
-    CpuProbe probe; std::lock_guard lock(owner->presents); probe.Locked();
-    BeforePresent(owner); probe.Prepared(); auto hr=chain->Present1(sync,flags,params); probe.Returned(); AfterPresent(owner,&probe,hr); return hr;
+    return SourcePresent(sync,flags,params,true);
+  }
+  HRESULT SourcePresent(UINT sync,UINT flags,const DXGI_PRESENT_PARAMETERS* params,bool extended) {
+    const auto frame=State().presenting.load();
+    RuntimeCall whole("source_present",owner->diagnosticOutput,frame);
+    CpuProbe probe; std::unique_lock lock(owner->presents,std::defer_lock);
+    { RuntimeCall trace("present_lock",owner->diagnosticOutput,frame);lock.lock(); }
+    probe.Locked();
+    if(GpuTraceEnabled() && !owner->gpuTrace) owner->gpuTrace=std::make_unique<QueueTrace>(owner->device.Get(),owner->queue.Get(),owner->diagnosticOutput);
+    if(owner->gpuTrace) owner->gpuTrace->Begin(frame);
+    { RuntimeCall trace("prepare_present",owner->diagnosticOutput,frame);BeforePresent(owner); }
+    probe.Prepared();
+    HRESULT hr;
+    { RuntimeCall trace("xefg_present",owner->diagnosticOutput,frame);
+      hr=extended?chain->Present1(sync,flags,params):chain->Present(sync,flags);trace.Result(hr); }
+    probe.Returned();
+    if(owner->gpuTrace) owner->gpuTrace->End();
+    { RuntimeCall trace("after_present",owner->diagnosticOutput,frame);AfterPresent(owner,&probe,hr); }
+    whole.Result(hr);return hr;
   }
   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }
   HRESULT STDMETHODCALLTYPE GetRestrictToOutput(IDXGIOutput** a) override { return chain->GetRestrictToOutput(a); }
