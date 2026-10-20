@@ -169,9 +169,15 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
 
 using FactoryCreate=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory2*,IUnknown*,HWND,
     const DXGI_SWAP_CHAIN_DESC1*,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
+using LegacyFactoryCreate=HRESULT(STDMETHODCALLTYPE*)(IDXGIFactory*,IUnknown*,DXGI_SWAP_CHAIN_DESC*,IDXGISwapChain**);
 static FactoryCreate originalFactory{};
+static LegacyFactoryCreate originalLegacyFactory{};
 static thread_local bool internalCreate{};
 static thread_local HWND creatingWindow{};
+struct CreationScope {
+  explicit CreationScope(HWND window) { internalCreate=true; creatingWindow=window; }
+  ~CreationScope() { internalCreate=false; creatingWindow=nullptr; }
+};
 static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
@@ -180,26 +186,79 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
     if(SUCCEEDED(hr) && creatingWindow==w) WrapFinalOutput(d,w,out);
     return hr;
   }
-  struct Scope { Scope(HWND w){internalCreate=true;creatingWindow=w;} ~Scope(){internalCreate=false;creatingWindow=nullptr;} } scope(w);
+  CreationScope scope(w);
   DiscoverStreamline();
   const auto hr=CreateOutput(f,d,w,desc,full,restrictOutput,out);
   if(hr!=E_NOINTERFACE) return hr;
   // Unsupported integration remains native with our NVIDIA requests forced off.
   // It is explicitly reported; never announce an active XeMFG output here.
+  creatingWindow=nullptr; // Native fallback must not become Intel's final output.
   return originalFactory(f,d,w,desc,full,restrictOutput,out);
+}
+static HRESULT STDMETHODCALLTYPE LegacyFactoryHook(IDXGIFactory* factory,IUnknown* source,
+    DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** out) {
+  if(internalCreate) {
+    const auto hr=originalLegacyFactory(factory,source,desc,out);
+    // Intel normally creates its native output through ForHwnd. Keep final
+    // ReShade rendering intact if a runtime uses the legacy entrypoint too.
+    if(SUCCEEDED(hr) && out && *out && desc && creatingWindow==desc->OutputWindow) {
+      ComPtr<IDXGISwapChain1> modern;
+      if(SUCCEEDED((*out)->QueryInterface(IID_PPV_ARGS(&modern)))) {
+        WrapFinalOutput(source,desc->OutputWindow,modern.GetAddressOf());
+        (*out)->Release(); *out=modern.Detach();
+      }
+    }
+    return hr;
+  }
+  // Preserve native validation and the exact caller arguments for unsupported
+  // integrations. A legacy API does not imply a D3D11 device: D3D12 supplies
+  // its direct command queue to this entrypoint as well.
+  if(!desc || !out || !desc->OutputWindow)
+    return originalLegacyFactory(factory,source,desc,out);
+  CreationScope scope(desc->OutputWindow);
+  ComPtr<IDXGIFactory2> modernFactory;
+  if(FAILED(factory->QueryInterface(IID_PPV_ARGS(&modernFactory))))
+    return originalLegacyFactory(factory,source,desc,out);
+  DXGI_SWAP_CHAIN_DESC1 modern{};
+  modern.Width=desc->BufferDesc.Width; modern.Height=desc->BufferDesc.Height;
+  modern.Format=desc->BufferDesc.Format; modern.SampleDesc=desc->SampleDesc;
+  modern.BufferUsage=desc->BufferUsage; modern.BufferCount=desc->BufferCount;
+  modern.Scaling=DXGI_SCALING_STRETCH; modern.SwapEffect=desc->SwapEffect;
+  modern.AlphaMode=DXGI_ALPHA_MODE_IGNORE; modern.Flags=desc->Flags;
+  DXGI_SWAP_CHAIN_FULLSCREEN_DESC full{};
+  full.RefreshRate=desc->BufferDesc.RefreshRate;
+  full.ScanlineOrdering=desc->BufferDesc.ScanlineOrdering;
+  full.Scaling=desc->BufferDesc.Scaling; full.Windowed=desc->Windowed;
+  DiscoverStreamline();
+  ComPtr<IDXGISwapChain1> replacement;
+  const auto hr=CreateOutput(modernFactory.Get(),source,desc->OutputWindow,&modern,&full,nullptr,&replacement);
+  xess_mod::WriteLog("native_legacy_factory_create","\"result\":"+std::to_string(hr)
+      +",\"replaced\":"+(SUCCEEDED(hr)?"true":"false")
+      +",\"format\":"+std::to_string(modern.Format)+",\"flags\":"+std::to_string(modern.Flags));
+  if(hr==E_NOINTERFACE) {
+    creatingWindow=nullptr;
+    return originalLegacyFactory(factory,source,desc,out);
+  }
+  if(FAILED(hr)) return hr;
+  return replacement.CopyTo(out);
 }
 bool Install() {
   if(single_overlay::native::InsideLoader() || StreamlineStopping()) return false;
   DiscoverStreamline();
   static std::mutex installLock; std::lock_guard guard(installLock);
-  if(originalFactory) return true;
+  if(originalFactory && originalLegacyFactory) return true;
   ComPtr<IDXGIFactory2> factory;
   if(FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) return false;
   auto** table=*reinterpret_cast<void***>(factory.Get());
-  if(!single_overlay::native::PinInterface(factory.Get(),15)
-      || !Hook(table[15],reinterpret_cast<void*>(&FactoryHook),reinterpret_cast<void**>(&originalFactory))) {
+  if(!single_overlay::native::PinInterface(factory.Get(),15)) {
     Report("XeMFG factory hook unavailable; restart with early ReShade addon loading"); return false;
   }
+  const bool legacy=originalLegacyFactory || Hook(table[10],reinterpret_cast<void*>(&LegacyFactoryHook),reinterpret_cast<void**>(&originalLegacyFactory));
+  const bool hwnd=originalFactory || Hook(table[15],reinterpret_cast<void*>(&FactoryHook),reinterpret_cast<void**>(&originalFactory));
+  if(!legacy || !hwnd) {
+    Report("XeMFG factory entrypoint hook incomplete; restart with early ReShade addon loading"); return false;
+  }
+  xess_mod::WriteLog("native_factory_hooks","\"legacy\":true,\"hwnd\":true");
   std::lock_guard lock(State().lock); State().status.factoryHook=true; return true;
 }
 static void DeviceEvent(reshade::api::device* device) {

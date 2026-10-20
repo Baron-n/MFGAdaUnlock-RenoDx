@@ -55,6 +55,25 @@ static bool OverlayChange(reshade::api::effect_runtime*,bool open,reshade::api::
 }
 static void Check(HRESULT code,const char* where) { if(FAILED(code)) { std::cerr<<where<<" 0x"<<std::hex<<code<<std::endl; throw std::runtime_error(where); } }
 static void Require(bool value,const char* what) { if(!value) throw std::runtime_error(what); }
+static HRESULT CreateTestSwapchain(bool legacy,IDXGIFactory2* factory,IUnknown* source,HWND window,
+    const DXGI_SWAP_CHAIN_DESC1& desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,IDXGISwapChain1** output) {
+  if(!legacy) return factory->CreateSwapChainForHwnd(source,window,&desc,full,nullptr,output);
+  DXGI_SWAP_CHAIN_DESC old{};
+  old.BufferDesc.Width=desc.Width; old.BufferDesc.Height=desc.Height; old.BufferDesc.Format=desc.Format;
+  if(full) {
+    old.BufferDesc.RefreshRate=full->RefreshRate; old.BufferDesc.Scaling=full->Scaling;
+    old.BufferDesc.ScanlineOrdering=full->ScanlineOrdering;
+  }
+  old.SampleDesc=desc.SampleDesc; old.BufferUsage=desc.BufferUsage; old.BufferCount=desc.BufferCount;
+  old.OutputWindow=window; old.Windowed=full?full->Windowed:TRUE;
+  old.SwapEffect=desc.SwapEffect; old.Flags=desc.Flags;
+  const auto original=old;
+  ComPtr<IDXGISwapChain> result;
+  const auto hr=factory->CreateSwapChain(source,&old,&result);
+  Require(memcmp(&old,&original,sizeof(old))==0,"legacy factory mutated caller description");
+  if(FAILED(hr)) return hr;
+  return result.CopyTo(output);
+}
 struct Token : sl::FrameToken { uint32_t id{}; operator uint32_t() const override {return id;} };
 template<class T> T Import(HMODULE m,const char* name) { auto p=reinterpret_cast<T>(GetProcAddress(m,name)); Require(p!=nullptr,name); return p; }
 // A valid public COM wrapper whose object-owned dispatch table is in the heap.
@@ -151,6 +170,7 @@ int main(int argc,char** argv) {
     const unsigned multiplier=argc>1?unsigned(std::stoul(argv[1])):4;
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     const auto flag=[&](const char* name) { for(int i=2;i<argc;++i) if(std::string(argv[i])==name) return true; return false; };
+    const bool legacyFactory=flag("--legacy-factory");
     if(flag("--real-streamline")) AddVectoredExceptionHandler(1,&CaptureIsolatedException);
     if(flag("--preload-runtimes")) {
       Require(LoadLibraryW(L".\\_storage_\\libxess_fg.dll")!=nullptr,"preload stored XeFG");
@@ -239,9 +259,9 @@ int main(int argc,char** argv) {
         DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=cycle?2560:1920; desc.Height=cycle?1440:1080;
         desc.Format=DXGI_FORMAT_R10G10B10A2_UNORM; desc.SampleDesc.Count=1;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=cycle%2?4:3;
-        desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD; desc.Flags=0x842;
+        desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD; desc.Flags=legacyFactory?0x802:0x842;
         ComPtr<IDXGISwapChain1> base;
-        Check(factory->CreateSwapChainForHwnd(queue.Get(),window,&desc,nullptr,nullptr,&base),"real Streamline replacement");
+        Check(CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),window,desc,nullptr,&base),"real Streamline replacement");
         ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"real replacement chain4"); base.Reset();
         mfgunlock::xemfg::native::Status bs;
         if(bridge) Require(bridge(&bs,sizeof(bs)) && bs.output,"real replacement did not use Intel output");
@@ -314,6 +334,7 @@ int main(int argc,char** argv) {
       Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"real Streamline shutdown");
       DestroyWindow(window);
       if(addon) Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"real recreation log flush");
+      if(legacyFactory) std::cout<<"Legacy factory: four same-window recreations, real Streamline inference and shutdown verified"<<std::endl;
       std::cout<<"PASS: real Streamline, ReShade and Intel SDK; four same-window output recreations"<<std::endl;
       return 0;
     }
@@ -366,11 +387,26 @@ int main(int argc,char** argv) {
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
+    if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
     ComPtr<IDXGISwapChain1> base;
+    if(legacyFactory) {
+      // An unsupported XeFG format must still return the original native
+      // output, without publishing an Intel context or a manual final overlay.
+      auto unsupported=desc; unsupported.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
+      Check(CreateTestSwapchain(true,factory.Get(),queue.Get(),hwnd,unsupported,nullptr,&base),"legacy native fallback");
+      DXGI_SWAP_CHAIN_DESC1 actual{}; Check(base->GetDesc1(&actual),"fallback description");
+      Require(actual.Format==unsupported.Format && actual.BufferCount==unsupported.BufferCount
+          && actual.Flags==unsupported.Flags,"legacy fallback changed native description");
+      mfgunlock::xemfg::native::Status fallback; bridgeStatus(&fallback,sizeof(fallback));
+      mfgunlock::xemfg::native::OverlayStatus overlay; overlayStatus(&overlay,sizeof(overlay));
+      Require(!fallback.output && overlay.created==0,"legacy fallback falsely published Intel/manual overlay");
+      base.Reset();
+      std::cout<<"Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay"<<std::endl;
+    }
     // Simulate a game's exclusive startup request. The persisted force policy
     // must turn it into a valid Intel windowed output before SDK init.
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=FALSE;
-    Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,&exclusive,nullptr,&base),"swapchain");
+    Check(CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
@@ -443,7 +479,7 @@ int main(int argc,char** argv) {
       mfgunlock::xemfg::Status retired; modelStatus(&retired,sizeof(retired));
       if(retired.contexts) { hold(false); pendingSleep.wait(); throw std::runtime_error("latency lease retained the old FG presentation context"); }
       // Keep the old source call suspended while a new output binds the HWND.
-      Check(factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base),"replacement during old source sleep");
+      Check(CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),hwnd,desc,nullptr,&base),"replacement during old source sleep");
       Check(base.As(&chain),"new output during old source sleep"); base.Reset();
       hold(false);
       const auto result=pendingSleep.get();
@@ -706,7 +742,7 @@ int main(int argc,char** argv) {
       desc.Format=DXGI_FORMAT_R10G10B10A2_UNORM;
       ComPtr<ID3D12CommandQueue> replacementQueue;
       Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&replacementQueue)),"replacement queue");
-      Check(factory->CreateSwapChainForHwnd(replacementQueue.Get(),hwnd,&desc,nullptr,nullptr,&base),"same-window replacement");
+      Check(CreateTestSwapchain(legacyFactory,factory.Get(),replacementQueue.Get(),hwnd,desc,nullptr,&base),"same-window replacement");
       Check(base.As(&chain),"replacement chain4"); base.Reset();
       Require(options(replacementViewport,off)==sl::Result::eOk,"replacement FG options");
       Check(chain->Present(0,0),"replacement disabled Present");
@@ -727,6 +763,7 @@ int main(int argc,char** argv) {
     std::cout<<"Presentation owner: Intel only; feature requests preserved; discovery stopped before shutdown"<<std::endl;
     Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"diagnostic log did not drain at test boundary");
     Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");
+    if(legacyFactory) std::cout<<"Legacy factory: inference, resize, fallback and recreation verified"<<std::endl;
     std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl; return 1; }

@@ -9,9 +9,10 @@ import sys
 import xml.etree.ElementTree as ET
 
 p=argparse.ArgumentParser()
-p.add_argument('--revision',required=True,choices=['R1.9.2','R1.9.3','R1.9.4'])
+p.add_argument('--revision',required=True,choices=['R1.9.2','R1.9.3','R1.9.4','R1.9.5'])
 p.add_argument('--output',type=Path,required=True)
 p.add_argument('--alternate-ll',type=Path,required=True)
+p.add_argument('--legacy-streamline',type=Path)
 a=p.parse_args()
 root=Path(__file__).resolve().parent.parent
 build=root/'build/tests'
@@ -19,7 +20,7 @@ addon=build/'xemfg/Release/renodx-mfgunlock-native.addon64'
 sha=lambda path:hashlib.sha256(path.read_bytes()).hexdigest()
 digest=sha(addon)
 cases=ET.parse(root/f'build/ctest-native-{a.revision.lower()}.xml').getroot().findall('.//testcase')
-if len(cases)!={'R1.9.2':94,'R1.9.3':95,'R1.9.4':97}[a.revision] or any(c.find('failure') is not None for c in cases):
+if len(cases)!={'R1.9.2':94,'R1.9.3':95,'R1.9.4':97,'R1.9.5':101}[a.revision] or any(c.find('failure') is not None for c in cases):
     raise ValueError('Complete passing CTest report required')
 by_name={c.attrib['name']:c for c in cases}
 last_test=(build/'Testing/Temporary/LastTest.log').read_text(encoding='utf-8')
@@ -62,10 +63,26 @@ summary=dict(addon_sha256=digest,ctest=dict(total=len(cases),failed=0,
     sdk_cases=sdk,compat_cases=compat,streamline_cases=streamline,
     capcom_flags=receipt('xemfg_native_capcom_flags'),
     gameplay_validated=False,displayed_pacing_measured=False,physical_latency_measured=False)
-if a.revision in ('R1.9.3','R1.9.4'): summary['retirement_case']=receipt('xemfg_native_retire_source_sleep')
-if a.revision=='R1.9.4':
+if a.revision in ('R1.9.3','R1.9.4','R1.9.5'): summary['retirement_case']=receipt('xemfg_native_retire_source_sleep')
+if a.revision in ('R1.9.4','R1.9.5'):
     summary['producer_case']=receipt('xemfg_native_producer_shadow')
     summary['visible_case']=receipt('xemfg_real_streamline_visible')
+if a.revision=='R1.9.5':
+    summary['legacy_cases']={f'{kind}-{route}':receipt(f'xemfg_{kind}_legacy_{route}')
+        for kind in ('native','real_streamline') for route in ('XeLL','Reflex')}
+    if not a.legacy_streamline: raise ValueError('Explicit Control Streamline directory required')
+    summary['control_streamline_cases']={}
+    for route in ('XeLL','Reflex'):
+        run=subprocess.run([sys.executable,str(root/'tests/xemfg_streamline_recreate.py'),
+            '--directory',str(build/'native-checks'),'--addon',str(addon),
+            '--exe',str(build/'xemfg/Release/xemfg_native_smoke.exe'),
+            '--reshade',cache['XEMFG_OFFLINE_RESHADE'],'--sdk-fg',cache['XEMFG_OFFLINE_FG'],
+            '--sdk-ll',cache['XEMFG_OFFLINE_LL'],'--streamline',str(a.legacy_streamline),
+            '--generate','--early-addon','--legacy-factory','--latency-output',route],cwd=root,text=True,capture_output=True,timeout=85)
+        if run.returncode: raise ValueError(run.stdout+run.stderr)
+        directory=Path(re.findall(r'Evidence: ([^\r\n]+)',run.stdout)[0].strip())
+        summary['control_streamline_cases'][route]=dict(directory=str(directory),result_sha256=sha(directory/'result.json'))
+        print('Control Streamline '+route+': passed',flush=True)
 a.output.mkdir(parents=True,exist_ok=True)
 (a.output/'validation-summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
 print('Validation:',a.output/'validation-summary.json')

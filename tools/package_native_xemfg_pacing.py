@@ -16,19 +16,20 @@ def sha(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--revision', choices=('R1.8', 'R1.9', 'R1.9.1', 'R1.9.2', 'R1.9.3', 'R1.9.4'), default='R1.8')
+    ap.add_argument('--revision', choices=('R1.8', 'R1.9', 'R1.9.1', 'R1.9.2', 'R1.9.3', 'R1.9.4', 'R1.9.5'), default='R1.8')
     for name in ('output', 'evidence', 'previous-addon', 'official-addon', 'intel-sdk'):
         ap.add_argument('--' + name, type=Path, required=True)
     a = ap.parse_args()
     compat = a.revision != 'R1.8'
-    producer = a.revision == 'R1.9.4'
-    retirement = a.revision in ('R1.9.3','R1.9.4')
-    startup = a.revision in ('R1.9.2','R1.9.3','R1.9.4')
-    handoff = a.revision in ('R1.9.1', 'R1.9.2','R1.9.3','R1.9.4')
+    legacy = a.revision == 'R1.9.5'
+    producer = a.revision in ('R1.9.4','R1.9.5')
+    retirement = a.revision in ('R1.9.3','R1.9.4','R1.9.5')
+    startup = a.revision in ('R1.9.2','R1.9.3','R1.9.4','R1.9.5')
+    handoff = a.revision in ('R1.9.1', 'R1.9.2','R1.9.3','R1.9.4','R1.9.5')
     revision = a.revision
-    previous = 'R1.9.3' if producer else 'R1.9.2' if retirement else 'R1.9.1' if startup else 'R1.9' if handoff else 'R1.8' if compat else 'R1.7.5'
-    total = 97 if producer else 95 if retirement else 94 if startup else 89 if compat else 80
-    report_name = 'producer-command-report.md' if producer else 'presentation-retirement-report.md' if retirement else 'presentation-ownership-report.md' if startup else 'game-status-report.md' if handoff else 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
+    previous = 'R1.9.4' if legacy else 'R1.9.3' if producer else 'R1.9.2' if retirement else 'R1.9.1' if startup else 'R1.9' if handoff else 'R1.8' if compat else 'R1.7.5'
+    total = 101 if legacy else 97 if producer else 95 if retirement else 94 if startup else 89 if compat else 80
+    report_name = 'legacy-factory-report.md' if legacy else 'producer-command-report.md' if producer else 'presentation-retirement-report.md' if retirement else 'presentation-ownership-report.md' if startup else 'game-status-report.md' if handoff else 'compatibility-cards-report.md' if compat else 'pacing-reflex-report.md'
     root = Path(__file__).resolve().parent.parent
     def git(*args):
         return subprocess.check_output(['git', *args], cwd=root, text=True).strip()
@@ -90,7 +91,21 @@ def main():
             result=json.loads((Path(validation[key]['directory'])/'result.json').read_text())
             if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64']!=digest or not result.get(field):
                 raise ValueError('Missing matching producer/visible evidence: '+key)
-    previous_hash = '8e4ffb153b40bed7d54d0c51f0a037d41773190f9c02f24b8bc139fc34f694c2' if producer else 'e7e3a6c437d2dc19a3eabdb1dc03bf298539c2a129275acd3c8ca3b38fdad15c' if retirement else '62a85ad1d8c7ca63e5e99406c56bd77888370d1cb41ff2f43ef92f780c47b5e9' if startup else '513d6dde26309a2737c29a23f31e46322a779bc27ee6605488a2ff0490a9fed1' if handoff else '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
+    if legacy:
+        expected_legacy={f'{kind}-{route}' for kind in ('native','real_streamline') for route in ('XeLL','Reflex')}
+        if set(validation.get('legacy_cases',{}))!=expected_legacy:
+            raise ValueError('Incomplete legacy factory coverage')
+        for label,receipt in validation['legacy_cases'].items():
+            result=json.loads((Path(receipt['directory'])/'result.json').read_text())
+            if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64']!=digest or not result.get('legacy_factory_verified'):
+                raise ValueError('Legacy factory contract failed: '+label)
+        if set(validation.get('control_streamline_cases',{}))!={'XeLL','Reflex'}:
+            raise ValueError('Missing Control runtime lifecycle matrix')
+        for label,receipt in validation['control_streamline_cases'].items():
+            result=json.loads((Path(receipt['directory'])/'result.json').read_text())
+            if result['exit'] or result['inputs']['renodx-mfgunlock-native.addon64']!=digest or not all(result.get(k) for k in ('legacy_factory_verified','presentation_isolated','shutdown_completed','inference_verified')):
+                raise ValueError('Control runtime lifecycle failed: '+label)
+    previous_hash = '66eb4e89bb6b695d476a42bc5431a33801fd627d68cee7834e0eca188e02af81' if legacy else '8e4ffb153b40bed7d54d0c51f0a037d41773190f9c02f24b8bc139fc34f694c2' if producer else 'e7e3a6c437d2dc19a3eabdb1dc03bf298539c2a129275acd3c8ca3b38fdad15c' if retirement else '62a85ad1d8c7ca63e5e99406c56bd77888370d1cb41ff2f43ef92f780c47b5e9' if startup else '513d6dde26309a2737c29a23f31e46322a779bc27ee6605488a2ff0490a9fed1' if handoff else '6825a8e2d7a3f5d57899f24db192be9b3bc68d3196e8d402760b7d8da577cf42' if compat else 'e054d4919753de2431a3259048c689982d6e5cc6d9f8d7f0b972179bdef14080'
     if sha(a.previous_addon) != previous_hash:
         raise ValueError(previous + ' rollback differs')
     if sha(a.official_addon) != '9715987f6323a2699dd5b7636412258a6b97a180a4d70c0f79d286714e2972e2':
@@ -99,7 +114,7 @@ def main():
         raise ValueError('Refuse to overwrite a sealed package')
     assets = {
         'renodx-mfgunlock.addon64': addon,
-        report_name: root / ('docs/research/xemfg-r1.9.4-producer-commands-2026-10-20.md' if producer else 'docs/research/xemfg-r1.9.3-presentation-retirement-2026-10-20.md' if retirement else 'docs/research/xemfg-r1.9.2-presentation-ownership-2026-10-20.md' if startup else 'docs/research/xemfg-r1.9.1-game-status-2026-10-20.md' if handoff else 'docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
+        report_name: root / ('docs/research/xemfg-r1.9.5-legacy-factory-2026-10-20.md' if legacy else 'docs/research/xemfg-r1.9.4-producer-commands-2026-10-20.md' if producer else 'docs/research/xemfg-r1.9.3-presentation-retirement-2026-10-20.md' if retirement else 'docs/research/xemfg-r1.9.2-presentation-ownership-2026-10-20.md' if startup else 'docs/research/xemfg-r1.9.1-game-status-2026-10-20.md' if handoff else 'docs/research/xemfg-r1.9-compatibility-cards-2026-10-20.md' if compat else 'docs/research/xemfg-r1.8-pacing-reflex-2026-10-20.md'),
         f'{"archive" if startup else "rollback"}/renodx-mfgunlock-{previous.lower()}.addon64': a.previous_addon,
         'rollback/renodx-mfgunlock-1.4.5.addon64': a.official_addon,
         'Restore-MFGBackup.ps1': root / 'tools/Restore-MFGBackup.ps1',
@@ -134,11 +149,24 @@ def main():
         for label,key in (('Producer','producer_case'),('Visible','visible_case')):
             for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log'):
                 assets[f'evidence/{label}/{name}']=Path(validation[key]['directory'])/name
-        for name in ('pragmata-boot.json','producer-negative.json'):
+        if not legacy:
+            for name in ('pragmata-boot.json','producer-negative.json'):
+                assets['evidence/'+name]=a.evidence/name
+            boot=json.loads((a.evidence/'pragmata-boot.json').read_text())
+            if boot['addon_sha256']!=digest or boot['admission']['resources']!=7 or boot['admission']['failed']:
+                raise ValueError('Missing matching game boot/input evidence')
+    if legacy:
+        for label,receipt in validation['legacy_cases'].items():
+            for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log'):
+                assets[f'evidence/Legacy-{label}/{name}']=Path(receipt['directory'])/name
+        for label,receipt in validation['control_streamline_cases'].items():
+            for name in ('result.json','MFGAdaUnlock-XeMFG.log','ReShade.log'):
+                assets[f'evidence/Control-Streamline-{label}/{name}']=Path(receipt['directory'])/name
+        for name in ('control-baseline.json','legacy-negative.json'):
             assets['evidence/'+name]=a.evidence/name
-        boot=json.loads((a.evidence/'pragmata-boot.json').read_text())
-        if boot['addon_sha256']!=digest or boot['admission']['resources']!=7 or boot['admission']['failed']:
-            raise ValueError('Missing matching game boot/input evidence')
+        negative=json.loads((a.evidence/'legacy-negative.json').read_text())
+        if negative['exit']==0 or negative['inputs']['renodx-mfgunlock-native.addon64']!=previous_hash or 'native output/Streamline/XeLL not ready' not in negative['stderr']:
+            raise ValueError('Missing sealed R1.9.4 negative reproduction')
     for page in range(4):
         assets[f'evidence/ui/page-{page}.png'] = root / f'build/tests/ui-preview/page-{page}.png'
     a.output.mkdir(parents=True)
@@ -192,11 +220,23 @@ def main():
             'Pragmata boot: disabling the Steam overlay eliminated the swapchain recreation failure in a controlled boot. Keeping it enabled still freezes; this compatibility problem is NOT fixed.\n'
             'Keep the Steam overlay disabled for this Pragmata candidate. Gameplay interpolation still requires scene validation.\n'
             'The newest installation backup may contain R1.9.3. For a stable rollback use official 1.4.5 in rollback/, or the earlier game snapshot containing official 1.4.5 and the original runtimes.\n')
+    if legacy:
+        readme = (f'MFG Unlock 1.4.5 + XeMFG {revision} - local candidate\n\n'
+            'Adds IDXGIFactory::CreateSwapChain support for D3D12 games, including the API used by CONTROL Resonant.\n'
+            'Preserves buffer, format, sample, flags and fullscreen fields when routing to the Intel output. Unsupported formats use the original native call unchanged.\n'
+            '98 tests passed; 3 optional historical checks skipped. New real-SDK tests cover legacy creation, FP16 fallback, resize, same-window recreation, inference and shutdown, with XeLL and Reflex output.\n'
+            'The same isolated legacy test fails on sealed R1.9.4. This is not yet a CONTROL Resonant scene validation.\n'
+            'Existing DLSS-G 1.4.5, CUDA/Tensor, Reflex/XeLL, UI and pacing policies are retained; no performance or displayed-cadence gain is claimed.\n'
+            'UI Composition remains optional and off by default. No OptiScaler/ASI dependency. No runtime DLLs bundled.\n'
+            'Pragmata R1.9.4 interpolated in a separate gameplay session with Steam overlay disabled. Compatibility with Steam overlay enabled remains unresolved; keep it disabled for the Pragmata workaround.\n'
+            'Close the game before installation. Preserve ReShade, RenoDX and settings. Use Install-NativeXeMfgLocal.ps1 with the exact admitted Intel pair and a backup directory.\n'
+            'Rollback: close the game and restore the installation snapshot. Previous R1.9.4 is archived; official DLSS-G 1.4.5 is in rollback/.\n'
+            f'Read {report_name} for evidence and limits.\n')
     (a.output / 'README.txt').write_text(readme, encoding='utf-8')
     source = {p.relative_to(root).as_posix(): sha(p) for folder in ('src', 'tests', 'tools', 'docs')
               for p in sorted((root / folder).rglob('*')) if p.is_file() and '__pycache__' not in p.parts}
     manifest = dict(identity='Native ReShade XeMFG '+revision, revision=revision, source_commit=git('rev-parse', 'HEAD'),
-        branch=git('branch', '--show-current'), base_commit='60df2d970670cf850a7b661f04f8a69bd5902265' if producer else '96b9038d5c1add9efec9623fd0851feacc832ee3' if retirement else '0cbedd11ebd00a806a790fffee7510490ec72996' if startup else '1d007337be46ef0445b51544efa86b27506a3acb' if handoff else '8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
+        branch=git('branch', '--show-current'), base_commit='a003223a16c9336fe8ddf8746c16578a719eb145' if legacy else '60df2d970670cf850a7b661f04f8a69bd5902265' if producer else '96b9038d5c1add9efec9623fd0851feacc832ee3' if retirement else '0cbedd11ebd00a806a790fffee7510490ec72996' if startup else '1d007337be46ef0445b51544efa86b27506a3acb' if handoff else '8f7a45eedb5a54f4c29af1420facc8216fe8ca77' if compat else 'd3588a20bc950c0f13fcba627fd4d2c6d40c8088',
         official_1_4_5_commit='0fe65579d287581107babe267ee3e48c9135bf8a',
         addon_sha256=digest, optiscaler_dependency=False, asi_dependency=False, runtime_dlls_bundled=False,
         gameplay_validated=False, displayed_pacing_gain_measured=False, physical_latency_gain_measured=False,
@@ -211,7 +251,10 @@ def main():
     if producer:
         manifest['borrowed_producer_commands']=True
         manifest['pragmata_steam_overlay_compatibility']='unresolved with overlay enabled; disabled overlay required for tested boot'
-        manifest['pragmata_boot_inputs_accepted']=True
+        manifest['pragmata_boot_inputs_accepted']=None if legacy else True
+    if legacy:
+        manifest['legacy_dxgi_factory_creation']=True
+        manifest['control_scene_validated']=False
     (a.output / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
     (a.output / 'SHA256SUMS.txt').write_text(''.join(f'{sha(p)}  {p.relative_to(a.output).as_posix()}\n'
         for p in sorted(a.output.rglob('*')) if p.is_file()), encoding='utf-8')

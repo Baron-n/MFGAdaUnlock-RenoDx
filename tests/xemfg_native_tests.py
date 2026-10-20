@@ -20,6 +20,7 @@ ap.add_argument('--overlay-foreground',action='store_true')
 ap.add_argument('--capcom-flags',action='store_true')
 ap.add_argument('--retire-sleep',action='store_true')
 ap.add_argument('--producer-shadow',action='store_true')
+ap.add_argument('--legacy-factory',action='store_true')
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -50,6 +51,7 @@ flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys
 if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
+if args.legacy_factory: flags+=['--legacy-factory']
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
@@ -89,12 +91,19 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('XeFG','XeFGFlipMetering',fallback='')=='on'
     and prefs.get('XeFG','UIComposition',fallback='')=='0'
     and prefs.get('XeFG','SdkDeadlines',fallback='')=='0')
+legacy_verified=(('Legacy factory: inference, resize, fallback and recreation verified' in result.stdout
+    and 'Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
+# Async diagnostics deliberately drop records rather than block a producer.
+# The child checks each real API call, SDK status and output lifetime directly;
+# event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
     'stdout':result.stdout,'stderr':result.stderr,'control_preferences_persisted':persisted,
     'sdk_policy_activation_verified':policy_activation,'sdk_deadline_records':len(sdk_deadlines),
     'sdk_deadline_passthrough_verified':passthrough,'hud_filter_verified':hud_filter,'passthrough_identity_verified':passthrough_identity,
     'native_reshade_keys_verified':native_keys,'native_reshade_child_verified':native_child,'foreground_reshade_verified':foreground_verified,
     'production_panel_verified':'Production panel draws=' in result.stdout,
-    'producer_shadow_verified':args.producer_shadow and result.returncode==0 and 'Heap producer commands: accepted; non-code implementation: rejected; generation resumed' in result.stdout},indent=2),encoding='utf-8')
+    'producer_shadow_verified':args.producer_shadow and result.returncode==0 and 'Heap producer commands: accepted; non-code implementation: rejected; generation resumed' in result.stdout,
+    'legacy_factory_verified':legacy_verified,
+    'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False else 1)
