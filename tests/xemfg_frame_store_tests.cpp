@@ -7,6 +7,16 @@
 #include <stdexcept>
 using namespace mfgunlock::xemfg::native;
 namespace {
+struct Allocation final : IUnknown {
+  ULONG references{1};
+  HRESULT STDMETHODCALLTYPE QueryInterface(REFIID id,void** out) override {
+    if(!out) return E_POINTER; *out=nullptr;
+    if(id!=__uuidof(IUnknown)) return E_NOINTERFACE;
+    *out=this; AddRef(); return S_OK;
+  }
+  ULONG STDMETHODCALLTYPE AddRef() override { return ++references; }
+  ULONG STDMETHODCALLTYPE Release() override { return --references; }
+};
 void Check(bool ok,const char* text) { if(!ok) throw std::runtime_error(text); }
 template<bool Fixed> double Bench(uint32_t frames,uint64_t& checksum) {
   FrameStore<Frame> fixed;
@@ -37,6 +47,13 @@ int main(int argc,char** argv) {
     Check(!store.Find(7) && store.Find(8) && store.Find(16),"late/future frame retention changed");
     Check(store.Acquire(17)->resources==0,"reused slot inherited tags");
     store.clear(); Check(store.empty(),"reset did not clear entries");
+    Allocation allocation;
+    store.Acquire(1)->hudAllocations[0]=&allocation;
+    Check(allocation.references==2,"HUD allocation identity was not pinned");
+    store.Prune(4);
+    Check(allocation.references==1,"retired HUD allocation identity was leaked");
+    store.Acquire(5)->hudAllocations[0]=&allocation;
+    store.clear(); Check(allocation.references==1,"epoch reset retained HUD allocation identity");
     store.Acquire(UINT32_MAX-1); store.Acquire(UINT32_MAX); store.Acquire(1); store.Acquire(2);
     store.Prune(1);
     Check(!store.Find(UINT32_MAX-1) && store.Find(UINT32_MAX) && store.Find(2),"modular age pruning failed");

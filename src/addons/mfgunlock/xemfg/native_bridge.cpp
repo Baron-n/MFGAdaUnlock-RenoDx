@@ -118,8 +118,9 @@ Output::~Output() {
         ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue;
         ComPtr<IDXGIFactory2> factory; xell_context_handle_t ll;
         ComPtr<IDXGISwapChain4> proxy; std::shared_ptr<reframework::Peer> peer;
+        FrameStore<Frame> frames;
       };
-      new Pending{device,queue,factory,ll,std::move(quarantinedProxy),std::move(reframeworkPeer)};
+      new Pending{device,queue,factory,ll,std::move(quarantinedProxy),std::move(reframeworkPeer),std::move(frames)};
       xess_mod::WriteLog("native_retirement_pending","\"context\":"+std::to_string(uintptr_t(fg)));
       return;
   }
