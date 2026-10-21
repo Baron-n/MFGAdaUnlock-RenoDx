@@ -4,6 +4,7 @@
 // count admission and the extra-output pacing for the admitted provider pair.
 #include "../backend_selection.hpp"
 #include "backend_api.hpp"
+#include "module_snapshot.hpp"
 #include "async_log.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/port/model_port.h"
@@ -139,24 +140,9 @@ bool HostRedirect(const void* entry) noexcept {
   return false;
 }
 bool IsOptiScaler10(HMODULE module) {
-  auto path=ModulePath(module); DWORD unused{};
-  const auto bytes=GetFileVersionInfoSizeW(path.c_str(),&unused);
-  if (!bytes || bytes>1'000'000) return false;
-  std::vector<unsigned char> info(bytes);
-  if (!GetFileVersionInfoW(path.c_str(),0,bytes,info.data())) return false;
-  VS_FIXEDFILEINFO* fixed{}; UINT n{};
-  if (!VerQueryValueW(info.data(),L"\\",reinterpret_cast<void**>(&fixed),&n)
-      || n<sizeof(*fixed) || HIWORD(fixed->dwFileVersionMS)!=10) return false;
-  struct Translation { WORD language, codepage; }* translations{};
-  if (!VerQueryValueW(info.data(),L"\\VarFileInfo\\Translation",reinterpret_cast<void**>(&translations),&n)) return false;
-  for (unsigned i=0;i<n/sizeof(Translation);++i) {
-    wchar_t key[96]{}; swprintf_s(key,L"\\StringFileInfo\\%04x%04x\\ProductName",translations[i].language,translations[i].codepage);
-    wchar_t* product{}; UINT size{};
-    if (VerQueryValueW(info.data(),key,reinterpret_cast<void**>(&product),&size)
-        && size && wcscmp(product,L"OptiScaler")==0) return true;
-  }
-  return false;
+  return mfgunlock::xemfg::module_snapshot::IsOptiScaler10(module);
 }
+
 uint32_t Vendor(ID3D12Device* device) {
   if (!device) return 0;
   ComPtr<IDXGIFactory4> factory; ComPtr<IDXGIAdapter1> adapter;
