@@ -76,6 +76,7 @@ sl::Result ShutdownHook() {
   // A plugin's shutdown may itself resolve a function on another thread.
   { std::lock_guard guard(discovery); presentationIsolated=false; }
   xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"drained\"");
+  ExportCompatibilityReport("shutdown");
   ClearRetainedNative();
   const auto result=shutdown();
   xess_mod::WriteLog("native_streamline_shutdown","\"phase\":\"complete\",\"result\":"+std::to_string(uint32_t(result)));
@@ -131,7 +132,7 @@ void CountTags(const std::shared_ptr<Output>& o,uint32_t viewport,const sl::Reso
     if(!slot.count) { slot={viewport,1}; counted=true; break; }
   }
   if(!counted) ++o->otherViewportTags;
-  if(++o->taggedCalls==240) LogTagHistogram(*o,"steady");
+  if(++o->taggedCalls==240) { LogTagHistogram(*o,"steady"); ExportCompatibilityReport("steady"); }
 }
 // First constants of each output, verbatim: the conventions a new game uses.
 void SampleConstants(Output& o,const sl::Constants& c,uint32_t id,uint32_t issues) {

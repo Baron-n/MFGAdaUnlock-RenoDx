@@ -251,6 +251,15 @@ histogram=[e for e in events if e.get('event')=='native_tag_histogram']
 diagnostics_verified['tag_histogram']=bool(histogram) and any(
     any(t.get('type')==0 and t.get('count',0)>0 for t in h.get('types',[])) and any(v.get('viewport')==0 for v in h.get('viewports',[]))
     for h in histogram)
+# The report is written to the game folder without a button press.
+exported=d/'MFGAdaUnlock-XeMFG-compatibility.json'
+try:
+    exported_report=json.loads(exported.read_text(encoding='utf-8')) if exported.is_file() else {}
+except json.JSONDecodeError:
+    exported_report={}
+diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock.compatibility'
+    and exported_report.get('export_reason') in ('steady','retired','shutdown')
+    and not re.search(r'[A-Za-z]:[\\/]',json.dumps(exported_report)))
 if args.struct_probe:
     refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
     diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),

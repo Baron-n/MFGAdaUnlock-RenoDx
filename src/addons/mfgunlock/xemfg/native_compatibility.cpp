@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: MIT
-// Support export contains metadata only. Serialization and file hashing are
-// explicit user operations, never part of the render/Present hot path.
+// Support export contains metadata only. Serialization and file hashing run
+// on request or on a worker thread at lifecycle points, never in Present.
 #include "native_internal.hpp"
 #include "backend_api.hpp"
+#include "../backend_selection.hpp"
 #include "vendor/sha256_util.h"
 #include <nlohmann/json.hpp>
 #include <filesystem>
+#include <fstream>
+#include <thread>
 #include <array>
 #include <cstring>
 namespace mfgunlock::xemfg::native {
@@ -31,9 +34,10 @@ Json Module(HMODULE module) {
   return value;
 }
 }
-std::string CompatibilityReport() {
+std::string CompatibilityReport(const char* exportReason) {
   auto& s=State();const auto status=Snapshot();
   Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.5.0-rc.5"},
+      {"export_reason",exportReason?exportReason:"user"},
       {"adapter",status.output?"streamline_d3d12":"none"},{"fallback","xemfg_selected_passthrough"},
       {"status",status.detail},
       {"displayed_frames_measured",false},{"physical_latency_measured",false},
@@ -102,6 +106,32 @@ std::string CompatibilityReport() {
       "SDK output counts are not display or scanout measurements",
       "Native XeFG and FSR-FG adapters require their own validated contracts"};
   return report.dump(2);
+}
+namespace {
+void WriteReport(const char* reason) noexcept {
+  try {
+    const auto directory=backend::Directory(); if(directory.empty()) return;
+    const auto text=CompatibilityReport(reason);
+    const auto target=directory/L"MFGAdaUnlock-XeMFG-compatibility.json";
+    auto temporary=target; temporary+=L".writing";
+    {
+      std::ofstream out(temporary,std::ios::binary|std::ios::trunc);
+      out.write(text.data(),std::streamsize(text.size()));
+      if(!out) return;
+    }
+    if(!MoveFileExW(temporary.c_str(),target.c_str(),MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) DeleteFileW(temporary.c_str());
+  } catch(...) {}
+}
+}
+void ExportCompatibilityReport(const char* reason) noexcept {
+  if(!strcmp(reason,"shutdown")) { WriteReport(reason); return; }
+  static std::atomic<bool> pending{};
+  if(pending.exchange(true)) return;
+  try {
+    // The caller may hold the output lock; the report uses try_lock, so give
+    // that frame time to finish. The addon is pinned for the process lifetime.
+    std::thread([reason] { Sleep(200); WriteReport(reason); pending=false; }).detach();
+  } catch(...) { pending=false; }
 }
 void RecordDeviceFailure(Output& o,HRESULT present) {
   o.presentFailure=present;
