@@ -31,6 +31,9 @@ ap.add_argument('--foreign-refs',action='store_true')
 ap.add_argument('--retained-output',action='store_true')
 ap.add_argument('--secondary-viewport',action='store_true')
 ap.add_argument('--normal-depth',action='store_true')
+ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
+ap.add_argument('--ref-v1',type=Path)
+ap.add_argument('--ref-legacy',type=Path)
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -41,6 +44,11 @@ manifest={}
 for src,name in inputs.items():
     shutil.copy2(src,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
+if args.reframework:
+    for src in (args.ref_v1,args.ref_legacy):
+        if src is None: ap.error('REFramework cases require both fixture paths')
+        shutil.copy2(src,d/src.name)
+        manifest[src.name]=hashlib.sha256(src.read_bytes()).hexdigest()
 if args.runtime_layout!='adjacent':
     storage=d/'_storage_'; storage.mkdir()
     for name in ('libxess_fg.dll','libxell.dll'):
@@ -65,6 +73,7 @@ if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
+if args.reframework: flags+=['--ref-'+args.reframework]
 for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
@@ -72,6 +81,19 @@ if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-start
 result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.reframework:
+    blocked=args.reframework in ('blocked','invalid','exception','ambiguous')
+    decisions=[e for e in events if e.get('event')=='native_reframework_retire']
+    expected={'detached':2,'not-tracked':1,'blocked':3,'invalid':4,'exception':5,'late':2,'legacy':0,'ambiguous':7}[args.reframework]
+    verified=bool(decisions) and all(e['decision']==expected for e in decisions)
+    if blocked:
+        verified=verified and 'PASS: REFramework refusal preserved proxy/context, blocked recreation and avoided retry' in result.stdout
+        verified=verified and not any(e.get('event')=='native_output_retired' for e in events)
+    else:
+        verified=verified and 'REFramework safe handoff: reentrant callback, module lease and recreation verified' in result.stdout
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,scenario=args.reframework,retirement_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.parallel_factory:
     verified='PASS: simultaneous factory callers published one Intel owner; both outputs and contexts retired' in result.stdout
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,parallel_factory_verified=verified),indent=2))

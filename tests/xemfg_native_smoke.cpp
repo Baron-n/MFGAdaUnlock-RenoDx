@@ -179,6 +179,14 @@ int main(int argc,char** argv) {
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     const auto flag=[&](const char* name) { for(int i=2;i<argc;++i) if(std::string(argv[i])==name) return true; return false; };
     const bool legacyFactory=flag("--legacy-factory");
+    const bool refLegacy=flag("--ref-legacy"),refLate=flag("--ref-late"),refAmbiguous=flag("--ref-ambiguous");
+    const bool refBlocked=flag("--ref-blocked") || flag("--ref-invalid") || flag("--ref-exception") || refAmbiguous;
+    const bool refTest=refBlocked || refLegacy || refLate || flag("--ref-detached") || flag("--ref-not-tracked");
+    HMODULE refFixture{},refOther{};
+    if(refTest && !refLate) {
+      refFixture=LoadLibraryW(refLegacy?L".\\reframework-legacy-fixture.dll":L".\\reframework-v1-fixture.dll");
+      Require(refFixture,"REFramework fixture preload");
+    }
     if(flag("--real-streamline")) AddVectoredExceptionHandler(1,&CaptureIsolatedException);
     if(flag("--preload-runtimes")) {
       Require(LoadLibraryW(L".\\_storage_\\libxess_fg.dll")!=nullptr,"preload stored XeFG");
@@ -818,7 +826,32 @@ int main(int argc,char** argv) {
         std::cout<<"Foreground ReShade: opens=6 closes=6; production panel drawn; game commands captured/released\n";
       }
     }
+    // The foreign peer re-enters AfterPresent on a separate thread while our
+    // output is retiring. It must see the retired epoch without an io deadlock.
+    if(refLate) {refFixture=LoadLibraryW(L".\\reframework-v1-fixture.dll");Require(refFixture,"late REFramework load");}
+    if(refAmbiguous) {refOther=LoadLibraryW(L".\\reframework-legacy-fixture.dll");Require(refOther,"late second REFramework fixture");}
+    uint32_t(*refCalls)(){};
+    uint32_t(*refCallbacks)(){};
+    if(refTest) {
+      refCalls=Import<uint32_t(*)()>(refFixture,"REFTestCalls");
+      refCallbacks=Import<uint32_t(*)()>(refFixture,"REFTestCallbacks");
+      const auto response=flag("--ref-blocked")?2u:flag("--ref-invalid")?99u:flag("--ref-exception")?0xfffffffeu:flag("--ref-not-tracked")?0u:1u;
+      Import<void(*)(uint32_t,void(*)())>(refFixture,"REFTestConfigure")(response,Import<void(*)()>(addon,"MFGAXeNativeRefresh"));
+    }
     chain.Reset();
+    if(refBlocked) {
+      modelStatus(&ms,sizeof(ms));Require(ms.contexts==1,"blocked peer released the Intel context");
+      Require(overlayStatus(&os,sizeof(os)) && os.created>os.destroyed,"blocked peer released final native proxy/runtime");
+      Require(refCalls()==(refAmbiguous?0u:1u),"failed peer called repeatedly or ambiguous peer invoked");
+      if(!refAmbiguous)Require(refCallbacks()==1,"foreign callback could not re-enter after closing admission");
+      const auto refused=CreateTestSwapchain(legacyFactory,factory.Get(),queue.Get(),hwnd,desc,nullptr,&base);
+      Require(FAILED(refused) && !base,"new context created after refused retirement");
+      modelStatus(&ms,sizeof(ms));Require(ms.contexts==1,"retry destroyed quarantined context");
+      Require(refCalls()==(refAmbiguous?0u:1u),"automatic handshake retry");
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"blocked handoff log flush");
+      std::cout<<"PASS: REFramework refusal preserved proxy/context, blocked recreation and avoided retry"<<std::endl;
+      return 0; // quarantine deliberately lives until process exit
+    }
     Require(overlayStatus(&os,sizeof(os)) && os.created>=2 && os.created==os.destroyed && os.failed==0,"manual ReShade runtime resize/teardown leaked");
     sl::ViewportHandle replacementViewport{7};
     Require(options(replacementViewport,off)==sl::Result::eOk,"retired output kept the old viewport selection");
@@ -843,6 +876,11 @@ int main(int argc,char** argv) {
       MSG message{}; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&message);
     }
     std::cout<<"Same-window output recreation: 3 cycles; context and overlay retired"<<std::endl;
+    if(refTest) {
+      Require(refCalls()==(refLegacy?0u:4u),"handoff did not run once per live context");
+      Require(refCallbacks()==(refLegacy?0u:4u),"retirement held input locks across a foreign callback");
+      std::cout<<"REFramework safe handoff: reentrant callback, module lease and recreation verified"<<std::endl;
+    }
     CloseHandle(event); DestroyWindow(hwnd);
     modelStatus(&ms,sizeof(ms)); Require(ms.contexts==0,"context/COM lifetime leaked");
     Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"fixture shutdown");

@@ -210,6 +210,7 @@ void DrawControls(PanelPage page) {
     const auto bridge=Snapshot();
     const auto overlay=OverlaySnapshot();
     const auto overlayInput=OverlayInputSnapshot();
+    const auto ref=reframework::Snapshot();
     ui::Section("System status","Use Copy diagnostic report when reporting a problem.");
     ui::Card card("##xe_model_details");
     ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
@@ -223,12 +224,16 @@ void DrawControls(PanelPage page) {
     ui::Readout("##xe_diag_latency","Latency output",status.xellObserved?"XeLL - active":status.reflexOutputObserved?"Reflex - active":"Waiting for game timing");
     ui::Readout("##xe_diag_ui","HUD handling",composition,compositionHelp);
     ui::Readout("##xe_diag_window","Display mode",window);
+    ui::Readout("##xe_diag_ref","REFramework",reframework::Description(ref),
+        "Optional cooperation before replacing the XeMFG swapchain. Older builds continue through the legacy path. This does not repair REFramework's internal hook monitor or certify an unknown version.");
+    if(ref.knownMonitorIssue) ui::Notice("This REFramework build was observed repeatedly reinstalling its XeFG hooks. Update to a version with the XeFG monitor fix.");
+    if(State().retirementFailed || !reframework::Safe(ref.result)) ui::Notice("Output retirement could not be coordinated safely. Restart the game before creating another XeMFG output.");
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
     if(ImGui::Button("Copy diagnostic report")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.9.3\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock XeMFG R1.12\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
@@ -250,6 +255,9 @@ void DrawControls(PanelPage page) {
           <<" submissions="<<bridge.submitted<<" SDK_result="<<bridge.sdkResult;
       const auto log=LogSnapshot();
       report<<"\nasync_log_started="<<log.started<<" pending="<<log.pending<<" dropped="<<log.dropped<<" failed_batches="<<log.failed;
+      report<<"\nreframework="<<reframework::Description(ref)<<" v1="<<ref.v1<<" known_monitor_issue="<<ref.knownMonitorIssue
+          <<" result="<<int(ref.result)<<" raw="<<ref.rawResult<<" version="<<ref.version
+          <<"\nreframework_path="<<ref.path<<"\nreframework_sha256="<<ref.sha256;
       ImGui::SetClipboardText(report.str().c_str());
     }
     ui::Tooltip("Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.");

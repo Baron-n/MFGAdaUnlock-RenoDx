@@ -14,6 +14,9 @@ void Draw() {
   const auto multiplier=std::to_string(s.multiplier.load())+"x";
   ui::Hero(multiplier.c_str(),"XeMFG","DX12",generating?"Generating frames":
       unavailable?"XeMFG unavailable":paused?"Game has paused frame generation":status.output?"Waiting for compatible frame inputs":"Waiting for the game",generating);
+  const auto ref=reframework::Snapshot();
+  if(ref.knownMonitorIssue) ui::Notice("This REFramework build has an observed XeFG hook-monitor conflict. Update REFramework to a version with the XeFG monitor fix.");
+  if(s.retirementFailed || !reframework::Safe(ref.result)) ui::Notice("Output retirement is blocked. Restart the game before creating another XeMFG output.");
   if(unavailable) {
     mfgunlock::xemfg::Status model;
     TryModelStatus(model);
@@ -55,7 +58,7 @@ void Draw() {
     });
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.11");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.12");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

@@ -21,10 +21,11 @@ class Swapchain final : public IDXGISwapChain4 {
 public:
   Swapchain(ComPtr<IDXGISwapChain4> value,std::shared_ptr<Output> o):chain(std::move(value)),owner(std::move(o)){}
   ~Swapchain() {
-    chain.Reset(); // Release the public Intel proxy before its context.
     // Retire the presentation owner now, even when an in-flight source sleep
     // or diagnostic snapshot still pins Output and its separate XeLL context.
-    owner->RetirePresentation();
+    // The versioned peer handshake runs while the Intel public proxy is still
+    // owned. Retirement either releases it before Destroy or quarantines both.
+    owner->RetirePresentation(std::move(chain));
     { auto& s=State(); std::lock_guard lock(s.lock);
       if(s.output.lock()==owner) {
         s.output.reset(); s.status.output=s.status.xell=s.status.enabled=s.status.inputs=false;

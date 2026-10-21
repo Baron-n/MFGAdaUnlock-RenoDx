@@ -6,6 +6,7 @@
 #include "native_diagnostics.hpp"
 #include "native_trace.hpp"
 #include "hud_inputs.hpp"
+#include "native_reframework.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -75,9 +76,11 @@ struct Output {
   int uiCompositionResult{};
   uint64_t uiCompositionUpdates{};
   bool invert{}, jitter{}, enabled{}, compatible{true},retired{};
+  std::shared_ptr<reframework::Peer> reframeworkPeer;
+  ComPtr<IDXGISwapChain4> quarantinedProxy;
   // The application proxy owns presentation. Shared operation leases may keep
   // XeLL alive after this method has released the window/Intel FG context.
-  void RetirePresentation();
+  void RetirePresentation(ComPtr<IDXGISwapChain4> publicProxy={});
   ~Output();
 };
 struct Bridge {

@@ -59,13 +59,41 @@ bool Api::Load() {
 #undef F
   return true;
 }
-void Output::RetirePresentation() {
-  std::lock_guard presenting(presents);
-  std::lock_guard inputs(io);
-  if(retired) return;
-  retired=true; enabled=false; ++epoch;
+void Output::RetirePresentation(ComPtr<IDXGISwapChain4> publicProxy) {
+  bool pendingSleep{};
+  {
+    // Drain all admitted source Present/input calls, then close admission and
+    // invalidate in-flight sleep tokens. External cooperation, COM Release and
+    // SDK Destroy run outside these locks: REF may call back on another thread.
+    std::lock_guard presenting(presents);
+    std::lock_guard inputs(io);
+    if(retired) return;
+    retired=true; enabled=false; ++epoch;
+    pendingSleep=sleepActive;
+  }
   auto& a=State().api;
   if(window) window->Retire();
+  if(fg && publicProxy) {
+    try {reframeworkPeer=reframework::Resolve(reframeworkPeer);} // also discovers late loads
+    catch(...) {
+      quarantinedProxy=std::move(publicProxy);State().retirementFailed=true;
+      Report("REFramework discovery failed during XeMFG retirement; restart required");return;
+    }
+    RuntimeCall trace("reframework_pre_retire",diagnosticOutput);
+    const auto decision=reframework::Prepare(reframeworkPeer,publicProxy.Get(),fg,hwnd);
+    trace.Result(int(decision),!reframework::Safe(decision));
+    const auto peer=reframework::Snapshot();
+    xess_mod::WriteLog("native_reframework_retire","\"output\":"+std::to_string(diagnosticOutput)
+        +",\"v1\":"+(peer.v1?"true":"false")+",\"decision\":"+std::to_string(int(decision))
+        +",\"raw_result\":"+std::to_string(peer.rawResult)+",\"path\":\""+escape(peer.path)+"\",\"sha256\":\""+peer.sha256+"\"");
+    if(!reframework::Safe(decision)) {
+      quarantinedProxy=std::move(publicProxy);
+      State().retirementFailed=true;
+      Report("REFramework did not authorize XeMFG output retirement; restart the game before creating another output");
+      return; // no proxy Release, disable, Destroy, or automatic retry
+    }
+  }
+  publicProxy.Reset(); // release the public proxy before destroying its context
   if(fg) {
     std::lock_guard lifecycle(sdkLifecycle);
     RuntimeCall trace("xefg_destroy",diagnosticOutput);
@@ -76,8 +104,8 @@ void Output::RetirePresentation() {
     trace.Result(result);
     xess_mod::WriteLog("native_output_retired","\"output\":"+std::to_string(diagnosticOutput)
         +",\"disable_result\":"+std::to_string(disabled)+",\"destroy_result\":"+std::to_string(result)
-        +",\"sleep_in_flight\":"+(sleepActive?"true":"false"));
-    if(result==0) fg=nullptr;
+        +",\"sleep_in_flight\":"+(pendingSleep?"true":"false"));
+    if(result==0) {std::lock_guard inputs(io);fg=nullptr;}
   }
 }
 Output::~Output() {
@@ -86,8 +114,12 @@ Output::~Output() {
   if(fg) {
       // Preserve every dependency if the SDK refuses retirement. Destruction
       // must not convert a leaked SDK reference into a freed XeLL/device.
-      struct Pending { ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue; ComPtr<IDXGIFactory2> factory; xell_context_handle_t ll; };
-      new Pending{device,queue,factory,ll};
+      struct Pending {
+        ComPtr<ID3D12Device> device; ComPtr<ID3D12CommandQueue> queue;
+        ComPtr<IDXGIFactory2> factory; xell_context_handle_t ll;
+        ComPtr<IDXGISwapChain4> proxy; std::shared_ptr<reframework::Peer> peer;
+      };
+      new Pending{device,queue,factory,ll,std::move(quarantinedProxy),std::move(reframeworkPeer)};
       xess_mod::WriteLog("native_retirement_pending","\"context\":"+std::to_string(uintptr_t(fg)));
       return;
   }
@@ -110,6 +142,16 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
     return E_NOINTERFACE;
   }
+  // Capability/identity discovery is confined to output creation/retirement.
+  // No REFramework is loaded and no per-frame probing or hashing is added.
+  if(State().retirementFailed) {Report("XeMFG output retirement was not confirmed; restart required");return E_FAIL;}
+  auto peer=reframework::Resolve();
+  if(!reframework::Safe(peer->info.result)) {
+    Report("XeMFG cannot identify a single REFramework peer safely; keeping the original presentation path");return E_NOINTERFACE;
+  }
+  if(peer->info.present) xess_mod::WriteLog("native_reframework_capability","\"v1\":"+(peer->info.v1?std::string("true"):std::string("false"))
+      +",\"known_monitor_issue\":"+(peer->info.knownMonitorIssue?"true":"false")
+      +",\"path\":\""+escape(peer->info.path)+"\",\"sha256\":\""+peer->info.sha256+"\",\"version\":\""+escape(peer->info.version)+"\"");
   std::unique_lock lifecycle(sdkLifecycle,std::defer_lock);
   { RuntimeCall trace("sdk_lifecycle_lock");lifecycle.lock(); }
   if(State().retirementFailed) {Report("XeMFG context retirement failed; restart the game before creating another output");return E_FAIL;}
@@ -138,6 +180,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   auto& s=State();
   if(!s.api.Load()) { Report("XeMFG provider pair or model hooks unavailable"); return E_NOINTERFACE; }
   auto o=std::make_shared<Output>(); o->queue=queue;o->hwnd=hwnd;
+  o->reframeworkPeer=std::move(peer);
   static std::atomic<uint64_t> outputGeneration{0}; o->diagnosticOutput=++outputGeneration;
   xess_mod::WriteLog("native_transport_identity","\"output\":"+std::to_string(o->diagnosticOutput)
       +",\"queue_unwrapped\":"+(queueChanged?"true":"false")+",\"factory_unwrapped\":"+(factoryChanged?"true":"false"));
