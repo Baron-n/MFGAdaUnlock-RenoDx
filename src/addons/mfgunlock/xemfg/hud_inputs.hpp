@@ -3,7 +3,15 @@
 #include <d3d12.h>
 #include <cstdint>
 namespace mfgunlock::xemfg::native {
-enum HudIssue:uint32_t { HudMetadata=1,HudFormat=2,HudExtent=4,HudUnreadable=8 };
+enum HudIssue:uint32_t { HudMetadata=1,HudFormat=2,HudExtent=4,HudUnreadable=8,HudConflict=16 };
+struct HudTagIdentity {
+  uintptr_t allocation{};
+  uint32_t state{},lifecycle{},x{},y{},width{},height{};
+  bool operator==(const HudTagIdentity&) const=default;
+};
+inline bool ConflictingHudTag(const HudTagIdentity& previous,const HudTagIdentity& next) {
+  return previous.allocation && !(previous==next);
+}
 // Structural checks only. Identical formats do not prove identical pixel
 // encoding. Intel permits R10G10B10A2 HDR inputs; do not copy NVIDIA's separate
 // two-bit UI-alpha prohibition into Intel's interpolation path.

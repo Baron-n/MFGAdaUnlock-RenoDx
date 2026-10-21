@@ -147,7 +147,10 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
             +",\"command\":"+std::string(command?"true":"false")+",\"sdk_result\":"+std::to_string(sdkResult));
       }
     };
-    if(!t.resource || !t.resource->native) { frame->resources&=~bit; continue; }
+    if(!t.resource || !t.resource->native) {
+      if(frame->resources&bit) { rejection="tag_removed_after_admission"; reject(HudConflict); }
+      frame->resources&=~bit; continue;
+    }
     if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || t.resource->structVersion!=1
         || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
     ComPtr<ID3D12Resource> resource;
@@ -173,6 +176,17 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     if(optional) {
       const auto issues=CheckHudInput(desc,o->format,o->width,o->height,data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
       if(issues) { rejection="optional_hud"; reject(issues); continue; }
+    }
+    const unsigned hudSlot=*type==XEFG_SWAPCHAIN_RES_UI?1:0;
+    ComPtr<IUnknown> allocation;
+    HudTagIdentity hudIdentity{};
+    if(optional) {
+      if(FAILED(resource.As(&allocation))) { rejection="allocation_identity"; reject(HudMetadata); continue; }
+      hudIdentity={reinterpret_cast<uintptr_t>(allocation.Get()),uint32_t(data.incomingState),uint32_t(t.lifecycle),
+          data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y};
+      if(ConflictingHudTag(frame->hudTags[hudSlot],hudIdentity)) {
+        rejection="conflicting_hud_tag"; reject(HudConflict); continue;
+      }
     }
     ComPtr<ID3D12CommandList> list;
     if(t.lifecycle==sl::eValidUntilPresent) data.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
@@ -201,6 +215,7 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     if(code<0) { sdkResult=code; rejection="sdk_tag"; frame->failed=true; reject(HudMetadata); }
     else {
       frame->resources|=bit;
+      if(optional) { frame->hudTags[hudSlot]=hudIdentity; frame->hudAllocations[hudSlot]=std::move(allocation); }
       if(optional && !(o->hudKindsSeen&bit)) {
         o->hudKindsSeen|=bit;
         xess_mod::WriteLog("native_hud_input","\"type\":"+std::to_string(*type)+",\"format\":"+std::to_string(desc.Format)
@@ -216,12 +231,12 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
 sl::Result TagHook(const sl::ViewportHandle& v,const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
   TraceInput("slSetTag",State().recording.load(),uint32_t(v));
   const auto r=setTag(v,t,n,c);
-  Tags(State().recording.load(),uint32_t(v),t,n,c); return r;
+  if(r==sl::Result::eOk) Tags(State().recording.load(),uint32_t(v),t,n,c); return r;
 }
 sl::Result TagFrameHook(const sl::FrameToken& f,const sl::ViewportHandle& v,
     const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
   TraceInput("slSetTagForFrame",FrameId(uint32_t(f)),uint32_t(v));
-  const auto r=setTagFrame(f,v,t,n,c); Tags(FrameId(uint32_t(f)),uint32_t(v),t,n,c); return r;
+  const auto r=setTagFrame(f,v,t,n,c); if(r==sl::Result::eOk) Tags(FrameId(uint32_t(f)),uint32_t(v),t,n,c); return r;
 }
 sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl::ViewportHandle& v) {
   TraceInput("slSetConstants",FrameId(uint32_t(f)),uint32_t(v));

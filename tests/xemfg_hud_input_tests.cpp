@@ -15,5 +15,11 @@ int main() {try {
   d.Flags=D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;Check(assess()&HudUnreadable,"non-readable HUD accepted");d.Flags=D3D12_RESOURCE_FLAG_NONE;
   d.SampleDesc.Count=4;Check(assess()&HudMetadata,"multisample UI accepted");d.SampleDesc.Count=1;
   d.DepthOrArraySize=2;Check(assess()&HudMetadata,"UI array accepted");
+  const HudTagIdentity a{0x1000,4,1,0,0,2560,1440};
+  auto b=a; Check(!ConflictingHudTag({},a) && !ConflictingHudTag(a,b),"first/identical tag rejected");
+  b.allocation=0x2000; Check(ConflictingHudTag(a,b),"allocation conflict admitted");
+  b=a; b.lifecycle=0; Check(ConflictingHudTag(a,b),"lifecycle conflict admitted");
+  b=a; b.x=1; Check(ConflictingHudTag(a,b),"extent conflict admitted");
+  b=a; b.state=8; Check(ConflictingHudTag(a,b),"state conflict admitted");
   std::cout<<"PASS: Intel-specific HUD format, extent, alpha precision and shader-read checks\n";return 0;
 } catch(const std::exception& e) {std::cerr<<e.what()<<'\n';return 1;} }

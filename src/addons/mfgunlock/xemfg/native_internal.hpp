@@ -41,6 +41,10 @@ struct Frame {
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
   uint32_t hudIssues{};
+  HudTagIdentity hudTags[2]{};
+  // Pin the allocation identity until frame retirement, never infer its
+  // generation from a reused address. Contents still obey the SDK lifecycle.
+  ComPtr<IUnknown> hudAllocations[2];
   uint32_t constantIssues{};
   LatencyOutput latencyOutput{LatencyOutput::XeLL};
   xefg_swapchain_frame_constant_data_t data{};
