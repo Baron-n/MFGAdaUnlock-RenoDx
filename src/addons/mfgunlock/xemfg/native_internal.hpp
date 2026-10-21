@@ -79,6 +79,8 @@ struct Output {
   uint32_t hudLogBudget{},hudKindsSeen{};
   uint32_t rejectedTagLogBudget{};
   uint32_t sleepAssociationLogBudget{};
+  uint32_t unsleptSimulationStarts{};
+  bool explicitSleepObserved{};
   uint32_t markerRejectLogBudget[3]{};
   uint32_t presentFailureLogBudget{};
   uint32_t constantLogBudget{},lastConstantIssues{UINT32_MAX};
@@ -136,7 +138,8 @@ inline Frame* FindFrame(Output& o,uint32_t id) {
   return o.frames.Acquire(id);
 }
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id,
-    PFun_slReflexSleep* nativeSleep=nullptr,const sl::FrameToken* token=nullptr);
+    PFun_slReflexSleep* nativeSleep=nullptr,const sl::FrameToken* token=nullptr,
+    std::optional<uint64_t> expectedEpoch={});
 bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
 bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);

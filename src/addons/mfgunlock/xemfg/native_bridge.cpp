@@ -140,6 +140,16 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
     return E_NOINTERFACE;
   }
+#if !defined(XESS_INIT_PROBE)
+  if(State().jitter) {
+    // The exact portable program set has no d243=1 reconstruction variant.
+    // A real SDK probe reaches decoder key 35112441167526893749578 and fails.
+    // Never alias it to the d243=0 program or relabel jittered inputs: that
+    // would trade a visible compatibility failure for incorrect motion.
+    Report("XeMFG interpolation unavailable: jittered-motion reconstruction shader is not supported yet");
+    return E_NOINTERFACE;
+  }
+#endif
   // Capability/identity discovery is confined to output creation/retirement.
   // No REFramework is loaded and no per-frame probing or hashing is added.
   if(State().retirementFailed) {Report("XeMFG output retirement was not confirmed; restart required");return E_FAIL;}
@@ -194,7 +204,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS) return E_NOINTERFACE;
   o->sleepConfigured=true; o->sleepLowLatency=sleep.bLowLatencyMode!=0; ++s.latencyModeUpdates;
   if(a.xefgSwapChainD3D12CreateContext(o->device.Get(),&o->fg)!=0) return E_NOINTERFACE;
-  a.xefgSwapChainSetLoggingCallback(o->fg,XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING,
+  a.xefgSwapChainSetLoggingCallback(o->fg,TraceEnabled()?XEFG_SWAPCHAIN_LOGGING_LEVEL_DEBUG:XEFG_SWAPCHAIN_LOGGING_LEVEL_WARNING,
       [](const char* message,xefg_swapchain_logging_level_t level,void*) {
         static std::atomic<uint32_t> messages{0};
         if(messages.fetch_add(1)<100) xess_mod::WriteLog("native_sdk_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(message?message:"")+"\"");
@@ -370,7 +380,7 @@ void Attach(HMODULE module) {
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
   wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable)));
   s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",DefaultInvertedDepth(executable)?1:0,ini.c_str())!=0;
-  s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",0,ini.c_str())!=0;
+  s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",DefaultJitteredMotion(executable)?1:0,ini.c_str())!=0;
   LoadControls();
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);
   ConfigureTrace(GetPrivateProfileIntW(L"Diagnostics",L"StallTrace",0,ini.c_str())!=0,

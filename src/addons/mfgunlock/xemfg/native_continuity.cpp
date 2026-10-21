@@ -73,25 +73,37 @@ HRESULT ReuseNativeOutput(IUnknown* source,HWND window,const DXGI_SWAP_CHAIN_DES
   entry->chain->AddRef();const auto remaining=entry->chain->Release(); // own balanced probe only
   if(remaining==1)return DXGI_ERROR_NOT_FOUND;
   ComPtr<ID3D12CommandQueue> queue;ComPtr<ID3D12Device> before,after,nativeBefore,nativeAfter;
-  DXGI_SWAP_CHAIN_DESC1 old{};HRESULT result=DXGI_ERROR_INVALID_CALL;
+  DXGI_SWAP_CHAIN_DESC1 old{};HRESULT result=DXGI_ERROR_INVALID_CALL;bool attemptedResize{};
   if(requested && out && source && SUCCEEDED(source->QueryInterface(IID_PPV_ARGS(&queue)))
       && queue->GetDesc().Type==D3D12_COMMAND_LIST_TYPE_DIRECT
       && SUCCEEDED(entry->queue->GetDevice(IID_PPV_ARGS(&before))) && SUCCEEDED(queue->GetDevice(IID_PPV_ARGS(&after)))
       && single_overlay::native::Unwrap(before.Get(),nativeBefore) && single_overlay::native::Unwrap(after.Get(),nativeAfter)
       && nativeBefore.Get()==nativeAfter.Get() && SUCCEEDED(entry->chain->GetDesc1(&old))
-      && old.SwapEffect==requested->SwapEffect && old.Scaling==requested->Scaling && old.AlphaMode==requested->AlphaMode
+      && old.SwapEffect==requested->SwapEffect && old.Scaling==requested->Scaling
+      // An HWND chain reports IGNORE for an opaque UNSPECIFIED request.
+      // Neither implies premultiplied/straight composition. Preserve every
+      // other immutable field, and never reuse a composition alpha mode.
+      && (old.AlphaMode==requested->AlphaMode || (old.AlphaMode==DXGI_ALPHA_MODE_IGNORE && requested->AlphaMode==DXGI_ALPHA_MODE_UNSPECIFIED))
       && old.SampleDesc.Count==requested->SampleDesc.Count && old.SampleDesc.Quality==requested->SampleDesc.Quality
       && old.Flags==requested->Flags && old.BufferUsage==requested->BufferUsage) {
     const auto count=requested->BufferCount?requested->BufferCount:old.BufferCount;
     const auto mask=queue->GetDesc().NodeMask?queue->GetDesc().NodeMask:1;
     if(count>=2 && count<=16) {
+      attemptedResize=true;
       std::vector<UINT> masks(count,mask);std::vector<IUnknown*> queues(count,queue.Get());
       result=entry->chain->ResizeBuffers1(count,requested->Width,requested->Height,requested->Format,requested->Flags,masks.data(),queues.data());
       if(SUCCEEDED(result)) result=entry->chain.CopyTo(out);
     }
   }
   xess_mod::WriteLog("native_output_reused","\"hwnd\":"+std::to_string(uintptr_t(window))
-      +",\"result\":"+std::to_string(result)+",\"native_refs\":"+std::to_string(remaining));
+      +",\"result\":"+std::to_string(result)+",\"native_refs\":"+std::to_string(remaining)
+      +",\"old_flags\":"+std::to_string(old.Flags)+",\"requested_flags\":"+std::to_string(requested?requested->Flags:0)
+      +",\"old_usage\":"+std::to_string(old.BufferUsage)+",\"requested_usage\":"+std::to_string(requested?requested->BufferUsage:0)
+      +",\"old_scaling\":"+std::to_string(old.Scaling)+",\"requested_scaling\":"+std::to_string(requested?requested->Scaling:0));
+  xess_mod::WriteLog("native_output_reuse_validation","\"resize_attempted\":"+std::string(attemptedResize?"true":"false")
+      +",\"same_device\":"+(nativeBefore && nativeBefore.Get()==nativeAfter.Get()?"true":"false")
+      +",\"old_effect\":"+std::to_string(old.SwapEffect)+",\"new_effect\":"+std::to_string(requested?requested->SwapEffect:0)
+      +",\"old_alpha\":"+std::to_string(old.AlphaMode)+",\"new_alpha\":"+std::to_string(requested?requested->AlphaMode:0));
   if(FAILED(result))Put(std::move(entry));
   return result;
 }

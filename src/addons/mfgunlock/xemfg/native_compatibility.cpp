@@ -33,7 +33,7 @@ Json Module(HMODULE module) {
 }
 std::string CompatibilityReport() {
   auto& s=State();const auto status=Snapshot();
-  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.5.0-rc.3"},
+  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.5.0-rc.4"},
       {"adapter",status.output?"streamline_d3d12":"none"},{"fallback","xemfg_selected_passthrough"},
       {"status",status.detail},
       {"displayed_frames_measured",false},{"physical_latency_measured",false},

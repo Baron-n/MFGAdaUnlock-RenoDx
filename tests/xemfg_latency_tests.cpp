@@ -62,6 +62,9 @@ int main() {
     { std::lock_guard lock(output->io); ++output->epoch; output->frames.clear(); }
     Release(); Require(stale.get()==sl::Result::eErrorInvalidState && output->frames.empty(),"sleep republished an old resource epoch");
     Require(!output->sleepActive,"sleep lease leaked");
+    const auto beforeStale=sleeps.load();
+    Require(SleepSourceFrame(output,9,nullptr,nullptr,output->epoch-1)==sl::Result::eErrorInvalidState
+        && sleeps==beforeStale && !output->frames.Find(9),"boundary wait crossed a resize epoch");
     block=false; state.latencyOutput=LatencyOutput::Reflex; state.gameReflexMode=1; state.limitUs=25000;
     Token token;
     Require(SleepSourceFrame(output,10)==sl::Result::eErrorInvalidState,"Reflex accepted without native function/token");

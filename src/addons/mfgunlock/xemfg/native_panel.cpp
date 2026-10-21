@@ -65,7 +65,7 @@ void Draw() {
   DrawControls(page);
   if(page==PanelPage::Diagnostics && ImGui::CollapsingHeader("Intel files and repair")) dependencies::Draw();
   if(page==PanelPage::General && unavailable) dependencies::Draw();
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.3 (local test build)");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.4 (local test build)");
   ui::RepositoryButton();
 }
 }

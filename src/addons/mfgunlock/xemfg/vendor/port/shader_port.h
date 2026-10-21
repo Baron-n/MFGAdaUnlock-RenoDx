@@ -127,12 +127,16 @@ class ShaderPort {
         for(auto c:key) if(c<'0'||c>'9') throw std::runtime_error("shader_port_key");
         // Pipeline parameter/tensor capture is excluded from the game build.
         // The provider decoder, program bytes and dispatch math are unchanged.
+#if defined(XESS_INIT_PROBE)
+        if (key.starts_with("351")) self->parameters(key);
+#endif
         auto found=self->programs.find(key);
         if (found==self->programs.end()) {
-#if defined(XESS_INIT_PROBE)
-            if (key.starts_with("351")) self->parameters(key);
-#endif
-            self->decode(store,keyObject,output);
+            try { self->decode(store,keyObject,output); }
+            catch(...) {
+                logEvent("shader_decode_failure","\"key\":\""+key+"\"");
+                throw;
+            }
             self->native(key,output);
             return;
         }
@@ -172,6 +176,9 @@ public:
             throw std::runtime_error("shader_port_identity");
         protection=m.Protect;
         captures=dataRoot/L"captures"/std::to_wstring(GetCurrentProcessId());
+#if defined(XESS_INIT_PROBE)
+        std::filesystem::create_directories(captures);
+#endif
         // No shader-capture files are written by the game build.
         decode=reinterpret_cast<Decode>(base+layout.Rva(0x19fda0)); resize=reinterpret_cast<Resize>(base+layout.Rva(0x1a09c0));
         // Embedded resources supply the exact same 54 verified byte arrays.

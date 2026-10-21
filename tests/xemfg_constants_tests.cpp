@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "../src/addons/mfgunlock/xemfg/native_constants.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_game_defaults.hpp"
+#include "../src/addons/mfgunlock/xemfg/native_input_policy.hpp"
 #include <limits>
 #include <iostream>
 #include <stdexcept>
@@ -9,6 +10,15 @@ void Require(bool b,const char* s){if(!b)throw std::runtime_error(s);}
 int main(){try {
   Require(!DefaultInvertedDepth(L"C:/Games/tlou-ii.exe") && !DefaultInvertedDepth(L"AlanWake2.exe"),"observed conventional depth defaults");
   Require(DefaultInvertedDepth(L"re9.exe") && DefaultInvertedDepth(L"unknown.exe"),"unobserved default changed");
+  Require(DefaultJitteredMotion(L"C:/Games/DS2.exe") && !DefaultJitteredMotion(L"unknown.exe"),"observed jitter convention default");
+  sl::Resource resource;
+  Require(ResourceHeaderSupported(resource),"known resource header rejected");
+  resource.structVersion=0;Require(ResourceHeaderSupported(resource),"known GUID with empty version rejected");
+  resource.structType={};Require(ResourceHeaderSupported(resource),"empty resource header rejected");
+  resource.structVersion=2;Require(!ResourceHeaderSupported(resource),"future resource ABI inferred from empty GUID");
+  resource.structVersion=1;Require(!ResourceHeaderSupported(resource),"wrong typed resource accepted");
+  resource.structVersion=0;resource.next=&resource;Require(!ResourceHeaderSupported(resource),"unversioned chain accepted");
+  resource.next=nullptr;resource.structType.data1=123;Require(!ResourceHeaderSupported(resource),"foreign unversioned resource accepted");
   sl::Constants c;
   c.cameraPos={2,3,4};c.cameraRight={1,0,0};c.cameraUp={0,1,0};c.cameraFwd={0,0,1};
   for(unsigned i=0;i<4;++i) for(unsigned j=0;j<4;++j) reinterpret_cast<float*>(&c.cameraViewToClip)[i*4+j]=i==j?1.f:0.f;

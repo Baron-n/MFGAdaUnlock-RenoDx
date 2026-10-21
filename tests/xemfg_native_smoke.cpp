@@ -2,7 +2,9 @@
 // Real ReShade loader, real Intel SDK/model/pacer, synthetic Streamline caller.
 #include <windows.h>
 #include <d3d12.h>
+#include <d3d12sdklayers.h>
 #include <dxgi1_6.h>
+#include <dxgidebug.h>
 #include <wrl/client.h>
 #include <DirectXMath.h>
 #include <sl.h>
@@ -25,6 +27,40 @@
 #include <array>
 #include <algorithm>
 using Microsoft::WRL::ComPtr;
+static ComPtr<ID3D12Device> diagnosticDevice;
+static void DumpD3D12Messages() {
+  ComPtr<IDXGIInfoQueue> dxgi;
+  if(SUCCEEDED(DXGIGetDebugInterface1(0,IID_PPV_ARGS(&dxgi)))) {
+    for(UINT64 i=0;i<dxgi->GetNumStoredMessages(DXGI_DEBUG_ALL);++i) {
+      SIZE_T bytes{};dxgi->GetMessage(DXGI_DEBUG_ALL,i,nullptr,&bytes);std::vector<char> storage(bytes);
+      auto* message=reinterpret_cast<DXGI_INFO_QUEUE_MESSAGE*>(storage.data());
+      if(SUCCEEDED(dxgi->GetMessage(DXGI_DEBUG_ALL,i,message,&bytes)) && message->Severity<=DXGI_INFO_QUEUE_MESSAGE_SEVERITY_WARNING)
+        std::cerr<<"DXGI "<<message->ID<<": "<<message->pDescription<<std::endl;
+    }
+  }
+  ComPtr<ID3D12InfoQueue> info;
+  if(!diagnosticDevice || FAILED(diagnosticDevice.As(&info)))return;
+  for(UINT64 i=0;i<info->GetNumStoredMessagesAllowedByRetrievalFilter();++i) {
+    SIZE_T bytes{};info->GetMessage(i,nullptr,&bytes);std::vector<char> storage(bytes);
+    auto* message=reinterpret_cast<D3D12_MESSAGE*>(storage.data());
+    if(SUCCEEDED(info->GetMessage(i,message,&bytes)) && message->Severity<=D3D12_MESSAGE_SEVERITY_WARNING)
+      std::cerr<<"D3D12 "<<message->ID<<": "<<message->pDescription<<std::endl;
+  }
+}
+static LONG WINAPI TraceDebugException(EXCEPTION_POINTERS* exception) {
+  if(exception->ExceptionRecord->ExceptionCode!=0xe06d7363)return EXCEPTION_CONTINUE_SEARCH;
+  static LONG count{};if(InterlockedIncrement(&count)>6)return EXCEPTION_CONTINUE_SEARCH;
+  void* stack[20]{};const auto frames=CaptureStackBackTrace(0,20,stack,nullptr);
+  std::cerr<<"C++ first-chance stack:";
+  for(USHORT i=0;i<frames;++i) {
+    HMODULE owner{};wchar_t path[1024]{};
+    if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+        reinterpret_cast<LPCWSTR>(stack[i]),&owner) && GetModuleFileNameW(owner,path,1024))
+      std::cerr<<' '<<std::filesystem::path(path).filename().string()<<"+0x"<<std::hex
+          <<(reinterpret_cast<uintptr_t>(stack[i])-reinterpret_cast<uintptr_t>(owner))<<std::dec;
+  }
+  std::cerr<<std::endl;return EXCEPTION_CONTINUE_SEARCH;
+}
 #include "xemfg_queue_proxy.hpp"
 static bool keyTest{};
 static bool hotkeyTest{};
@@ -179,6 +215,12 @@ int main(int argc,char** argv) {
     const unsigned multiplier=argc>1?unsigned(std::stoul(argv[1])):4;
     Require(multiplier>=2 && multiplier<=6,"test multiplier");
     const auto flag=[&](const char* name) { for(int i=2;i<argc;++i) if(std::string(argv[i])==name) return true; return false; };
+    if(flag("--d3d-debug")) {
+      ComPtr<ID3D12Debug> debug;
+      if(SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debug))))debug->EnableDebugLayer();
+      else throw std::runtime_error("D3D12 debug layer unavailable");
+      AddVectoredExceptionHandler(1,&TraceDebugException);
+    }
     const bool legacyFactory=flag("--legacy-factory");
     const bool refLegacy=flag("--ref-legacy"),refLate=flag("--ref-late"),refAmbiguous=flag("--ref-ambiguous");
     const bool refBlocked=flag("--ref-blocked") || flag("--ref-invalid") || flag("--ref-exception") || refAmbiguous;
@@ -252,6 +294,7 @@ int main(int argc,char** argv) {
       if(desc.VendorId==0x10de) D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&device));
     }
     Require(device!=nullptr,"NVIDIA device");
+    if(flag("--d3d-debug"))diagnosticDevice=device;
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64");
     if(!flag("--stock-streamline")) Require(addon,"ReShade did not load the addon");
     if(flag("--stall-trace")) Import<void(*)(bool,bool)>(addon,"MFGAXeStallTraceEnable")(true,true);
@@ -452,7 +495,7 @@ int main(int argc,char** argv) {
       return 0;
     }
     ComPtr<IDXGISwapChain1> base;
-    if(legacyFactory) {
+    if(legacyFactory && !retainNativeOutput) {
       // An unsupported XeFG format must still return the original native
       // output, without publishing an Intel context or a manual final overlay.
       auto unsupported=desc; unsupported.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
@@ -475,9 +518,46 @@ int main(int argc,char** argv) {
     Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
+    if(flag("--jittered-motion")) {
+      Require(!bs.output && !bs.enabled && std::string(bs.detail).find("jittered-motion")!=std::string::npos,
+          "unsupported jitter convention not reported explicitly");
+      mfgunlock::xemfg::Status model;modelStatus(&model,sizeof(model));
+      Require(model.contexts==0 && model.tensor_launches==0,"unsupported shader consumed an Intel context");
+      const auto resolve=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
+      void* setter{};void* wait{};
+      Require(resolve(sl::kFeatureReflex,"slReflexSetOptions",setter)==sl::Result::eOk
+          && resolve(sl::kFeatureReflex,"slReflexSleep",wait)==sl::Result::eOk,"passthrough Reflex functions");
+      sl::ReflexOptions latency;latency.mode=sl::ReflexMode::eLowLatency;latency.frameLimitUs=18500;
+      Require(reinterpret_cast<PFun_slReflexSetOptions*>(setter)(latency)==sl::Result::eOk,"passthrough Reflex mode");
+      Require((Import<uint32_t(*)()>(fixture,"FixtureModes")()>>8)==uint32_t(latency.mode)
+          && Import<uint32_t(*)()>(fixture,"FixtureReflexLimit")()==18500,"passthrough disabled native latency/limiter");
+      Token token;token.id=42;
+      Require(reinterpret_cast<PFun_slReflexSleep*>(wait)(token)==sl::Result::eOk
+          && Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==1,"passthrough native wait not preserved");
+      {RealInputs inputs(device.Get(),queue.Get(),desc.Width,desc.Height);
+        for(unsigned i=0;i<4;++i) {
+          ComPtr<ID3D12Resource> back;
+          Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"jitter passthrough buffer");
+          inputs.Render(back.Get());back.Reset();Check(chain->Present(0,0),"jitter passthrough Present");inputs.Wait();
+        }
+      }
+      chain.Reset();DestroyWindow(hwnd);
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"jitter passthrough trace flush");
+      std::cout<<"PASS: unsupported jittered-motion shader reported; native rendering/presentation preserved without Intel context"<<std::endl;
+      return 0;
+    }
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
     if(retainNativeOutput) {
       Require(foreignNativeA && foreignNativeB,"observer did not retain native references");
+      // Recreate an output that has actually rendered/presented, with the
+      // observer still retaining its native identity throughout the handoff.
+      { RealInputs oldInputs(device.Get(),queue.Get(),desc.Width,desc.Height);
+        for(unsigned i=0;i<4;++i) {
+          ComPtr<ID3D12Resource> back;
+          Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"old retained buffer");
+          oldInputs.Render(back.Get());back.Reset();Check(chain->Present(0,0),"old retained Present");oldInputs.Wait();
+        }
+      }
       chain.Reset();
       mfgunlock::xemfg::Status status;modelStatus(&status,sizeof(status));Require(status.contexts==0,"SDK context retained by a native reference");
       if(flag("--retained-output")) {
@@ -487,7 +567,9 @@ int main(int argc,char** argv) {
         ComPtr<ID3D12Resource> buffer;Check(base->GetBuffer(0,IID_PPV_ARGS(&buffer)),"rebound output buffer");buffer.Reset();
         Check(base.As(&chain),"rebound Intel interface");base.Reset();
         Require(foreignNativeA && foreignNativeB,"observer references stolen");
-        retainNativeOutput=false;foreignNativeB.Reset();foreignNativeA.Reset();
+        // Keep the independent references alive during inference and resize,
+        // as Steam does; do not make this test pass by releasing them early.
+        retainNativeOutput=false;
       } else {
       const auto refused=factory->CreateSwapChainForHwnd(queue.Get(),hwnd,&desc,nullptr,nullptr,&base);
       Require(FAILED(refused) && !base,"native HWND recreated while foreign native references remained");
@@ -625,9 +707,13 @@ int main(int argc,char** argv) {
     c.cameraRight={1,0,0}; c.cameraUp={0,1,0}; c.cameraFwd={0,0,1}; c.cameraPos={0,0,0};
     c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=flag("--normal-depth")?sl::eFalse:sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
     c.motionVectors3D=sl::eFalse; c.reset=sl::eFalse;
+    if(flag("--jittered-motion")) {c.motionVectorsJittered=sl::eTrue;c.jitterOffset={.25f,-.25f};}
     sl::Resource rd(sl::ResourceType::eTex2d,depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rm(sl::ResourceType::eTex2d,motion.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rc(sl::ResourceType::eTex2d,color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if(flag("--zero-resource")) for(auto* resource:{&rd,&rm,&rc}) {
+      resource->structVersion=0;resource->structType={};
+    }
     sl::ResourceTag tagged[]={ {&rd,sl::kBufferTypeDepth,sl::eValidUntilPresent},
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
     HMODULE observer{};
@@ -684,7 +770,8 @@ int main(int argc,char** argv) {
         Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
       }
       Token token; token.id=frame;
-      if(!flag("--tail-sleep")) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
+      const bool missingSleep=flag("--simulation-sleep") && frame<=16;
+      if(!flag("--tail-sleep") && !missingSleep) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
       else mark(static_cast<sl::PCLMarker>(6),token); // Actual legacy input marker before simulation.
       mark(sl::PCLMarker::eSimulationStart,token); mark(sl::PCLMarker::eSimulationEnd,token);
       std::future<sl::Result> tailSleep;
@@ -727,6 +814,9 @@ int main(int argc,char** argv) {
       if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
       mark(sl::PCLMarker::ePresentStart,token);
       Check(chain->Present(0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
+      if(flag("--simulation-sleep") && (frame==7 || frame==8)) {
+        bridgeStatus(&bs,sizeof(bs));Require(bs.enabled==(frame==8),"simulation-boundary sleep warmup/admission");
+      }
       if(lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
       if(tailSleep.valid()) Require(tailSleep.get()==sl::Result::eOk,"tail source sleep");
       if(flag("--tail-sleep")) {
@@ -784,12 +874,16 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==48)) && cs.sleeps==48 && cs.markers>=(flag("--tail-sleep")?47u:48u)*6,
+    const auto expectedSleeps=flag("--simulation-sleep")?41u:48u;
+    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:expectedSleeps)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
     if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==48,"native Reflex token was shifted");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     if(flag("--tail-sleep")) std::cout<<"Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved"<<std::endl;
+    if(flag("--simulation-sleep")) std::cout<<"Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
+    if(flag("--zero-resource")) std::cout<<"Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted"<<std::endl;
+    if(flag("--jittered-motion")) std::cout<<"Jittered motion: observed executable default initialized the matching SDK convention"<<std::endl;
     Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.
@@ -797,7 +891,7 @@ int main(int argc,char** argv) {
     Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==compositionTransitions,"UI composition setter repeated or did not restore default");
     const auto requiredBytes=timingReport(nullptr,0); std::vector<char> cpuReport(requiredBytes);
     Require(timingReport(cpuReport.data(),uint32_t(cpuReport.size()))==requiredBytes,"timing report size changed without new Presents");
-    Require(std::string(cpuReport.data()).find("Samples=48")!=std::string::npos,"actual Present calls missing from timing ring");
+    Require(std::string(cpuReport.data()).find("Samples="+std::to_string(retainNativeOutput || flag("--retained-output")?52:48)+" ")!=std::string::npos,"actual Present calls missing from timing ring");
     std::cout<<cpuReport.data(); timingEnable(false);
     settings.flipMetering=false; Require(configure(&settings,sizeof(settings)),"flip toggle off");
     controlStatus(&cs,sizeof(cs)); Require(!cs.flipRequested,"flip request did not reach pacer");
@@ -967,5 +1061,5 @@ int main(int argc,char** argv) {
     if(queueProxy) {Require(queueProxy->References()==1,"external queue wrapper retained after teardown");std::cout<<"Queue native identity: wrapper unwrapped; inference and lifetime verified"<<std::endl;}
     std::cout<<"PASS: native ReShade addon, "<<multiplier<<"x requested, real XeMFG inference, Tensor launches, XeLL, UI composition default/opt-in/off/missing-HUDless, volatile/legacy tags, missing-input bypass, disable, resize and context retirement; synthetic/occluded, no display cadence or gameplay quality claim"<<std::endl;
     return 0;
-  } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl; return 1; }
+  } catch(const std::exception& e) { std::cerr<<e.what()<<std::endl;DumpD3D12Messages();return 1; }
 }

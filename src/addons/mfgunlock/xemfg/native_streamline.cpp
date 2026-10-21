@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
 #include "native_constants.hpp"
+#include "native_input_policy.hpp"
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
 #include <cmath>
@@ -171,7 +172,7 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
       receipt.accepted=false;receipt.rejection="removed";
       frame->resources&=~bit; continue;
     }
-    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || t.resource->structVersion!=1
+    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || !ResourceHeaderSupported(*t.resource)
         || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
     ComPtr<ID3D12Resource> resource;
     if(!single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(t.resource->native),resource)) {
@@ -358,7 +359,9 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
   if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion!=1 || opts.next)
     return sl::Result::eErrorUnsupportedInterface;
   auto& s=State();
-  const bool native=s.latencyOutput.load()==LatencyOutput::Reflex;
+  // A known unsupported jitter convention never creates a XeLL output.
+  // Preserve the game's native latency policy in that passthrough case.
+  const bool native=s.latencyOutput.load()==LatencyOutput::Reflex || s.jitter;
   // The original setter stays on the game's calling thread. Native output
   // preserves every V1 field; XeLL output suppresses the native limiter too.
   sl::ReflexOptions forwarded=opts;
@@ -374,9 +377,10 @@ sl::Result SleepHook(const sl::FrameToken& f) {
   const auto source=FrameId(uint32_t(f));
   TraceInput("slReflexSleep",source);
   auto o=Active(); if(!o) return reflexSleep(f);
-  uint32_t target{};
+  uint32_t target{};uint64_t epoch{};
   {
     std::lock_guard guard(o->io);
+    o->explicitSleepObserved=true;
     auto* frame=FindFrame(*o,source);
     if(o->retired || !frame) return sl::Result::eErrorInvalidState;
     if(!frame->sourceSleepResolved) {
@@ -395,11 +399,12 @@ sl::Result SleepHook(const sl::FrameToken& f) {
             +",\"target\":"+std::to_string(selected)+",\"observed\":"+std::to_string(frame->observedMarkers));
     }
     target=frame->sourceSleepTarget;
+    epoch=o->epoch;
   }
   State().inputTick=GetTickCount64();
   // Native Reflex, when selected, keeps the ORIGINAL token and calling thread.
   // Only the XeLL frame association follows the simulation after this wait.
-  return SleepSourceFrame(o,target,reflexSleep,&f);
+  return SleepSourceFrame(o,target,reflexSleep,&f,epoch);
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   TraceInput("latency_marker",FrameId(uint32_t(f)),UINT32_MAX,int(marker));
@@ -408,10 +413,36 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   if(marker==sl::PCLMarker::ePresentStart) s.presenting=id;
   if(auto o=Active()) {
     const auto mapped=marker==sl::PCLMarker::eControllerInputSample?uint32_t(XELL_INPUT_SAMPLE):value;
+    bool boundarySleep{},boundaryLog{},optionalBeforeSleep{};uint64_t epoch{};
     if(mapped<=6) {
       std::lock_guard guard(o->io);
-      if(!o->retired) if(auto* frame=FindFrame(*o,id)) frame->observedMarkers|=1u<<mapped;
+      if(!o->retired) if(auto* frame=FindFrame(*o,id)) {
+        const auto previous=frame->observedMarkers;
+        if(mapped==XELL_SIMULATION_START && !(previous&1u) && !frame->sleeping && !o->explicitSleepObserved) {
+          if(o->unsleptSimulationStarts<8) ++o->unsleptSimulationStarts;
+          // A real simulation boundary is a legal XeLL sleep site when the
+          // integration never calls slReflexSleep. Do not replay timestamps,
+          // sleep after simulation began, or override native Reflex output.
+          boundarySleep=o->unsleptSimulationStarts>=8 && !(previous&63u)
+              && !o->sleepActive && !frame->sleepInFlight && s.requested && s.nativeOff && s.reflexOff
+              && s.latencyOutput.load()==LatencyOutput::XeLL;
+          if(boundarySleep) {epoch=o->epoch;boundaryLog=o->sleepAssociationLogBudget++<8;}
+        }
+        optionalBeforeSleep=mapped==XELL_INPUT_SAMPLE && !frame->sleeping;
+        frame->observedMarkers|=1u<<mapped;
+      }
     }
+    if(boundarySleep) {
+      const auto result=SleepSourceFrame(o,id,nullptr,nullptr,epoch);
+      if(boundaryLog)
+        xess_mod::WriteLog("native_simulation_boundary_sleep","\"id\":"+std::to_string(id)
+            +",\"result\":"+std::to_string(uint32_t(result)));
+      if(result==sl::Result::eOk) s.inputTick=GetTickCount64();
+    }
+    // INPUT_SAMPLE is optional. An earlier real sample cannot be replayed
+    // with a fabricated timestamp after sleep, nor should it poison the
+    // mandatory simulation/render/present sequence that follows.
+    if(optionalBeforeSleep) return;
     ForwardSourceMarker(o,id,mapped);
   }
 }

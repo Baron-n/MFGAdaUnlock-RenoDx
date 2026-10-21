@@ -6,7 +6,7 @@
 #include <chrono>
 namespace mfgunlock::xemfg::native {
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
-    PFun_slReflexSleep* nativeSleep,const sl::FrameToken* token) {
+    PFun_slReflexSleep* nativeSleep,const sl::FrameToken* token,std::optional<uint64_t> expectedEpoch) {
   auto& s=State(); auto& a=s.api;
   uint64_t epoch{};
   const auto route=s.latencyOutput.load();
@@ -14,7 +14,7 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
   if(reflex && (!nativeSleep || !token)) return sl::Result::eErrorInvalidState;
   {
     std::lock_guard guard(o->io);
-    if(o->retired || o->deviceLost) return sl::Result::eErrorInvalidState;
+    if(o->retired || o->deviceLost || (expectedEpoch && *expectedEpoch!=o->epoch)) return sl::Result::eErrorInvalidState;
     auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
     if(frame->sleeping) return sl::Result::eOk;
     if(o->sleepActive || frame->sleepInFlight) return sl::Result::eErrorInvalidState;

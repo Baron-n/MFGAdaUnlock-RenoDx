@@ -37,13 +37,18 @@ ap.add_argument('--tail-sleep',action='store_true')
 ap.add_argument('--steam-observer',type=Path)
 ap.add_argument('--stale-input',action='store_true')
 ap.add_argument('--active-support',action='store_true')
+ap.add_argument('--zero-resource',action='store_true')
+ap.add_argument('--jittered-motion',action='store_true')
+ap.add_argument('--simulation-sleep',action='store_true')
+ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
 args=ap.parse_args()
 d=args.directory.resolve()/datetime.datetime.now().strftime('native-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
-inputs={args.addon:'renodx-mfgunlock-native.addon64',args.exe:args.exe.name,
+executable_name='DS2.exe' if args.jittered_motion else args.exe.name
+inputs={args.addon:'renodx-mfgunlock-native.addon64',args.exe:executable_name,
         args.fixture:'sl.interposer.dll',args.reshade:'dxgi.dll',
         args.sdk_fg:'libxess_fg.dll',args.sdk_ll:'libxell.dll'}
 manifest={}
@@ -73,11 +78,14 @@ if args.runtime_layout!='adjacent':
         manifest['_storage_/libxess_fg.dll']=hashlib.sha256(content).hexdigest()
 (d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n'
     +('InvertedDepth=0\n' if args.normal_depth else '')+f'[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
+if args.d3d_debug:
+    with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Diagnostics]\nStallTrace=1\n')
 if args.retained_output:
     with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Compatibility]\nRetainNativeOutput=1\n')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[INPUT]\nInputProcessing=2\nKeyOverlay=36,0,0,0\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 flags=(['--overlay-foreground'] if args.overlay_foreground else ['--overlay-keys'] if args.overlay_keys else [])
+if args.d3d_debug: flags+=['--d3d-debug']
 if args.capcom_flags: flags+=['--capcom-flags']
 if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
@@ -86,13 +94,20 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
-result=subprocess.run([str(d/args.exe.name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
+result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.jittered_motion:
+    refused='PASS: unsupported jittered-motion shader reported; native rendering/presentation preserved without Intel context' in result.stdout
+    refused=refused and not any(e.get('event') in ('context_create','native_swapchain_init_failed','shader_decode_failure') for e in events)
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        jitter_unsupported_passthrough_verified=refused),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and refused else 1)
 if args.reframework:
     blocked=args.reframework in ('blocked','invalid','exception','ambiguous')
     decisions=[e for e in events if e.get('event')=='native_reframework_retire']
@@ -161,6 +176,15 @@ tail_verified=(('Tail sleep: first frame bypassed, following frames interpolated
 # Async diagnostics deliberately drop records rather than block a producer.
 observer_verified=('Observer isolation: native plugin state preserved; game inference continued after observer OFF' in result.stdout) if args.steam_observer else None
 stale_verified=('Stale source input: original return preserved; old epoch discarded before new-session admission' in result.stdout) if args.stale_input else None
+input_verified={}
+if args.zero_resource:
+    input_verified['zero_resource']=('Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted' in result.stdout)
+if args.jittered_motion:
+    input_verified['jittered_motion']=('Jittered motion: observed executable default initialized the matching SDK convention' in result.stdout)
+if args.simulation_sleep:
+    recovered=[e for e in events if e.get('event')=='native_simulation_boundary_sleep']
+    input_verified['simulation_sleep']=('Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep' in result.stdout
+        and bool(recovered) and all(e.get('result')==0 for e in recovered))
 compatibility_verified=False
 if (d/'compatibility.json').is_file():
     support=json.loads((d/'compatibility.json').read_text(encoding='utf-8'))
@@ -197,10 +221,11 @@ if args.active_support:
     'tail_sleep_verified':tail_verified,
     'observer_isolation_verified':observer_verified,
     'stale_input_verified':stale_verified,
+    'input_compatibility_verified':input_verified,
     'compatibility_export_verified':compatibility_verified,
     'active_support_verified':active_support_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)

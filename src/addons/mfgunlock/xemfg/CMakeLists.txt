@@ -59,6 +59,17 @@ target_link_options(mfgunlock_native_xemfg PRIVATE /DEBUG:FULL $<$<NOT:$<CONFIG:
 set_target_properties(mfgunlock_native_xemfg PROPERTIES PREFIX "" SUFFIX ".addon64"
   OUTPUT_NAME "renodx-mfgunlock-native" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+# Explicit offline probe only. Never built by ALL, packaged, or installed in a
+# game: it records initialization parameter/weight identities for shader audits.
+add_library(mfgunlock_native_xemfg_init_probe SHARED EXCLUDE_FROM_ALL
+  $<TARGET_PROPERTY:mfgunlock_native_xemfg,SOURCES>)
+foreach(prop IN ITEMS COMPILE_DEFINITIONS COMPILE_OPTIONS INCLUDE_DIRECTORIES LINK_LIBRARIES LINK_OPTIONS)
+  set_property(TARGET mfgunlock_native_xemfg_init_probe PROPERTY ${prop} $<TARGET_PROPERTY:mfgunlock_native_xemfg,${prop}>)
+endforeach()
+target_compile_definitions(mfgunlock_native_xemfg_init_probe PRIVATE XESS_INIT_PROBE)
+set_target_properties(mfgunlock_native_xemfg_init_probe PROPERTIES PREFIX "" SUFFIX ".addon64"
+  OUTPUT_NAME "renodx-mfgunlock-init-probe" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_library(xemfg_streamline_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_streamline_fixture.cpp")
 target_compile_definitions(xemfg_streamline_fixture PRIVATE SL_INTERPOSER)
 target_include_directories(xemfg_streamline_fixture PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include")
@@ -73,7 +84,7 @@ target_compile_definitions(xemfg_native_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
 target_include_directories(xemfg_native_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include"
   "${RENODX_SOURCE_DIR}/external/reshade"
   "${RENODX_SOURCE_DIR}/external/reshade/include")
-target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi user32 dbghelp)
+target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi dxguid user32 dbghelp)
 add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" native_window.cpp)
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
@@ -164,6 +175,20 @@ endforeach()
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
+  foreach(scenario IN ITEMS zero-resource jittered-motion simulation-sleep)
+    add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --${scenario} --active-support)
+    set_tests_properties(xemfg_native_${scenario} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
+  add_test(NAME xemfg_native_retained_legacy COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+    --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+    --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --legacy-factory --retained-output)
+  set_tests_properties(xemfg_native_retained_legacy PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   add_test(NAME xemfg_runtime_analysis COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_runtime_analysis_tests.py")
   foreach(scenario IN ITEMS observer stale)
     set(extra --stale-input)
