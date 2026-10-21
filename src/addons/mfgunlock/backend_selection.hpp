@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include "config_store.hpp"
 
 namespace mfgunlock::backend {
 enum class Kind { DlssG, XeMfg, Invalid };
@@ -27,10 +28,8 @@ inline Kind Read() {
   return Parse(value);
 }
 inline bool Select(Kind value) {
-  if (value == Kind::Invalid || Directory().empty()) return false;
-  return WritePrivateProfileStringW(L"Backend", L"Selected",
-      value == Kind::XeMfg ? L"XeMFG" : L"DLSSG",
-      (Directory()/L"MFGAdaUnlock.ini").c_str()) != FALSE;
+  if ((value != Kind::DlssG && value != Kind::XeMfg) || Directory().empty()) return false;
+  return config::Save(Directory()/L"MFGAdaUnlock.ini",{{L"Backend",L"Selected",value==Kind::XeMfg?L"XeMFG":L"DLSSG"}});
 }
 // Latched at process startup. A pending setting never changes a live owner.
 inline Kind active = Kind::Invalid;

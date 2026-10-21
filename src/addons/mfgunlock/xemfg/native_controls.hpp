@@ -6,14 +6,14 @@ namespace mfgunlock::xemfg::native {
 enum class LatencyInput : uint32_t { Auto, StreamlineReflex };
 enum class LatencyOutput : uint32_t { Auto, XeLL, Reflex };
 struct ControlSettings {
-  uint32_t version{4};
+  uint32_t version{5};
   LatencyInput input{LatencyInput::Auto};
   LatencyOutput output{LatencyOutput::Auto};
   bool queueAhead{true};
   bool flipMetering{true}, forceBorderless{}, uiComposition{},sdkDeadlines{};
 };
 struct ControlStatus {
-  uint32_t version{4};
+  uint32_t version{5};
   ControlSettings settings;
   WindowStatus window;
   bool reflexObserved{}, xellObserved{}, nativeReflexDisabled{};
@@ -23,7 +23,7 @@ struct ControlStatus {
   bool uiCompositionAvailable{}, uiCompositionApplied{}, uiCompositionKnown{};
   int uiCompositionResult{};
   uint64_t uiCompositionUpdates{};
-  bool modelPort{}, modelInitialized{}, modelUpdating{}, cudaUpdating{}, settingsSaved{true};
+  bool modelPort{}, modelInitialized{}, modelUpdating{}, cudaUpdating{}, settingsSaved{true},invalidConfiguration{};
   uint32_t cudaState{}, cudaLayers{};
   int cudaMajor{}, cudaMinor{};
   uint64_t cudaLaunches{}, cudaFallbacks{};

@@ -394,7 +394,9 @@ int main(int argc,char** argv) {
     timingEnable(true);
     mfgunlock::xemfg::native::ControlStatus cs;
     Require(controlStatus(&cs,sizeof(cs)),"control status ABI");
-    Require(cs.version==4 && cs.settings.version==4 && !cs.settings.uiComposition && !cs.settings.sdkDeadlines,"default/ABI");
+    Require(cs.version==5 && cs.settings.version==5 && !cs.settings.uiComposition && !cs.settings.sdkDeadlines,"default/ABI");
+    cs.version=4; Require(!controlStatus(&cs,sizeof(cs)),"old status ABI admitted"); cs.version=5;
+    Require(controlStatus(&cs,sizeof(cs)),"current status ABI rejected");
     const bool nativeReflex=cs.activeLatencyOutput==mfgunlock::xemfg::native::LatencyOutput::Reflex;
     auto settings=cs.settings; settings.input=mfgunlock::xemfg::native::LatencyInput::StreamlineReflex;
     settings.output=nativeReflex?mfgunlock::xemfg::native::LatencyOutput::Reflex:mfgunlock::xemfg::native::LatencyOutput::XeLL;
@@ -404,6 +406,7 @@ int main(int argc,char** argv) {
     Require(!configure(&unsupported,sizeof(unsupported)),"unsupported output accepted");
     auto oldAbi=settings; oldAbi.version=3;
     Require(!configure(&oldAbi,sizeof(oldAbi)),"old settings padding interpreted as UI composition");
+    oldAbi.version=4; Require(!configure(&oldAbi,sizeof(oldAbi)),"old display-status ABI admitted");
     controlStatus(&cs,sizeof(cs)); Require(cs.settings.output==settings.output,"invalid selection changed live policy");
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC q{};
     Check(device->CreateCommandQueue(&q,IID_PPV_ARGS(&queue)),"queue");
@@ -686,6 +689,10 @@ int main(int argc,char** argv) {
         sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
         tags(token,viewport,&invalidOptional,1,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
       }
+      if(frame==39 && flag("--hud-conflict")) {
+        sl::ResourceTag removed{nullptr,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
+        Require(tags(token,viewport,&removed,1,producerCommand)==sl::Result::eOk,"original removed-tag result");
+      }
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
       const bool lateSubmitEnd=frame>=17;
       if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
@@ -698,7 +705,10 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
-      if(frame==34 || frame==38 || invalidProducer) { bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"invalid input did not bypass FG"); }
+      if(frame==34 || frame==38 || invalidProducer || (frame==39 && flag("--hud-conflict"))) {
+        bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"invalid input did not bypass FG");
+        if(frame==39) { controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues&16u,"conflicting removal not diagnosed"); }
+      }
       else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,producer?"heap producer command was not accepted":"valid overlapping RenderSubmit/Present was rejected"); }
       if(frame==37) {
         controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues && cs.hudRejected && !cs.uiCompositionApplied,"invalid optional HUD did not fall back to default interpolation");
@@ -709,6 +719,7 @@ int main(int argc,char** argv) {
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
     }
     if(flag("--producer-shadow")) std::cout<<"Heap producer commands: accepted; non-code implementation: rejected; generation resumed"<<std::endl;
+    if(flag("--hud-conflict")) std::cout<<"HUD tag removal: admitted allocation pinned; conflicting batch bypassed; generation resumed"<<std::endl;
     mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms)); bridgeStatus(&bs,sizeof(bs));
     Sleep(100);
     auto refresh=Import<void(*)()>(addon,"MFGAXeNativeRefresh"); refresh();

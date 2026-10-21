@@ -15,44 +15,60 @@ namespace {
 std::mutex settingsLock;
 ControlSettings settings;
 std::atomic<bool> settingsSaved{true};
+std::atomic<bool> invalidConfiguration{};
 auto Ini() { return backend::Directory()/L"MFGAdaUnlock.ini"; }
 bool ReadChoice(const wchar_t* section,const wchar_t* key,const wchar_t* choice) {
   wchar_t value[64]{};
   GetPrivateProfileStringW(section,key,L"Auto",value,64,Ini().c_str());
   return _wcsicmp(value,choice)==0;
 }
+bool ReadBool(const wchar_t* section,const wchar_t* key,bool fallback) {
+  wchar_t value[32]{}; GetPrivateProfileStringW(section,key,L"",value,32,Ini().c_str());
+  if(!value[0]) return fallback;
+  if(!_wcsicmp(value,L"1") || !_wcsicmp(value,L"true") || !_wcsicmp(value,L"on")) return true;
+  if(!_wcsicmp(value,L"0") || !_wcsicmp(value,L"false") || !_wcsicmp(value,L"off")) return false;
+  invalidConfiguration=true; return fallback;
+}
 }
 void LoadControls() {
   std::lock_guard guard(settingsLock);
+  invalidConfiguration=false;
+  if(!ReadChoice(L"Latency",L"Input",L"Auto") && !ReadChoice(L"Latency",L"Input",L"Reflex")) invalidConfiguration=true;
+  if(!ReadChoice(L"Latency",L"Output",L"Auto") && !ReadChoice(L"Latency",L"Output",L"Reflex") && !ReadChoice(L"Latency",L"Output",L"XeLL")) invalidConfiguration=true;
   settings.input=ReadChoice(L"Latency",L"Input",L"Reflex")?LatencyInput::StreamlineReflex:LatencyInput::Auto;
-  settings.queueAhead=GetPrivateProfileIntW(L"XeFG",L"MeteredQueueAhead",1,Ini().c_str())!=0;
+  settings.queueAhead=ReadBool(L"XeFG",L"MeteredQueueAhead",true);
   sdk_pacing::RequestQueueAhead(settings.queueAhead);
   settings.output=ReadChoice(L"Latency",L"Output",L"Reflex")?LatencyOutput::Reflex:
       ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
   State().latencyOutput=settings.output==LatencyOutput::Reflex?LatencyOutput::Reflex:LatencyOutput::XeLL;
-  settings.forceBorderless=GetPrivateProfileIntW(L"XeFG",L"ForceBorderless",0,Ini().c_str())!=0;
-  settings.uiComposition=GetPrivateProfileIntW(L"XeFG",L"UIComposition",0,Ini().c_str())!=0;
-  settings.sdkDeadlines=GetPrivateProfileIntW(L"XeFG",L"SdkDeadlines",0,Ini().c_str())!=0;
+  settings.forceBorderless=ReadBool(L"XeFG",L"ForceBorderless",false);
+  settings.uiComposition=ReadBool(L"XeFG",L"UIComposition",false);
+  settings.sdkDeadlines=ReadBool(L"XeFG",L"SdkDeadlines",false);
   sdk_pacing::RequestSdkDeadlines(settings.sdkDeadlines);
   wchar_t flip[32]{}; GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",flip,32,Ini().c_str());
   settings.flipMetering=_wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0");
+  if(_wcsicmp(flip,L"auto") && _wcsicmp(flip,L"on") && _wcsicmp(flip,L"true") && wcscmp(flip,L"1")
+      && _wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0")) invalidConfiguration=true;
 }
 bool ConfigureControls(const ControlSettings& value) {
   // Reject unknown ABI/enums. The latency output is fixed for this process;
   // changing the preference never replays a game setter on the UI thread.
-  if(value.version!=4 || uint32_t(value.input)>1 || uint32_t(value.output)>2) return false;
-  ControlSettings old;
-  { std::lock_guard guard(settingsLock); old=settings; settings=value; }
+  if(value.version!=5 || uint32_t(value.input)>1 || uint32_t(value.output)>2) return false;
+  std::unique_lock settingsGuard(settingsLock);
+  const auto old=settings;
   const auto ini=Ini();
-  bool saved=WritePrivateProfileStringW(L"Latency",L"Input",value.input==LatencyInput::Auto?L"Auto":L"Reflex",ini.c_str())!=0;
-  saved=WritePrivateProfileStringW(L"XeFG",L"MeteredQueueAhead",value.queueAhead?L"1":L"0",ini.c_str()) && saved;
-  sdk_pacing::RequestQueueAhead(value.queueAhead);
-  saved=WritePrivateProfileStringW(L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":value.output==LatencyOutput::Reflex?L"Reflex":L"XeLL",ini.c_str()) && saved;
-  saved=WritePrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off",ini.c_str()) && saved;
-  saved=WritePrivateProfileStringW(L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0",ini.c_str()) && saved;
-  saved=WritePrivateProfileStringW(L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0",ini.c_str()) && saved;
-  saved=WritePrivateProfileStringW(L"XeFG",L"SdkDeadlines",value.sdkDeadlines?L"1":L"0",ini.c_str()) && saved;
+  const bool saved=config::Save(ini,{
+    {L"Latency",L"Input",value.input==LatencyInput::Auto?L"Auto":L"Reflex"},
+    {L"Latency",L"Output",value.output==LatencyOutput::Auto?L"Auto":value.output==LatencyOutput::Reflex?L"Reflex":L"XeLL"},
+    {L"XeFG",L"MeteredQueueAhead",value.queueAhead?L"1":L"0"},
+    {L"XeFG",L"XeFGFlipMetering",value.flipMetering?L"on":L"off"},
+    {L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0"},
+    {L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0"},
+    {L"XeFG",L"SdkDeadlines",value.sdkDeadlines?L"1":L"0"}});
   settingsSaved=saved;
+  if(!saved) return false;
+  settings=value; invalidConfiguration=false; settingsGuard.unlock();
+  sdk_pacing::RequestQueueAhead(value.queueAhead);
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
   if(old.sdkDeadlines!=value.sdkDeadlines) sdk_pacing::RequestSdkDeadlines(value.sdkDeadlines);
   if(old.forceBorderless!=value.forceBorderless)
@@ -68,6 +84,7 @@ ControlStatus ControlsSnapshot() {
   ControlStatus result;
   result.settings=ControlsSettings();
   result.settingsSaved=settingsSaved;
+  result.invalidConfiguration=invalidConfiguration;
   mfgunlock::xemfg::Status model;
   result.modelUpdating=!TryModelStatus(model);
   if(!result.modelUpdating) { result.modelPort=model.model!=0; result.modelInitialized=model.initialized!=0; }
@@ -123,7 +140,9 @@ void DrawControls(PanelPage page) {
       status.flipRefused?"XeFG pacing (driver declined)":metering?"NVIDIA driver - active":
       status.flipConfigured?"XeFG pacing (current display mode)":!status.flipEnabled?"XeFG pacing (driver metering off)":"Waiting for a stable frame rate";
   const auto& w=status.window;
-  const char* window=!w.available?"Window not available":w.borderless?(w.coversMonitor?"Borderless fullscreen":"Borderless window"):"Windowed";
+  const char* window=!w.available?"Window not available":w.mode==DisplayMode::Unknown?"Unknown - no mode change":
+      w.mode==DisplayMode::Exclusive?"Exclusive fullscreen":w.mode==DisplayMode::NativeBorderless?"Borderless (game controlled)":
+      w.mode==DisplayMode::ManagedBorderless?"Borderless (addon controlled)":"Windowed";
   const char* acceleration=status.modelUpdating || status.cudaUpdating?"Checking...":!status.modelInitialized?"Waiting for the model":!status.modelPort?"Native XeFG model":
       status.cudaState==1 && status.cudaLaunches?"NVIDIA Tensor Cores (CUDA)":
       status.cudaState==1?"NVIDIA acceleration ready":"Compatibility shaders";
@@ -233,7 +252,7 @@ void DrawControls(PanelPage page) {
     if(ImGui::Button("Copy diagnostic report")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock XeMFG R1.12\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock 1.5.0-rc.1\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
@@ -275,11 +294,12 @@ void DrawControls(PanelPage page) {
     }
   }
   if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
-  if(!status.settingsSaved) ui::Notice("Settings are active but could not be saved. Check write access to the game folder.");
+  if(!status.settingsSaved) ui::Notice("Change was not applied: settings could not be saved. Check write access to the game folder.");
+  if(status.invalidConfiguration) ui::Notice("Some saved settings are invalid. Safe defaults are active; save valid choices to replace them.");
 }
 }
 extern "C" __declspec(dllexport) bool MFGAXeControlsStatus(mfgunlock::xemfg::native::ControlStatus* out,uint32_t size) {
-  if(!out || size!=sizeof(*out)) return false;
+  if(!out || size!=sizeof(*out) || out->version!=5) return false;
   *out=mfgunlock::xemfg::native::ControlsSnapshot(); return true;
 }
 extern "C" __declspec(dllexport) bool MFGAXeConfigure(const mfgunlock::xemfg::native::ControlSettings* value,uint32_t size) {
