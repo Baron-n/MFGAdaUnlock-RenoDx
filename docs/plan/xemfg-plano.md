@@ -16,7 +16,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Critério de saída | Teste que fica verde | Status |
 |---|---|---|---|---|
-| 1.1 | Corpus de replay (RC3/RC4/RC5 de Plague Tale e DS2) + analisador de triagem | O analisador reporta, por sessão, build, primeiro bloqueio persistente e causa: PT-RC4 sem espera; PT-RC5 espera de fronteira falhando no XeLL; DS2 jitter não suportado (Streamline e XeFG nativo) | `xemfg_replay_corpus` | pendente |
+| 1.1 | Corpus de replay (RC3/RC4/RC5 de Plague Tale e DS2) + analisador de triagem | O analisador reporta, por sessão, build, primeiro bloqueio persistente e causa: PT-RC4 sem espera; PT-RC5 espera de fronteira falhando no XeLL; DS2 jitter não suportado (Streamline e XeFG nativo) | `xemfg_replay_corpus` | feito (ver git log) |
 | 1.2 | Diag: cabeçalho de sessão (horário real, executável, GPU/driver, ReShade, módulos relevantes) | Evento `native_session` único por processo, sem caminhos pessoais | `xemfg_native_diagnostics` (novo cenário) | pendente |
 | 1.3 | Diag: `sdkVersion` do `slInit` e versões de arquivo de `sl.*` | `native_streamline_version` no log e `streamline.sdk_version` no relatório | idem | pendente |
 | 1.4 | Diag: códigos de erro do XeLL e callback de log do XeLL | `native_xell_failure` com operação e `xell_result`; mensagens do SDK limitadas | `xemfg_native_simulation-sleep` registra a falha num caso forçado | pendente |
@@ -77,3 +77,4 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 ## Registro de execução
 
 (Atualizado a cada item.)
+- **1.1** Corpus de 5 sessões de campo e `tools/xemfg_triage.py`. Achado: Plague Tale **não chama `slReflexSleep`** (zero recusas na RC5). A espera de fronteira da RC5 dispara, mas o XeLL a recusa (`eErrorReflexAPI`, 14). A hipótese de sleep dentro da simulação não se confirmou; o próximo bloqueio é o erro do XeLL (item 1.4).
