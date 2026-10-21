@@ -693,6 +693,11 @@ int main(int argc,char** argv) {
         sl::ResourceTag removed{nullptr,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
         Require(tags(token,viewport,&removed,1,producerCommand)==sl::Result::eOk,"original removed-tag result");
       }
+      if(frame==40 && flag("--hud-conflict")) {
+        auto reject=Import<void(*)(bool)>(fixture,"FixtureRejectTags"); reject(true);
+        Require(tags(token,viewport,tagged,1,producerCommand)==sl::Result::eErrorInvalidState,"original input error was masked");
+        reject(false);
+      }
       list->Close(); ID3D12CommandList* raw=list.Get(); queue->ExecuteCommandLists(1,&raw);
       const bool lateSubmitEnd=frame>=17;
       if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
@@ -705,7 +710,7 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
-      if(frame==34 || frame==38 || invalidProducer || (frame==39 && flag("--hud-conflict"))) {
+      if(frame==34 || frame==38 || invalidProducer || ((frame==39 || frame==40) && flag("--hud-conflict"))) {
         bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"invalid input did not bypass FG");
         if(frame==39) { controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues&16u,"conflicting removal not diagnosed"); }
       }

@@ -228,19 +228,37 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     }
   }
 }
+void RejectUpstreamInput(uint32_t id,uint32_t viewport,sl::Result result,const char* api) {
+  if(!id || !SelectedViewport(viewport)) return;
+  if(auto output=Active()) {
+    std::lock_guard lock(output->io);
+    if(output->retired) return;
+    if(auto* frame=FindFrame(*output,id)) frame->failed=true;
+    static std::atomic<uint32_t> messages{};
+    if(messages.fetch_add(1)<8) xess_mod::WriteLog("native_input_api_error","\"api\":\""+std::string(api)
+        +"\",\"id\":"+std::to_string(id)+",\"result\":"+std::to_string(uint32_t(result)));
+  }
+}
 sl::Result TagHook(const sl::ViewportHandle& v,const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
-  TraceInput("slSetTag",State().recording.load(),uint32_t(v));
+  const auto id=State().recording.load();
+  TraceInput("slSetTag",id,uint32_t(v));
   const auto r=setTag(v,t,n,c);
-  if(r==sl::Result::eOk) Tags(State().recording.load(),uint32_t(v),t,n,c); return r;
+  if(r==sl::Result::eOk) Tags(id,uint32_t(v),t,n,c);
+  else RejectUpstreamInput(id,uint32_t(v),r,"slSetTag");
+  return r;
 }
 sl::Result TagFrameHook(const sl::FrameToken& f,const sl::ViewportHandle& v,
     const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
   TraceInput("slSetTagForFrame",FrameId(uint32_t(f)),uint32_t(v));
-  const auto r=setTagFrame(f,v,t,n,c); if(r==sl::Result::eOk) Tags(FrameId(uint32_t(f)),uint32_t(v),t,n,c); return r;
+  const auto id=FrameId(uint32_t(f)); const auto r=setTagFrame(f,v,t,n,c);
+  if(r==sl::Result::eOk) Tags(id,uint32_t(v),t,n,c);
+  else RejectUpstreamInput(id,uint32_t(v),r,"slSetTagForFrame");
+  return r;
 }
 sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl::ViewportHandle& v) {
   TraceInput("slSetConstants",FrameId(uint32_t(f)),uint32_t(v));
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
+  if(r!=sl::Result::eOk) { RejectUpstreamInput(id,uint32_t(v),r,"slSetConstants");return r; }
   if(SelectedViewport(uint32_t(v))) if(auto o=Active()) {
     std::lock_guard lock(o->io);
     if(o->retired) return r;

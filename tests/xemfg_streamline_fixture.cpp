@@ -9,6 +9,7 @@
 #include <windows.h>
 static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{};
 static std::atomic<bool> holdSleep{},sleepEntered{};
+static std::atomic<bool> rejectTags{};
 static std::atomic<uint32_t> fgStatus{};
 static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
 static std::atomic<uint32_t> queriesAfterShutdown{};
@@ -73,11 +74,12 @@ EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   return sl::Result::eOk;
 }
 EXPORT sl::Result slSetTag(const sl::ViewportHandle& v,const sl::ResourceTag*,uint32_t n,sl::CommandBuffer*) {
-  calls+=uint32_t(v)+n+1; return sl::Result::eOk;
+  calls+=uint32_t(v)+n+1; return rejectTags?sl::Result::eErrorInvalidState:sl::Result::eOk;
 }
 EXPORT sl::Result slSetTagForFrame(const sl::FrameToken& f,const sl::ViewportHandle&,const sl::ResourceTag*,uint32_t n,sl::CommandBuffer*) {
-  calls+=uint32_t(f)+n+1; return sl::Result::eOk;
+  calls+=uint32_t(f)+n+1; return rejectTags?sl::Result::eErrorInvalidState:sl::Result::eOk;
 }
+EXPORT void FixtureRejectTags(bool value) { rejectTags=value; }
 EXPORT sl::Result slSetConstants(const sl::Constants&,const sl::FrameToken& f,const sl::ViewportHandle&) {
   calls+=uint32_t(f)+1; return sl::Result::eOk;
 }
