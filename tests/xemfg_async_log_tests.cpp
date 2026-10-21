@@ -4,6 +4,9 @@
 #include <iostream>
 #include <stdexcept>
 #include <memory>
+#include <thread>
+#include <vector>
+#include <atomic>
 using mfgunlock::xemfg::AsyncLog;
 namespace { void Check(bool ok,const char* why) { if(!ok) throw std::runtime_error(why); } }
 int main() {
@@ -35,6 +38,19 @@ int main() {
     Check(!failure.Push(2,1,"too_large",std::string(5000,'x')),"oversized record truncated into invalid JSON");
     failure.Start([](const char*,size_t){return false;}); Check(failure.Flush(1000),"failed sink did not drain");
     Check(failure.Snapshot().failed && failure.Snapshot().dropped,"sink failure/oversize not visible");
-    std::cout<<"PASS: blocked sink does not block producers, fixed capacity, overflow, complete records, flush and sink error reporting\n"; return 0;
+    // Lock contention alone (producers and the draining worker) must not
+    // lose records while the queue has room; only a full queue may drop.
+    for(unsigned round=0;round<20;++round) {
+      auto contendedStorage=std::make_unique<AsyncLog>(); auto& contended=*contendedStorage;
+      std::atomic<size_t> lines{};
+      contended.Start([&](const char* text,size_t size) { for(size_t i=0;i<size;++i) lines+=text[i]=='\n'; return true; });
+      std::vector<std::thread> producers;
+      for(unsigned p=0;p<4;++p) producers.emplace_back([&,p] { for(unsigned i=0;i<100;++i) contended.Push(i,p,"contended","\"n\":1"); });
+      for(auto& t:producers) t.join();
+      Check(contended.Flush(2000),"contended drain did not finish");
+      Check(contended.Snapshot().dropped==0 && lines==400,"lock contention dropped records below capacity");
+      contended.Stop();
+    }
+    std::cout<<"PASS: blocked sink does not block producers, fixed capacity, overflow, complete records, flush, sink error reporting and contention without loss\n"; return 0;
   } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }
 }
