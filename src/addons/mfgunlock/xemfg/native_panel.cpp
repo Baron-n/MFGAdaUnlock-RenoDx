@@ -34,6 +34,7 @@ void Draw() {
   else if(!status.output) ui::Notice("Load a scene with Frame Generation enabled. XeMFG currently uses Streamline inputs in DirectX 12.");
   else if(paused) ui::Notice("The game's latest request has frame generation disabled. If it is enabled in the game, copy Diagnostics so the connection can be checked.");
   else if(status.enabled && status.sdkResult<0) ui::Notice("Frame generation is recovering. If this persists, switch FG off and on in the game.");
+  else if(status.output && !status.enabled) ui::Description(status.detail);
   static PanelPage page=PanelPage::General;
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
     int selected=int(page); ImGui::SetNextItemWidth(-1);
@@ -64,7 +65,7 @@ void Draw() {
   DrawControls(page);
   if(page==PanelPage::Diagnostics && ImGui::CollapsingHeader("Intel files and repair")) dependencies::Draw();
   if(page==PanelPage::General && unavailable) dependencies::Draw();
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.2 (local test build)");
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.3 (local test build)");
   ui::RepositoryButton();
 }
 }

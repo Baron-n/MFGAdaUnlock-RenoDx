@@ -22,6 +22,8 @@ OverlayStatus OverlaySnapshot() noexcept { return {1,0,5500,0}; }
 OverlayInputStatus OverlayInputSnapshot() noexcept { return {4,2,0}; }
 Bridge& State() {static Bridge state; return state;}
 Status Snapshot(){ return State().status; }
+bool OwnsPresentationHooks() noexcept {return true;}
+bool StreamlineStopping() noexcept {return false;}
 Output::~Output()=default;
 std::shared_ptr<Output> Active() {
   static auto output=std::make_shared<Output>();

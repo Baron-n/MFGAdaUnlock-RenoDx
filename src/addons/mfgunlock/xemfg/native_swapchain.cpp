@@ -9,12 +9,12 @@ class Swapchain final : public IDXGISwapChain4 {
   std::shared_ptr<Output> owner;
   void Resized(HRESULT hr) {
     if(FAILED(hr)) return;
+    const auto display=ReadFullscreen(chain.Get());
     if(owner->window) {
-      const auto display=ReadFullscreen(chain.Get());
       owner->window->ObserveFullscreen(display.known,display.exclusive);
-      if(ControlsSettings().forceBorderless) owner->window->Request(true,false);
     }
     std::lock_guard lock(owner->io);
+    owner->presentationSupported=display.known && !display.exclusive;
     DXGI_SWAP_CHAIN_DESC1 desc{}; chain->GetDesc1(&desc);
     owner->width=desc.Width; owner->height=desc.Height; owner->format=desc.Format;
     owner->compatible=desc.Format==DXGI_FORMAT_R10G10B10A2_UNORM || desc.Format==DXGI_FORMAT_R8G8B8A8_UNORM
@@ -63,20 +63,16 @@ public:
   }
   HRESULT STDMETHODCALLTYPE GetBuffer(UINT a,REFIID b,void** c) override { return chain->GetBuffer(a,b,c); }
   HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL a,IDXGIOutput* b) override {
-    if(a) {
-      if(ControlsSettings().forceBorderless && owner->window) {
-        const auto hr=chain->SetFullscreenState(FALSE,nullptr);
-        const auto display=ReadFullscreen(chain.Get());
-        owner->window->ObserveFullscreen(display.known,display.exclusive);
-        if(SUCCEEDED(hr)) owner->window->Request(true);
-        return hr;
-      }
-      return DXGI_ERROR_UNSUPPORTED;
-    }
     const auto hr=chain->SetFullscreenState(a,b);
-    if(owner->window) {
+    if(SUCCEEDED(hr)) {
       const auto display=ReadFullscreen(chain.Get());
-      owner->window->ObserveFullscreen(display.known,display.exclusive);
+      if(owner->window) owner->window->ObserveFullscreen(display.known,display.exclusive);
+      std::lock_guard lock(owner->io);
+      const bool supported=display.known && !display.exclusive;
+      if(supported!=owner->presentationSupported) {
+        owner->presentationSupported=supported;
+        ++owner->epoch;owner->frames.clear();owner->last=0;
+      }
     }
     return hr;
   }
@@ -86,9 +82,6 @@ public:
     auto hr=chain->ResizeBuffers(a,b,c,d,e); Resized(hr); return hr;
   }
   HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC* a) override {
-    if(ControlsSettings().forceBorderless && owner->window) {
-      owner->window->Request(true); return S_OK; // Keep the desktop's refresh/mode.
-    }
     return chain->ResizeTarget(a);
   }
   HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput** a) override { return chain->GetContainingOutput(a); }

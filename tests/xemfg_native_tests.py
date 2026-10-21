@@ -5,6 +5,7 @@ import configparser
 import datetime
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -33,6 +34,8 @@ ap.add_argument('--secondary-viewport',action='store_true')
 ap.add_argument('--normal-depth',action='store_true')
 ap.add_argument('--hud-conflict',action='store_true')
 ap.add_argument('--tail-sleep',action='store_true')
+ap.add_argument('--steam-observer',type=Path)
+ap.add_argument('--stale-input',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
@@ -46,6 +49,9 @@ manifest={}
 for src,name in inputs.items():
     shutil.copy2(src,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
+if args.steam_observer:
+    shutil.copy2(args.steam_observer,d/'gameoverlayrenderer64.dll')
+    manifest['gameoverlayrenderer64.dll']=hashlib.sha256(args.steam_observer.read_bytes()).hexdigest()
 if args.reframework:
     for src in (args.ref_v1,args.ref_legacy):
         if src is None: ap.error('REFramework cases require both fixture paths')
@@ -76,6 +82,8 @@ if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
 if args.reframework: flags+=['--ref-'+args.reframework]
+if args.steam_observer: flags+=['--steam-observer']
+if args.stale_input: flags+=['--stale-input']
 for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
@@ -149,6 +157,20 @@ markers_verified=('Historical markers: original calls preserved, real inference 
 tail_verified=(('Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved' in result.stdout)
     and any(e.get('event')=='native_sleep_association' and e.get('target')==e.get('source',0)+1 for e in events)) if args.tail_sleep else None
 # Async diagnostics deliberately drop records rather than block a producer.
+observer_verified=('Observer isolation: native plugin state preserved; game inference continued after observer OFF' in result.stdout) if args.steam_observer else None
+stale_verified=('Stale source input: original return preserved; old epoch discarded before new-session admission' in result.stdout) if args.stale_input else None
+compatibility_verified=False
+if (d/'compatibility.json').is_file():
+    support=json.loads((d/'compatibility.json').read_text(encoding='utf-8'))
+    compatibility_verified=(support.get('schema')=='mfgunlock.compatibility' and support.get('version')==1
+        and support.get('displayed_frames_measured') is False and support.get('physical_latency_measured') is False
+        and support.get('fallback')=='xemfg_selected_passthrough'
+        and all(v in ('confirmed','inferred','unavailable','invalid') for v in support['capabilities'].values())
+        and support['modules']['frame_generation'].get('sha256')==manifest['libxess_fg.dll']
+        and support['modules']['latency'].get('sha256')==manifest['libxell.dll']
+        and not re.search(r'[A-Za-z]:[\\/]',json.dumps(support)))
+    if args.steam_observer: compatibility_verified=compatibility_verified and support.get('external_observer_resolutions')==2
+    if args.stale_input: compatibility_verified=compatibility_verified and support.get('stale_inputs_discarded')==1
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
@@ -161,8 +183,11 @@ tail_verified=(('Tail sleep: first frame bypassed, following frames interpolated
     'legacy_factory_verified':legacy_verified,
     'historical_markers_verified':markers_verified,
     'tail_sleep_verified':tail_verified,
+    'observer_isolation_verified':observer_verified,
+    'stale_input_verified':stale_verified,
+    'compatibility_export_verified':compatibility_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)

@@ -6,6 +6,7 @@
 #include <cmath>
 #include <algorithm>
 #include <psapi.h>
+#include <intrin.h>
 
 namespace mfgunlock::xemfg::native {
 namespace {
@@ -100,6 +101,16 @@ bool SelectViewport(uint32_t v) {
   return s.viewport.load()==v;
 }
 bool SelectedViewport(uint32_t v) {return State().viewport.load()==v;}
+struct InputLease {
+  std::shared_ptr<Output> output;
+  uint64_t epoch{};
+  InputLease():output(Active()) {
+    if(output) {std::lock_guard guard(output->io);epoch=output->epoch;}
+  }
+  bool Current() const {
+    return output && compatibility::CurrentLease(epoch,output->epoch,output->retired) && output->fg && !output->deviceLost;
+  }
+};
 void TraceInput(const char* api,uint32_t id,uint32_t viewport=UINT32_MAX,int marker=-1) {
   if(!TraceEnabled() || id%64>=2)return;
   xess_mod::WriteLog("native_input_call","\"api\":\""+std::string(api)+"\",\"id\":"+std::to_string(id)
@@ -114,21 +125,28 @@ std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) 
     default: return {};
   }
 }
-void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
+void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
   if(!id || !tags || count>64 || !SelectedViewport(viewport)) return;
-  auto o=Active(); if(!o) return;
-  std::lock_guard lock(o->io); auto* frame=FindFrame(*o,id); if(!frame) return;
-  if(o->retired || !o->fg) return;
+  auto o=lease.output; if(!o) return;
+  std::lock_guard lock(o->io);
+  if(!lease.Current()) {++State().staleInputs;return;}
+  auto* frame=FindFrame(*o,id); if(!frame) return;
   frame->viewport=viewport;
   for(uint32_t i=0;i<count;++i) {
     const auto& t=tags[i]; auto type=ResourceType(t.type); if(!type) continue;
     const auto bit=1u<<*type;
+    auto& receipt=frame->resourceReceipts[uint32_t(*type)];
+    receipt.observed=true;receipt.lifecycle=uint32_t(t.lifecycle);
     const bool optional=*type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR || *type==XEFG_SWAPCHAIN_RES_UI;
     const char* rejection="metadata";
     D3D12_RESOURCE_DESC observed{};
     int sdkResult{};
     const auto reject=[&](uint32_t issues) {
-      if(!optional || (frame->resources&bit)) frame->failed=true;
+      receipt.rejection=rejection;receipt.accepted=false;receipt.sdkResult=sdkResult;
+      if(!optional || (frame->resources&bit)) {
+        frame->failed=true;
+        if(frame->firstFailure==compatibility::Failure::None)frame->firstFailure=compatibility::Failure::InputRejected;
+      }
       // Cannot retract an earlier successful tag for this same frame: bypass
       // that batch instead. Otherwise omit only the incompatible optional tag.
       if(optional) {
@@ -150,6 +168,7 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     };
     if(!t.resource || !t.resource->native) {
       if(frame->resources&bit) { rejection="tag_removed_after_admission"; reject(HudConflict); }
+      receipt.accepted=false;receipt.rejection="removed";
       frame->resources&=~bit; continue;
     }
     if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || t.resource->structVersion!=1
@@ -161,6 +180,8 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     }
     const auto desc=resource->GetDesc();
     observed=desc;
+    receipt.width=uint32_t(desc.Width);receipt.height=desc.Height;receipt.format=uint32_t(desc.Format);
+    receipt.incomingState=t.resource->state;
     ComPtr<ID3D12Device> device, nativeDevice; resource->GetDevice(IID_PPV_ARGS(&device));
     single_overlay::native::Unwrap(device.Get(),nativeDevice);
     ComPtr<IUnknown> identity, expectedIdentity;
@@ -215,6 +236,8 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
         +",\"height\":"+std::to_string(data.resourceSize.y)+",\"lifecycle\":"+std::to_string(t.lifecycle));
     if(code<0) { sdkResult=code; rejection="sdk_tag"; frame->failed=true; reject(HudMetadata); }
     else {
+      receipt.accepted=true;receipt.rejection=nullptr;receipt.sdkResult=code;
+      receipt.width=data.resourceSize.x;receipt.height=data.resourceSize.y;
       frame->resources|=bit;
       if(optional) { frame->hudTags[hudSlot]=hudIdentity; frame->hudAllocations[hudSlot]=std::move(allocation); }
       if(optional && !(o->hudKindsSeen&bit)) {
@@ -229,40 +252,46 @@ void Tags(uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t cou
     }
   }
 }
-void RejectUpstreamInput(uint32_t id,uint32_t viewport,sl::Result result,const char* api) {
+void RejectUpstreamInput(const InputLease& lease,uint32_t id,uint32_t viewport,sl::Result result,const char* api) {
   if(!id || !SelectedViewport(viewport)) return;
-  if(auto output=Active()) {
+  if(auto output=lease.output) {
     std::lock_guard lock(output->io);
-    if(output->retired) return;
-    if(auto* frame=FindFrame(*output,id)) frame->failed=true;
+    if(!lease.Current()) {++State().staleInputs;return;}
+    if(auto* frame=FindFrame(*output,id)) {
+      frame->failed=true;
+      if(frame->firstFailure==compatibility::Failure::None)frame->firstFailure=compatibility::Failure::InputRejected;
+    }
     static std::atomic<uint32_t> messages{};
     if(messages.fetch_add(1)<8) xess_mod::WriteLog("native_input_api_error","\"api\":\""+std::string(api)
         +"\",\"id\":"+std::to_string(id)+",\"result\":"+std::to_string(uint32_t(result)));
   }
 }
 sl::Result TagHook(const sl::ViewportHandle& v,const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
+  const InputLease lease;
   const auto id=State().recording.load();
   TraceInput("slSetTag",id,uint32_t(v));
   const auto r=setTag(v,t,n,c);
-  if(r==sl::Result::eOk) Tags(id,uint32_t(v),t,n,c);
-  else RejectUpstreamInput(id,uint32_t(v),r,"slSetTag");
+  if(r==sl::Result::eOk) Tags(lease,id,uint32_t(v),t,n,c);
+  else RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetTag");
   return r;
 }
 sl::Result TagFrameHook(const sl::FrameToken& f,const sl::ViewportHandle& v,
     const sl::ResourceTag* t,uint32_t n,sl::CommandBuffer* c) {
+  const InputLease lease;
   TraceInput("slSetTagForFrame",FrameId(uint32_t(f)),uint32_t(v));
   const auto id=FrameId(uint32_t(f)); const auto r=setTagFrame(f,v,t,n,c);
-  if(r==sl::Result::eOk) Tags(id,uint32_t(v),t,n,c);
-  else RejectUpstreamInput(id,uint32_t(v),r,"slSetTagForFrame");
+  if(r==sl::Result::eOk) Tags(lease,id,uint32_t(v),t,n,c);
+  else RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetTagForFrame");
   return r;
 }
 sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl::ViewportHandle& v) {
+  const InputLease lease;
   TraceInput("slSetConstants",FrameId(uint32_t(f)),uint32_t(v));
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
-  if(r!=sl::Result::eOk) { RejectUpstreamInput(id,uint32_t(v),r,"slSetConstants");return r; }
-  if(SelectedViewport(uint32_t(v))) if(auto o=Active()) {
+  if(r!=sl::Result::eOk) { RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetConstants");return r; }
+  if(SelectedViewport(uint32_t(v))) if(auto o=lease.output) {
     std::lock_guard lock(o->io);
-    if(o->retired) return r;
+    if(!lease.Current()) {++State().staleInputs;return r;}
     if(auto* frame=FindFrame(*o,id)) {
       frame->constants=true;
       frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
@@ -412,6 +441,16 @@ sl::Result EvaluateHook(sl::Feature feature,const sl::FrameToken& f,const sl::Ba
   return evaluate(feature,f,inputs,count,command);
 }
 bool Feature(const char* name,void* entry) {
+  // Keep these plugin bodies original. Resolver-returned wrappers belong to
+  // the game, while independent overlay consumers retain the native entry.
+  if(!strcmp(name,"slDLSSGSetOptions") || !strcmp(name,"slDLSSGGetState")) {
+    auto** slot=!strcmp(name,"slDLSSGSetOptions")?reinterpret_cast<void**>(&setOptions):reinterpret_cast<void**>(&getState);
+    if(*slot)return *slot==entry;
+    HMODULE pin{};
+    if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
+        reinterpret_cast<LPCWSTR>(entry),&pin))return false;
+    *slot=entry;return true;
+  }
   if(strcmp(name,"slPCLSetMarker")==0 || strcmp(name,"slReflexSetMarker")==0) {
     const bool legacy=strcmp(name,"slReflexSetMarker")==0;
     auto** target=legacy?reinterpret_cast<void**>(&legacyMarker):reinterpret_cast<void**>(&pclMarker);
@@ -437,7 +476,6 @@ bool Feature(const char* name,void* entry) {
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN, \
       reinterpret_cast<LPCWSTR>(entry),&pin)) return false; \
   return Hook(entry,reinterpret_cast<void*>(&f),reinterpret_cast<void**>(&p)); }
-  H("slDLSSGSetOptions",OptionsHook,setOptions) H("slDLSSGGetState",StateHook,getState)
   H("slReflexSetOptions",ReflexOptionsHook,reflexOptions) H("slReflexSleep",SleepHook,reflexSleep)
 #undef H
   return false;
@@ -448,7 +486,23 @@ sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
   if(stopping) return getFeature(feature,name,fn);
   std::lock_guard guard(discovery);
   const auto r=getFeature(feature,name,fn);
-  if(!stopping && r==sl::Result::eOk && name && fn) Feature(name,fn);
+  if(!stopping && r==sl::Result::eOk && name && fn) {
+    const bool generation=!strcmp(name,"slDLSSGSetOptions") || !strcmp(name,"slDLSSGGetState");
+    if(generation) {
+      HMODULE caller{};
+      const auto observer=GetModuleHandleW(L"gameoverlayrenderer64.dll");
+      if(observer && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          reinterpret_cast<LPCWSTR>(_ReturnAddress()),&caller) && caller==observer) {
+        ++State().externalResolutions;
+        return r;
+      }
+    }
+    const bool captured=Feature(name,fn);
+    if(generation) {
+      if(!captured) {fn=nullptr;return sl::Result::eErrorUnsupportedInterface;}
+      fn=!strcmp(name,"slDLSSGSetOptions")?reinterpret_cast<void*>(&OptionsHook):reinterpret_cast<void*>(&StateHook);
+    }
+  }
   return r;
 }
 } // namespace
@@ -467,6 +521,7 @@ void CaptureStreamlineStartup() {
   H("slShutdown",ShutdownHook,shutdown)
   H("slSetD3DDevice",DeviceHook,setDevice)
   H("slInit",InitHook,initialize)
+  H("slGetFeatureFunction",ResolveHook,getFeature)
 #undef H
   // Incomplete installation must not disable NVIDIA or create an Intel output
   // without the query/control/shutdown hooks needed to keep that owner safe.
@@ -498,10 +553,14 @@ void DiscoverStreamline() {
   auto& s=State(); std::lock_guard lock(s.lock);
   s.status.streamline=setOptions && getState && reflexOptions && reflexSleep
       && (pclMarker || legacyMarker || evaluate) && setConstants && (setTag || setTagFrame);
+  s.hookCapabilities=(uint32_t(setOptions && getState)<<0)|(uint32_t(reflexOptions && reflexSleep)<<1)
+      |(uint32_t(pclMarker || legacyMarker)<<2)|(uint32_t(evaluate!=nullptr)<<3)
+      |(uint32_t(setConstants!=nullptr)<<4)|(uint32_t(setTag!=nullptr)<<5)|(uint32_t(setTagFrame!=nullptr)<<6);
 }
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
   if(o->retired || !o->fg) return;
+  if(o->deviceLost) {o->blocker=compatibility::Failure::DeviceLost;Report(compatibility::Description(o->blocker));return;}
   const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
   s.lastHudIssues=frame?frame->hudIssues:0;
   s.lastHudInputs=frame?frame->resources&((1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)|(1u<<XEFG_SWAPCHAIN_RES_UI)):0;
@@ -514,14 +573,25 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   // Present identity belongs to the source frame, including passthrough.
   // Missing FG inputs must not leave the Intel proxy on the previous ID.
   const auto presentIdResult=id && id>o->last?a.xefgSwapChainSetPresentId(o->fg,id):XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
-  bool ready=OwnsPresentationHooks() && presentIdResult>=0 && compositionReady && frame && id>o->last && s.nativeOff && latencyReady && s.requested && o->compatible;
+  constexpr uint32_t beforePresent=(1u<<XELL_SIMULATION_START)|(1u<<XELL_SIMULATION_END)
+      |(1u<<XELL_RENDERSUBMIT_START)|(1u<<XELL_PRESENT_START);
+  const compatibility::Admission requirements{
+    .requested=s.requested,.output=true,.ownsPresentation=OwnsPresentationHooks(),.deviceLost=o->deviceLost,.formatSupported=o->compatible,
+    .frame=frame!=nullptr,.presentIdentity=presentIdResult>=0 && id>o->last,.nativeOff=s.nativeOff,.latencyReady=latencyReady,
+    .depth=frame && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_DEPTH)),
+    .motion=frame && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR)) && frame->motionWidth && frame->motionHeight,
+    .constants=frame && frame->constants,.constantsValid=frame && frame->valid,.rejected=frame && frame->failed,
+    .sourceWait=frame && frame->sleeping && frame->latencyOutput==s.latencyOutput.load(),
+    .requiredMarkers=frame && (frame->markers&beforePresent)==beforePresent,.composition=compositionReady,
+    .firstInputFailure=frame?frame->firstFailure:compatibility::Failure::None,
+    .presentationSupported=o->presentationSupported};
+  o->blocker=compatibility::Blocker(requirements);
+  bool ready=o->blocker==compatibility::Failure::None;
   if(ready) {
     auto& f=*frame;
     // RenderSubmit END can legally arrive after Present starts or returns.
     // Admission requires the observed frame's starts, simulation and sleep;
     // END continues to be forwarded at its actual arrival in CaptureMarker.
-    constexpr uint32_t beforePresent=(1u<<XELL_SIMULATION_START)|(1u<<XELL_SIMULATION_END)
-        |(1u<<XELL_RENDERSUBMIT_START)|(1u<<XELL_PRESENT_START);
     ready=f.constants && f.valid && !f.failed && f.sleeping && f.latencyOutput==s.latencyOutput.load() && (f.markers&beforePresent)==beforePresent
         && (f.resources&required)==required && f.motionWidth && f.motionHeight;
     if(ready) {
@@ -544,6 +614,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
     if(ready) o->appliedCount=count;
     else { a.xefgSwapChainSetEnabled(o->fg,0); o->enabled=false; }
   }
+  if(!ready && o->blocker==compatibility::Failure::None)o->blocker=compatibility::Failure::SdkSubmission;
   const auto* f=frame;
   if(id && !ready && o->bypassPresentLogBudget<8) {
     ++o->bypassPresentLogBudget;
@@ -561,19 +632,15 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
         +",\"reflex_off\":"+std::to_string(s.reflexOff.load())
         +",\"resources\":"+std::to_string(f?f->resources:0)+",\"markers\":"+std::to_string(f?f->markers:0)
         +",\"constants\":"+std::to_string(f?f->constants:0)+",\"valid\":"+std::to_string(f?f->valid:0)
-        +",\"failed\":"+std::to_string(f?f->failed:0)+",\"sleep\":"+std::to_string(f?f->sleeping:0));
+        +",\"failed\":"+std::to_string(f?f->failed:0)+",\"sleep\":"+std::to_string(f?f->sleeping:0)
+        +",\"blocker\":\""+compatibility::Name(o->blocker)+"\",\"observed_markers\":"+std::to_string(f?f->observedMarkers:0)
+        +",\"first_input_failure\":\""+compatibility::Name(f?f->firstFailure:compatibility::Failure::None)+"\"");
   }
   { std::lock_guard guard(s.lock); s.status.inputs=ready; s.status.enabled=ready;
     s.status.multiplier=s.multiplier; ++s.status.frames; if(!ready) ++s.status.rejected; }
   if(ready) Report(nativeReflex?"XeMFG active: Streamline inputs and native Reflex; pacing state is reported separately":
       "XeMFG active: Streamline inputs and XeLL; pacing state is reported separately");
-  else if(!s.requested) Report("XeMFG paused: the game is not requesting frame generation");
-  else if(s.requested && nativeReflex && !latencyReady) Report("XeMFG bypass: enable native NVIDIA Reflex in the game for the selected latency output");
-  else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_DEPTH))) Report("XeMFG bypass: this frame has no accepted depth input");
-  else if(frame && !(frame->resources&(1u<<XEFG_SWAPCHAIN_RES_MOTION_VECTOR))) Report("XeMFG bypass: this frame has no accepted motion vectors");
-  else if(frame && frame->constantIssues) Report("XeMFG bypass: camera/motion constants incompatible; inspect native_constants_status");
-  else if(frame && !frame->markers) Report("XeMFG bypass: no matching source-frame latency markers");
-  else if(s.requested) Report("XeMFG bypass: missing matching inputs/markers, invalid constants, or NVIDIA disable acknowledgement");
+  else Report(compatibility::Description(o->blocker));
   o->last=id;
 }
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
@@ -588,6 +655,13 @@ void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT resul
         +",\"frame\":"+std::to_string(o->last)+",\"present_hresult\":"+std::to_string(uint32_t(result))
         +",\"device_removed_reason\":"+std::to_string(uint32_t(removed))
         +",\"fg_enabled\":"+std::to_string(o->enabled)+",\"epoch\":"+std::to_string(o->epoch));
+    RecordDeviceFailure(*o,result);
+  }
+  if(o->deviceLost) {
+    if(probe && probe->active) {probe->sample.frame=o->last;probe->sample.epoch=o->epoch;
+      probe->sample.output=o->diagnosticOutput;probe->sample.presentResult=result;
+      probe->sample.sdkQueryResult=E_ABORT;probe->Finish();}
+    Report(compatibility::Description(o->blocker));return;
   }
   const auto queryResult=State().api.xefgSwapChainGetLastPresentStatus(o->fg,&status);
   if(queryResult==0) {

@@ -41,7 +41,8 @@ void LoadControls() {
   settings.output=ReadChoice(L"Latency",L"Output",L"Reflex")?LatencyOutput::Reflex:
       ReadChoice(L"Latency",L"Output",L"XeLL")?LatencyOutput::XeLL:LatencyOutput::Auto;
   State().latencyOutput=settings.output==LatencyOutput::Reflex?LatencyOutput::Reflex:LatencyOutput::XeLL;
-  settings.forceBorderless=ReadBool(L"XeFG",L"ForceBorderless",false);
+  // Kept in the settings ABI for older callers. XeMFG never changes window mode.
+  settings.forceBorderless=false;
   settings.uiComposition=ReadBool(L"XeFG",L"UIComposition",false);
   settings.sdkDeadlines=ReadBool(L"XeFG",L"SdkDeadlines",false);
   sdk_pacing::RequestSdkDeadlines(settings.sdkDeadlines);
@@ -50,7 +51,9 @@ void LoadControls() {
   if(_wcsicmp(flip,L"auto") && _wcsicmp(flip,L"on") && _wcsicmp(flip,L"true") && wcscmp(flip,L"1")
       && _wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0")) invalidConfiguration=true;
 }
-bool ConfigureControls(const ControlSettings& value) {
+bool ConfigureControls(const ControlSettings& incoming) {
+  auto value=incoming;
+  value.forceBorderless=false;
   // Reject unknown ABI/enums. The latency output is fixed for this process;
   // changing the preference never replays a game setter on the UI thread.
   if(value.version!=5 || uint32_t(value.input)>1 || uint32_t(value.output)>2) return false;
@@ -71,8 +74,6 @@ bool ConfigureControls(const ControlSettings& value) {
   sdk_pacing::RequestQueueAhead(value.queueAhead);
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
   if(old.sdkDeadlines!=value.sdkDeadlines) sdk_pacing::RequestSdkDeadlines(value.sdkDeadlines);
-  if(old.forceBorderless!=value.forceBorderless)
-    if(auto output=Active(); output && output->window) output->window->Request(value.forceBorderless);
   xess_mod::WriteLog("native_controls","\"input\":"+std::to_string(uint32_t(value.input))
       +",\"output\":"+std::to_string(uint32_t(value.output))+",\"flip_requested\":"+(value.flipMetering?"true":"false")
       +",\"borderless_requested\":"+(value.forceBorderless?"true":"false")
@@ -174,15 +175,8 @@ void DrawControls(PanelPage page) {
       if(status.sdkDeadlinesRequested!=status.sdkDeadlinesActive) ui::Description("Waiting for the next generated group.");
     }
     ImGui::Separator();
-    ui::Setting("##xe_window_row","Force Borderless","Fill the current monitor without window borders. Use this if the game requests exclusive fullscreen.",[&] {
-      if(ImGui::Checkbox("##xe_borderless",&value.forceBorderless)) ConfigureControls(value);
-    });
     ui::Readout("##xe_window_state","Display mode",w.pending?"Change pending":window,
-        "Shows the current window borders and monitor coverage. Turning Force Borderless off restores the previous mode only if the addon still owns the window changes.");
-    if(w.error==ERROR_BUSY) ui::Notice("The game or another addon changed the window. The current window state was preserved.");
-    else if(w.error) ui::Notice("The window mode could not be changed. Diagnostics has the reported error.");
-    if(value.forceBorderless && w.available && !w.pending && (!w.borderless || !w.coversMonitor || w.error))
-      if(ImGui::Button("Apply borderless again")) if(auto output=Active(); output && output->window) output->window->Request(true);
+        "The game controls its display mode. XeMFG does not force Borderless or replace fullscreen requests. Exclusive fullscreen is not supported by the Intel frame-generation SDK.");
   }
   if(page==PanelPage::Quality) {
     ui::Section("Image quality");
@@ -249,10 +243,12 @@ void DrawControls(PanelPage page) {
     if(State().retirementFailed || !reframework::Safe(ref.result)) ui::Notice("Output retirement could not be coordinated safely. Restart the game before creating another XeMFG output.");
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
-    if(ImGui::Button("Copy diagnostic report")) {
+    if(ImGui::Button("Copy compatibility report")) ImGui::SetClipboardText(CompatibilityReport().c_str());
+    ui::Tooltip("Copies structured metadata: module hashes, the first unmet frame requirement, input validation and DirectX errors. No resource contents, personal paths or GPU addresses.");
+    if(ImGui::Button("Copy detailed counters")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock 1.5.0-rc.2\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock 1.5.0-rc.3\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
@@ -276,7 +272,8 @@ void DrawControls(PanelPage page) {
       report<<"\nasync_log_started="<<log.started<<" pending="<<log.pending<<" dropped="<<log.dropped<<" failed_batches="<<log.failed;
       report<<"\nreframework="<<reframework::Description(ref)<<" v1="<<ref.v1<<" known_monitor_issue="<<ref.knownMonitorIssue
           <<" result="<<int(ref.result)<<" raw="<<ref.rawResult<<" version="<<ref.version
-          <<"\nreframework_path="<<ref.path<<"\nreframework_sha256="<<ref.sha256;
+          <<"\nreframework_sha256="<<ref.sha256;
+      report<<"\n\nCompatibility metadata (JSON v1):\n"<<CompatibilityReport();
       ImGui::SetClipboardText(report.str().c_str());
     }
     ui::Tooltip("Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.");

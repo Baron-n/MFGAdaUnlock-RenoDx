@@ -7,6 +7,7 @@
 #include "native_trace.hpp"
 #include "hud_inputs.hpp"
 #include "native_reframework.hpp"
+#include "compatibility_policy.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -36,6 +37,15 @@ struct Api {
   bool Load();
 };
 struct Frame {
+  struct ResourceReceipt {
+    uint32_t width{},height{},format{},incomingState{},lifecycle{};
+    int sdkResult{};
+    const char* rejection{}; // static reason, never an object name or address
+    bool observed{},accepted{};
+  } resourceReceipts[4];
+  compatibility::Failure firstFailure{compatibility::Failure::None};
+  uint32_t rejectedMarker{UINT32_MAX}, markerObservedBeforeSleep{};
+  int markerSdkResult{};
   uint64_t sleepUs{};
   uint32_t id{}, viewport{}, resources{}, markers{}, observedMarkers{}, sourceSleepTarget{};
   bool sourceSleepResolved{};
@@ -84,6 +94,12 @@ struct Output {
   int uiCompositionResult{};
   uint64_t uiCompositionUpdates{};
   bool invert{}, jitter{}, enabled{}, compatible{true},retired{};
+  bool deviceLost{};
+  bool presentationSupported{true};
+  HRESULT presentFailure{S_OK},removedReason{S_OK};
+  HRESULT dredResult{E_NOINTERFACE};
+  uint32_t dredNodes{},dredUnfinished{};
+  compatibility::Failure blocker{compatibility::Failure::NoFrame};
   std::shared_ptr<reframework::Peer> reframeworkPeer;
   ComPtr<IDXGISwapChain4> quarantinedProxy;
   // The application proxy owns presentation. Shared operation leases may keep
@@ -112,6 +128,8 @@ struct Bridge {
   std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
   std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
+  std::atomic<uint32_t> hookCapabilities{0};
+  std::atomic<uint64_t> staleInputs{0},externalResolutions{0};
 };
 Bridge& State();
 inline Frame* FindFrame(Output& o,uint32_t id) {
@@ -124,6 +142,8 @@ bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);
 bool Hook(void* entry,void* replacement,void** trampoline);
 void DiscoverStreamline();
+std::string CompatibilityReport();
+void RecordDeviceFailure(Output&,HRESULT);
 std::shared_ptr<Output> Active();
 void BeforePresent(const std::shared_ptr<Output>& o);
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe=nullptr,HRESULT result=S_OK);

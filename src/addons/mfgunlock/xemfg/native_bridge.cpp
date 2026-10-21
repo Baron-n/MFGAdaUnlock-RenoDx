@@ -131,13 +131,10 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** result) {
   RuntimeCall createTrace("create_output");
   if(!result || !desc || !hwnd || restrictOutput) return E_NOINTERFACE;
-  const bool forceBorderless=ControlsSettings().forceBorderless;
-  if(full && !full->Windowed && !forceBorderless) {
-    Report("XeMFG requires windowed/borderless mode; enable Force Borderless before restarting");
+  if(full && !full->Windowed) {
+    Report("XeMFG is unavailable in exclusive fullscreen; the game's display mode was preserved");
     return E_NOINTERFACE;
   }
-  auto windowed=full?*full:DXGI_SWAP_CHAIN_FULLSCREEN_DESC{};
-  if(forceBorderless) windowed.Windowed=TRUE;
   if(desc->Format!=DXGI_FORMAT_R10G10B10A2_UNORM && desc->Format!=DXGI_FORMAT_R8G8B8A8_UNORM
       && desc->Format!=DXGI_FORMAT_B8G8R8A8_UNORM) {
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
@@ -220,7 +217,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   o->factory=FinalOutputFactory(transportFactory.Get());
   const auto code=[&] {
     RuntimeCall trace("xefg_init",o->diagnosticOutput);
-    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,forceBorderless?&windowed:full,queue.Get(),o->factory.Get(),&init);
+    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,full,queue.Get(),o->factory.Get(),&init);
     trace.Result(r);return r;
   }();
   if(code!=0) {
@@ -238,7 +235,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   // is consumed at Present, after the matching frame's inputs are known.
   a.xefgSwapChainSetEnabled(o->fg,0);
   BOOL exclusive{}; const bool known=SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr));
-  SetLastError(0); o->window=WindowControl::Bind(hwnd,forceBorderless,known,exclusive!=FALSE);
+  SetLastError(0); o->window=WindowControl::Bind(hwnd,false,known,exclusive!=FALSE);
   if(!o->window) o->windowBindError=GetLastError();
   xess_mod::WriteLog("native_window_bind","\"hwnd\":"+std::to_string(uintptr_t(hwnd))
       +",\"thread\":"+std::to_string(GetCurrentThreadId())+",\"available\":"+(o->window?"true":"false")

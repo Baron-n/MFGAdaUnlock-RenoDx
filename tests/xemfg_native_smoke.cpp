@@ -16,6 +16,7 @@
 #include "../src/addons/mfgunlock/xemfg/native_controls.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_overlay.hpp"
 #include <iostream>
+#include <fstream>
 #include <stdexcept>
 #include <vector>
 #include <filesystem>
@@ -465,9 +466,9 @@ int main(int argc,char** argv) {
       base.Reset();
       std::cout<<"Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay"<<std::endl;
     }
-    // Simulate a game's exclusive startup request. The persisted force policy
-    // must turn it into a valid Intel windowed output before SDK init.
-    DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=FALSE;
+    // Normal inference runs in the game's windowed mode. The bridge must
+    // preserve it even if a legacy INI still requests forced borderless.
+    DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=TRUE;
     ComPtr<ID3D12CommandQueue> proxyQueue;
     NativeQueueProxy* queueProxy{};
     if(flag("--queue-proxy")) {queueProxy=new NativeQueueProxy(queue.Get());proxyQueue.Attach(queueProxy);}
@@ -502,28 +503,19 @@ int main(int argc,char** argv) {
     if(queueProxy) Require(queueProxy->References()==1,"Intel context retained the external queue wrapper");
     mfgunlock::xemfg::native::OverlayStatus os;
     Require(overlayStatus(&os,sizeof(os)) && os.created==(flag("--retained-output")?2u:1u) && os.failed==0,"final output has no manual ReShade runtime");
-    settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"borderless request");
+    const auto windowStyle=GetWindowLongPtrW(hwnd,GWL_STYLE);
+    const auto windowExStyle=GetWindowLongPtrW(hwnd,GWL_EXSTYLE);
+    RECT windowRect{};GetWindowRect(hwnd,&windowRect);
+    settings.forceBorderless=true; Require(configure(&settings,sizeof(settings)),"legacy borderless preference");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
-    // The owner-thread controller is asynchronous; SDK/ReShade startup may
-    // still post window notifications after CreateSwapChain returns.
-    const auto windowDeadline=GetTickCount64()+2000;
-    do {
-      MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
-      controlStatus(&cs,sizeof(cs));
-      if(cs.window.borderless && cs.window.coversMonitor && !cs.window.pending) break;
-      Sleep(2);
-    } while(GetTickCount64()<windowDeadline);
-    if(!cs.window.borderless || !cs.window.coversMonitor) {
-      RECT rect{}; GetWindowRect(hwnd,&rect);
-      std::cerr<<"borderless available="<<cs.window.available<<" pending="<<cs.window.pending<<" managed="<<cs.window.managed
-          <<" error="<<cs.window.error<<" borders="<<cs.window.borderless<<" monitor="<<cs.window.coversMonitor
-          <<" rect="<<rect.left<<','<<rect.top<<','<<rect.right<<','<<rect.bottom<<std::endl;
+    if(!flag("--steam-observer")) {
+      RECT after{};GetWindowRect(hwnd,&after);controlStatus(&cs,sizeof(cs));
+      Require(GetWindowLongPtrW(hwnd,GWL_STYLE)==windowStyle && GetWindowLongPtrW(hwnd,GWL_EXSTYLE)==windowExStyle
+          && EqualRect(&windowRect,&after),"XeMFG changed the game's display mode");
+      Require(!cs.settings.forceBorderless && !cs.window.managed,"legacy preference still controls window mode");
     }
-    Require(cs.window.borderless && cs.window.coversMonitor,"overlay borderless not applied");
-    Check(chain->SetFullscreenState(TRUE,nullptr),"exclusive request redirected to borderless");
-    settings.forceBorderless=false; Require(configure(&settings,sizeof(settings)),"window restore request");
+    settings.forceBorderless=false; Require(configure(&settings,sizeof(settings)),"game display preference");
     { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
-    controlStatus(&cs,sizeof(cs)); Require(!cs.window.managed && !cs.window.error,"overlay window restore failed");
     auto resolve=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
     auto setLoaded=Import<PFun_slSetFeatureLoaded*>(fixture,"slSetFeatureLoaded");
     auto isLoaded=Import<PFun_slIsFeatureLoaded*>(fixture,"slIsFeatureLoaded");
@@ -638,8 +630,30 @@ int main(int argc,char** argv) {
     sl::Resource rc(sl::ResourceType::eTex2d,color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::ResourceTag tagged[]={ {&rd,sl::kBufferTypeDepth,sl::eValidUntilPresent},
       {&rm,sl::kBufferTypeMotionVectors,sl::eValidUntilPresent}, {&rc,sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent} };
+    HMODULE observer{};
+    if(flag("--steam-observer")) {observer=LoadLibraryW(L".\\gameoverlayrenderer64.dll");Require(observer,"independent observer fixture");}
+    if(flag("--stale-input")) {
+      const auto hold=Import<void(*)(bool)>(fixture,"FixtureHoldConstants");
+      const auto entered=Import<bool(*)()>(fixture,"FixtureConstantsEntered");
+      hold(true);Token oldToken;oldToken.id=500;
+      auto pending=std::async(std::launch::async,[&] {return constants(c,oldToken,viewport);});
+      const auto deadline=GetTickCount64()+3000;
+      while(!entered() && GetTickCount64()<deadline)Sleep(1);
+      if(!entered()) {hold(false);pending.wait();throw std::runtime_error("constants did not enter the upstream gate");}
+      const auto resized=chain->ResizeBuffers(0,640,360,DXGI_FORMAT_UNKNOWN,desc.Flags);
+      hold(false);Require(pending.get()==sl::Result::eOk,"upstream constants result was modified");Check(resized,"resize during upstream constants");
+      const auto exportReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeCompatibilityReport");
+      std::vector<char> report(exportReport(nullptr,0));Require(exportReport(report.data(),uint32_t(report.size()))>0,"compatibility report unavailable");
+      Require(std::string(report.data()).find("\"stale_inputs_discarded\": 1")!=std::string::npos,"old constants crossed the resize epoch");
+      std::cout<<"Stale source input: original return preserved; old epoch discarded before new-session admission"<<std::endl;
+    }
     bool first=true;
     for(uint32_t frame=1;frame<=48;++frame) {
+      if(observer && frame==12) {
+        Require(Import<sl::Result(*)(HMODULE)>(observer,"ObserverDisable")(fixture)==sl::Result::eOk,"observer original options");
+        Require(Import<uint32_t(*)(HMODULE)>(observer,"ObserverFrames")(fixture)==1,"observer received replacement frame state");
+      }
+
       if(flag("--secondary-viewport") && frame==5) {
         sl::DLSSGOptions idle;idle.mode=sl::DLSSGMode::eOff;
         Require(options(sl::ViewportHandle{1},idle)==sl::Result::eOk,"secondary OFF while primary enabled");
@@ -654,7 +668,7 @@ int main(int argc,char** argv) {
       }
       if(frame==8) {
         controlStatus(&cs,sizeof(cs));
-        Require(cs.uiCompositionKnown && !cs.uiCompositionApplied && cs.uiCompositionUpdates==0,"SDK default interpolation was overridden");
+        Require(cs.uiCompositionKnown && !cs.uiCompositionApplied && cs.uiCompositionUpdates==(flag("--stale-input")?1u:0u),"SDK default interpolation was overridden");
       }
       if(frame==9 || frame==25) {
         settings.uiComposition=frame==9;
@@ -722,6 +736,7 @@ int main(int argc,char** argv) {
           Require(frame==1?!bs.enabled:bs.enabled,"tail wait did not reach the following source frame");
         }
       }
+      if(observer && frame==12) {bridgeStatus(&bs,sizeof(bs));Require(bs.enabled,"observer options changed the game's FG request");}
       if(frame==9 || frame==17 || frame==18 || frame==25) {
         controlStatus(&cs,sizeof(cs));
         const bool composed=frame==9 || frame==18;
@@ -772,7 +787,7 @@ int main(int argc,char** argv) {
     Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.
-    const uint64_t compositionTransitions=flag("--producer-shadow")?6:4;
+    const uint64_t compositionTransitions=(flag("--producer-shadow")?6:4)+(flag("--stale-input")?1:0);
     Require(!cs.settings.uiComposition && !cs.uiCompositionApplied && cs.uiCompositionUpdates==compositionTransitions,"UI composition setter repeated or did not restore default");
     const auto requiredBytes=timingReport(nullptr,0); std::vector<char> cpuReport(requiredBytes);
     Require(timingReport(cpuReport.data(),uint32_t(cpuReport.size()))==requiredBytes,"timing report size changed without new Presents");
@@ -864,6 +879,18 @@ int main(int argc,char** argv) {
     }
     // The foreign peer re-enters AfterPresent on a separate thread while our
     // output is retiring. It must see the retired epoch without an io deadlock.
+    if(observer)std::cout<<"Observer isolation: native plugin state preserved; game inference continued after observer OFF"<<std::endl;
+    {
+      auto exportReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeCompatibilityReport");
+      const auto size=exportReport(nullptr,0);Require(size>100,"empty compatibility metadata");
+      char tiny[2]={'x','y'};
+      Require(exportReport(tiny,2)>2 && tiny[0]=='x' && tiny[1]=='y',"undersized support buffer was overwritten");
+      std::vector<char> json(size);Require(exportReport(json.data(),uint32_t(json.size()))==size,"unstable compatibility export size");
+      const std::string text(json.data());
+      Require(text.find("mfgunlock.compatibility")!=std::string::npos && text.find("\"version\": 1")!=std::string::npos,"compatibility schema missing");
+      Require(text.find("C:\\")==std::string::npos && text.find("reframework_path")==std::string::npos,"personal path leaked in compatibility export");
+      std::ofstream("compatibility.json",std::ios::binary)<<text;
+    }
     if(refLate) {refFixture=LoadLibraryW(L".\\reframework-v1-fixture.dll");Require(refFixture,"late REFramework load");}
     if(refAmbiguous) {refOther=LoadLibraryW(L".\\reframework-legacy-fixture.dll");Require(refOther,"late second REFramework fixture");}
     uint32_t(*refCalls)(){};

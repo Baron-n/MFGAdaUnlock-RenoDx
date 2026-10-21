@@ -10,6 +10,7 @@
 static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{},lastReflexSleepToken{};
 static std::atomic<bool> holdSleep{},sleepEntered{};
 static std::atomic<bool> rejectTags{};
+static std::atomic<bool> holdConstants{},constantsEntered{};
 static std::atomic<uint32_t> fgStatus{};
 static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
 static std::atomic<uint32_t> queriesAfterShutdown{};
@@ -81,8 +82,11 @@ EXPORT sl::Result slSetTagForFrame(const sl::FrameToken& f,const sl::ViewportHan
 }
 EXPORT void FixtureRejectTags(bool value) { rejectTags=value; }
 EXPORT sl::Result slSetConstants(const sl::Constants&,const sl::FrameToken& f,const sl::ViewportHandle&) {
+  if(holdConstants) {constantsEntered=true;while(holdConstants)::Sleep(1);}
   calls+=uint32_t(f)+1; return sl::Result::eOk;
 }
+EXPORT void FixtureHoldConstants(bool value) {holdConstants=value;if(value)constantsEntered=false;}
+EXPORT bool FixtureConstantsEntered() {return constantsEntered;}
 EXPORT uint32_t FixtureModes() { return fgMode|(reflexMode<<8); }
 EXPORT void FixtureFgStatus(uint32_t value) { fgStatus=value; }
 

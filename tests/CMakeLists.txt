@@ -17,6 +17,8 @@ target_compile_definitions(config_store_tests PRIVATE NOMINMAX)
 add_test(NAME config_atomic_save COMMAND config_store_tests "${CMAKE_CURRENT_BINARY_DIR}/config-checks")
 add_executable(latency_marker_policy_tests latency_marker_policy_tests.cpp)
 add_test(NAME latency_marker_admission COMMAND latency_marker_policy_tests)
+add_executable(xemfg_compatibility_tests xemfg_compatibility_tests.cpp)
+add_test(NAME xemfg_compatibility_policy COMMAND xemfg_compatibility_tests)
 add_test(NAME dependency_repair COMMAND powershell -NoProfile -ExecutionPolicy Bypass
   -File "${CMAKE_CURRENT_SOURCE_DIR}/dependency_repair_tests.ps1" -TestRoot "${CMAKE_CURRENT_BINARY_DIR}/dependency-checks")
 option(MFGUNLOCK_BUILD_XEMFG "Build the OptiScaler XeMFG companion and dual backend addon" OFF)
