@@ -2,6 +2,7 @@
 // Own XeLL translation. A shared owner pins context lifetime; bookkeeping
 // locks never span xellSleep, which may need another thread's late marker.
 #include "native_internal.hpp"
+#include "../latency_marker_policy.hpp"
 #include <chrono>
 namespace mfgunlock::xemfg::native {
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
@@ -65,11 +66,11 @@ bool ForwardSourceMarker(const std::shared_ptr<Output>& o,uint32_t id,uint32_t m
   // XeLL requires sleep to finish before any marker of the SAME frame.
   // Older frames may still submit their real END timestamp during this sleep.
   if(!frame->sleeping || frame->sleepInFlight) { frame->failed=true; return false; }
-  if(frame->markers&(1u<<marker)) return true;
+  const auto decision=latencymarkers::Classify(frame->markers,marker,frame->sleeping,frame->sleepInFlight);
+  if(decision==latencymarkers::Decision::Duplicate) return true;
   // Each END needs its own START; phases may overlap and an old frame's END
   // may arrive after another frame starts. Never fabricate a missing START.
-  if((marker==XELL_SIMULATION_END || marker==XELL_RENDERSUBMIT_END || marker==XELL_PRESENT_END)
-      && !(frame->markers&(1u<<(marker-1)))) { frame->failed=true; return false; }
+  if(decision==latencymarkers::Decision::Invalid) { frame->failed=true; return false; }
   if(s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(marker))!=XELL_RESULT_SUCCESS) {
     frame->failed=true; return false;
   }
