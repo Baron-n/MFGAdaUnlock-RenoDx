@@ -4,6 +4,16 @@
 #include <cstdint>
 namespace mfgunlock::latencymarkers {
 enum class Decision { Invalid, Duplicate, Forward };
+// A wait called after this token's simulation is the boundary BEFORE the
+// following simulation. Never attach it retroactively to completed markers.
+// Gaps still fail closed: only the exact next token can consume this wait.
+inline uint32_t SourceSleepFrame(uint32_t source,uint32_t observed) {
+  if(!source) return 0;
+  const auto simulation=observed&3u;
+  if(simulation==3u) return source+1; // zero on wrap is intentionally inadmissible
+  if(simulation) return 0; // a wait inside simulation has no safe translation
+  return source;
+}
 inline Decision Classify(uint32_t mask,uint32_t marker,bool slept,bool inFlight=false) {
   if(marker>6 || !slept || inFlight) return Decision::Invalid;
   if(mask&(1u<<marker)) return Decision::Duplicate;

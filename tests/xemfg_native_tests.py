@@ -32,6 +32,7 @@ ap.add_argument('--retained-output',action='store_true')
 ap.add_argument('--secondary-viewport',action='store_true')
 ap.add_argument('--normal-depth',action='store_true')
 ap.add_argument('--hud-conflict',action='store_true')
+ap.add_argument('--tail-sleep',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
@@ -75,7 +76,7 @@ if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
 if args.reframework: flags+=['--ref-'+args.reframework]
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -145,6 +146,8 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
 legacy_verified=(('Legacy factory: inference, resize, fallback and recreation verified' in result.stdout
     and 'Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
 markers_verified=('Historical markers: original calls preserved, real inference and duplicate forwarding verified' in result.stdout) if args.legacy_markers or args.mixed_markers or args.alias_markers else None
+tail_verified=(('Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved' in result.stdout)
+    and any(e.get('event')=='native_sleep_association' and e.get('target')==e.get('source',0)+1 for e in events)) if args.tail_sleep else None
 # Async diagnostics deliberately drop records rather than block a producer.
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
@@ -157,8 +160,9 @@ markers_verified=('Historical markers: original calls preserved, real inference 
     'producer_shadow_verified':args.producer_shadow and result.returncode==0 and 'Heap producer commands: accepted; non-code implementation: rejected; generation resumed' in result.stdout,
     'legacy_factory_verified':legacy_verified,
     'historical_markers_verified':markers_verified,
+    'tail_sleep_verified':tail_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)

@@ -12,6 +12,12 @@ void Complete(Admission& a,uint64_t epoch,uint32_t thread,uint32_t id) {
   }
 }
 int main(){try {
+  Check(SourceSleepFrame(10,0)==10,"early sleep moved to another frame");
+  Check(SourceSleepFrame(10,1u<<6)==10,"input-only observation shifted sleep");
+  Check(SourceSleepFrame(10,3u)==11,"tail sleep attached to completed simulation");
+  Check(SourceSleepFrame(10,63u)==11,"post-Present sleep not associated to next simulation");
+  Check(SourceSleepFrame(10,1u)==0 && SourceSleepFrame(10,2u)==0,"mid-simulation wait admitted");
+  Check(SourceSleepFrame(0,0)==0 && SourceSleepFrame(UINT32_MAX,3u)==0,"reserved/wrapped token admitted");
   Admission a;
   for(uint32_t i=0;i<31;++i) Complete(a,1,7,i);
   Check(!a.Ready() && a.Consecutive()==31,"admitted before 32 complete frames");

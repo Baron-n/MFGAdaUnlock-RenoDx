@@ -37,7 +37,8 @@ struct Api {
 };
 struct Frame {
   uint64_t sleepUs{};
-  uint32_t id{}, viewport{}, resources{}, markers{};
+  uint32_t id{}, viewport{}, resources{}, markers{}, observedMarkers{}, sourceSleepTarget{};
+  bool sourceSleepResolved{};
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
   uint32_t hudIssues{};
@@ -67,6 +68,9 @@ struct Output {
   DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
   uint32_t hudLogBudget{},hudKindsSeen{};
   uint32_t rejectedTagLogBudget{};
+  uint32_t sleepAssociationLogBudget{};
+  uint32_t markerRejectLogBudget[3]{};
+  uint32_t presentFailureLogBudget{};
   uint32_t constantLogBudget{},lastConstantIssues{UINT32_MAX};
   uint32_t bypassPresentLogBudget{};
   uint64_t admissionTick{};

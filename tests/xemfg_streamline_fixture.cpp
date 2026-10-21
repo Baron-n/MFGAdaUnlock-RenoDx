@@ -7,7 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <windows.h>
-static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{};
+static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{},lastReflexSleepToken{};
 static std::atomic<bool> holdSleep{},sleepEntered{};
 static std::atomic<bool> rejectTags{};
 static std::atomic<uint32_t> fgStatus{};
@@ -41,7 +41,7 @@ static __declspec(noinline) sl::Result Reflex(const sl::ReflexOptions& o) {
   ++calls; reflexMode=uint32_t(o.mode); reflexLimit=o.frameLimitUs; return sl::Result::eOk;
 }
 static __declspec(noinline) sl::Result ReflexSleep(const sl::FrameToken& f) {
-  ++reflexSleeps; calls+=uint32_t(f)+1;
+  ++reflexSleeps; lastReflexSleepToken=uint32_t(f);calls+=uint32_t(f)+1;
   if(holdSleep) {
     sleepEntered=true;
     const auto deadline=GetTickCount64()+10000;
@@ -87,4 +87,5 @@ EXPORT uint32_t FixtureModes() { return fgMode|(reflexMode<<8); }
 EXPORT void FixtureFgStatus(uint32_t value) { fgStatus=value; }
 
 EXPORT uint32_t FixtureReflexSleeps() { return reflexSleeps; }
+EXPORT uint32_t FixtureLastReflexSleepToken() { return lastReflexSleepToken; }
 EXPORT uint32_t FixtureReflexLimit() { return reflexLimit; }

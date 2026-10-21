@@ -22,6 +22,8 @@ p.add_argument('--force-borderless',action='store_true')
 p.add_argument('--visible-recreation',action='store_true')
 p.add_argument('--legacy-factory',action='store_true')
 p.add_argument('--legacy-markers',action='store_true')
+p.add_argument('--tail-sleep',action='store_true')
+p.add_argument('--overlap-tail-sleep',action='store_true')
 a=p.parse_args()
 d=a.directory.resolve()/datetime.datetime.now().strftime('real-streamline-%Y%m%d-%H%M%S-%f')
 d.mkdir(parents=True)
@@ -39,9 +41,11 @@ for source,name in inputs.items():
     shutil.copy2(source,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
 (d/'MFGAdaUnlock.ini').write_text('[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier=4\nForceBorderless='+('1' if a.force_borderless else '0')+'\n[Latency]\nOutput='+a.latency_output+'\n')
+if a.tail_sleep:
+    with (d/'MFGAdaUnlock.ini').open('a') as config:config.write('[Diagnostics]\nStallTrace=1\n')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[OVERLAY]\nTutorialProgress=4\n')
 ctypes.windll.kernel32.SetErrorMode(3)
-process=subprocess.Popen([str(d/a.exe.name),'4','--real-streamline',*(['--isolate-nvidia-hooks'] if a.isolate_nvidia_hooks else []),*(['--stock-streamline'] if a.stock_streamline else []),*(['--generate'] if a.generate else []),*(['--early-addon'] if a.early_addon else []),*(['--visible-recreation'] if a.visible_recreation else []),*(['--legacy-factory'] if a.legacy_factory else []),*(['--legacy-markers'] if a.legacy_markers else [])],cwd=d,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,creationflags=0x08000000)
+process=subprocess.Popen([str(d/a.exe.name),'4','--real-streamline',*(['--isolate-nvidia-hooks'] if a.isolate_nvidia_hooks else []),*(['--stock-streamline'] if a.stock_streamline else []),*(['--generate'] if a.generate else []),*(['--early-addon'] if a.early_addon else []),*(['--visible-recreation'] if a.visible_recreation else []),*(['--legacy-factory'] if a.legacy_factory else []),*(['--legacy-markers'] if a.legacy_markers else []),*(['--tail-sleep'] if a.tail_sleep else []),*(['--overlap-tail-sleep'] if a.overlap_tail_sleep else [])],cwd=d,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,creationflags=0x08000000)
 timed_out=False
 try:
     stdout,stderr=process.communicate(timeout=60)
@@ -64,6 +68,6 @@ visible=all(f'Visible Presents cycle {i}=90' in stdout for i in range(4)) if a.v
 legacy=('Legacy factory: four same-window recreations, real Streamline inference and shutdown verified' in stdout) if a.legacy_factory else None
 (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=process.returncode,timed_out=timed_out,stdout=stdout,stderr=stderr,
     presentation_isolated=isolated,shutdown_completed=shutdown,inference_verified=inference,visible_presents_verified=visible,latency_output=a.latency_output,early_addon=a.early_addon,legacy_factory_verified=legacy,
-    legacy_factory_success_records=sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events),legacy_marker_route_requested=a.legacy_markers),indent=2))
+    legacy_factory_success_records=sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events),legacy_marker_route_requested=a.legacy_markers,tail_sleep_requested=a.tail_sleep,overlap_tail_sleep_requested=a.overlap_tail_sleep),indent=2))
 print(stdout,end='');print(stderr,end='');print('Evidence:',d)
 raise SystemExit(0 if not timed_out and process.returncode==0 and 'PASS:' in stdout and (a.stock_streamline or (isolated and shutdown)) and (not a.generate or inference) and visible is not False and legacy is not False else 1)

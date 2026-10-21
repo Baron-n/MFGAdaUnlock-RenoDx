@@ -305,9 +305,14 @@ int main(int argc,char** argv) {
           MSG pending{}; while(PeekMessageW(&pending,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&pending);
           sl::FrameToken* token{};
           Require(tokenFn(token,nullptr)==sl::Result::eOk && token,"real frame token");
-          Require(reinterpret_cast<PFun_slReflexSleep*>(sleepFn)(*token)==sl::Result::eOk,"real source sleep");
+          if(!flag("--tail-sleep")) Require(reinterpret_cast<PFun_slReflexSleep*>(sleepFn)(*token)==sl::Result::eOk,"real source sleep");
           const auto mark=[&](sl::PCLMarker marker) { Require(reinterpret_cast<PFun_slPCLSetMarker*>(markerFn)(marker,*token)==sl::Result::eOk,"real source marker"); };
-          mark(sl::PCLMarker::eSimulationStart); mark(sl::PCLMarker::eSimulationEnd); mark(sl::PCLMarker::eRenderSubmitStart);
+          mark(sl::PCLMarker::eSimulationStart); mark(sl::PCLMarker::eSimulationEnd);
+          std::future<sl::Result> tailSleep;
+          if(flag("--tail-sleep") && flag("--overlap-tail-sleep")) tailSleep=std::async(std::launch::async,[sleepFn,token] {
+            return reinterpret_cast<PFun_slReflexSleep*>(sleepFn)(*token);
+          });
+          mark(sl::PCLMarker::eRenderSubmitStart);
           ComPtr<ID3D12Resource> back;
           Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"real input buffer");
           if(generate) {
@@ -339,12 +344,14 @@ int main(int argc,char** argv) {
           if(presented==S_OK) ++shown;
           mark(sl::PCLMarker::ePresentEnd);
           if(inputs) inputs->Wait();
+          if(tailSleep.valid()) Require(tailSleep.get()==sl::Result::eOk,"real tail source sleep");
+          else if(flag("--tail-sleep")) Require(reinterpret_cast<PFun_slReflexSleep*>(sleepFn)(*token)==sl::Result::eOk,"real serial tail source sleep");
           if(visible) Sleep(16);
         }
         if(visible) { Require(shown>60,"visible recreation did not submit visible Presents"); std::cout<<"Visible Presents cycle "<<cycle<<"="<<shown<<std::endl; }
         if(generate) {
           mfgunlock::xemfg::Status ms; model(&ms,sizeof(ms));
-          Require(bridge(&bs,sizeof(bs)) && bs.enabled && !bs.rejected && ms.tensor_launches>0,"real Streamline frame inputs did not reach Intel inference");
+          Require(bridge(&bs,sizeof(bs)) && bs.enabled && (flag("--tail-sleep")?bs.rejected==cycle+1:!bs.rejected) && ms.tensor_launches>0,"real Streamline frame inputs did not reach Intel inference");
           std::cout<<"Real Streamline inference cycle "<<cycle<<" tensor launches="<<ms.tensor_launches<<std::endl;
           Require(reinterpret_cast<PFun_slDLSSGSetOptions*>(setter)(sl::ViewportHandle{0},off)==sl::Result::eOk,"real replacement disable");
         }
@@ -663,8 +670,11 @@ int main(int argc,char** argv) {
         Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
       }
       Token token; token.id=frame;
-      Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
+      if(!flag("--tail-sleep")) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
+      else mark(static_cast<sl::PCLMarker>(6),token); // Actual legacy input marker before simulation.
       mark(sl::PCLMarker::eSimulationStart,token); mark(sl::PCLMarker::eSimulationEnd,token);
+      std::future<sl::Result> tailSleep;
+      if(flag("--tail-sleep")) tailSleep=std::async(std::launch::async,[sleep,&token] {return sleep(token);});
       mark(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
       allocator->Reset(); list->Reset(allocator.Get(),nullptr);
       ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"backbuffer");
@@ -704,6 +714,14 @@ int main(int argc,char** argv) {
       mark(sl::PCLMarker::ePresentStart,token);
       Check(chain->Present(0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
       if(lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
+      if(tailSleep.valid()) Require(tailSleep.get()==sl::Result::eOk,"tail source sleep");
+      if(flag("--tail-sleep")) {
+        if(frame==5) Require(sleep(token)==sl::Result::eOk,"duplicate tail sleep result");
+        if(frame==1 || frame==3) {
+          bridgeStatus(&bs,sizeof(bs));
+          Require(frame==1?!bs.enabled:bs.enabled,"tail wait did not reach the following source frame");
+        }
+      }
       if(frame==9 || frame==17 || frame==18 || frame==25) {
         controlStatus(&cs,sizeof(cs));
         const bool composed=frame==9 || frame==18;
@@ -745,10 +763,12 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==48)) && cs.sleeps==48 && cs.markers>=48*6,
+    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==48)) && cs.sleeps==48 && cs.markers>=(flag("--tail-sleep")?47u:48u)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
+    if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==48,"native Reflex token was shifted");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
+    if(flag("--tail-sleep")) std::cout<<"Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved"<<std::endl;
     Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.

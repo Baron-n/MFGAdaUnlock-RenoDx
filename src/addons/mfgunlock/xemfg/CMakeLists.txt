@@ -195,6 +195,12 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --legacy-markers --latency-output ${route})
     set_tests_properties(xemfg_native_historical_markers_${route} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+    add_test(NAME xemfg_native_tail_sleep_${route} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --tail-sleep --latency-output ${route})
+    set_tests_properties(xemfg_native_tail_sleep_${route} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   endforeach()
   foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs retained-output secondary-viewport normal-depth hud-conflict)
     add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"

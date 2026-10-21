@@ -63,17 +63,27 @@ bool ForwardSourceMarker(const std::shared_ptr<Output>& o,uint32_t id,uint32_t m
   auto& s=State(); std::lock_guard guard(o->io);
   if(o->retired) return false;
   auto* frame=FindFrame(*o,id); if(!frame) return false;
+  const auto reject=[&](unsigned kind,const char* reason,int result=0) {
+    frame->failed=true;
+    if(TraceEnabled() && o->markerRejectLogBudget[kind]<8) {
+      ++o->markerRejectLogBudget[kind];
+      xess_mod::WriteLog("native_marker_rejected","\"id\":"+std::to_string(id)
+          +",\"marker\":"+std::to_string(marker)+",\"reason\":\""+reason+"\",\"sdk_result\":"+std::to_string(result)
+          +",\"mask\":"+std::to_string(frame->markers)+",\"sleeping\":"+std::to_string(frame->sleeping)
+          +",\"in_flight\":"+std::to_string(frame->sleepInFlight));
+    }
+    return false;
+  };
   // XeLL requires sleep to finish before any marker of the SAME frame.
   // Older frames may still submit their real END timestamp during this sleep.
-  if(!frame->sleeping || frame->sleepInFlight) { frame->failed=true; return false; }
+  if(!frame->sleeping || frame->sleepInFlight) return reject(0,"sleep_not_completed");
   const auto decision=latencymarkers::Classify(frame->markers,marker,frame->sleeping,frame->sleepInFlight);
   if(decision==latencymarkers::Decision::Duplicate) return true;
   // Each END needs its own START; phases may overlap and an old frame's END
   // may arrive after another frame starts. Never fabricate a missing START.
-  if(decision==latencymarkers::Decision::Invalid) { frame->failed=true; return false; }
-  if(s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(marker))!=XELL_RESULT_SUCCESS) {
-    frame->failed=true; return false;
-  }
+  if(decision==latencymarkers::Decision::Invalid) return reject(1,"marker_order");
+  const auto result=s.api.xellAddMarkerData(o->ll,id,static_cast<xell_latency_marker_type_t>(marker));
+  if(result!=XELL_RESULT_SUCCESS) return reject(2,"sdk_rejected",int(result));
   ++s.latencyMarkers; frame->markers|=1u<<marker;
   if(marker==XELL_RENDERSUBMIT_END && id<=o->last) {
     std::lock_guard lock(s.lock);
