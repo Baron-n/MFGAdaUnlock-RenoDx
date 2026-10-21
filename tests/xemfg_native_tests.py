@@ -235,6 +235,12 @@ diagnostics_verified['streamline_version']=(bool(versions) and versions[-1].get(
 xell=[e for e in events if e.get('event')=='native_xell_context']
 diagnostics_verified['xell']=(bool(xell) and all(e.get('logging_result')==0 and re.match(r'\d+\.\d+\.\d+',e.get('version','')) for e in xell)
     and not any(e.get('event')=='native_xell_failure' for e in events))
+# Support queries are observed with the exact result Streamline returned to the game.
+# The last query runs after output creation, when the hooks are guaranteed.
+queried=re.findall(r'Feature query: DLSS-G supported=(\d+) requirements=(\d+)',result.stdout)
+queries={(e.get('api'),e.get('feature'),e.get('result')) for e in events if e.get('event')=='native_feature_query'}
+diagnostics_verified['feature_query']=bool(queried) and ('slIsFeatureSupported',1000,int(queried[-1][0])) in queries \
+    and ('slGetFeatureRequirements',1000,int(queried[-1][1])) in queries
 if args.struct_probe:
     refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
     diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),

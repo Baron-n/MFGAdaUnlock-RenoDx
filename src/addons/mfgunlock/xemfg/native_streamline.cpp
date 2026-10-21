@@ -33,6 +33,8 @@ PFun_slSetD3DDevice* setDevice{};
 PFun_slShutdown* shutdown{};
 PFun_slIsFeatureLoaded* getLoaded{};
 PFun_slSetFeatureLoaded* setLoaded{};
+PFun_slIsFeatureSupported* isSupported{};
+PFun_slGetFeatureRequirements* requirements{};
 std::atomic<bool> lifecycleApi{},presentationIsolated{},logicalLoaded{true},stopping{};
 
 // slSetFeatureLoaded rebuilds Streamline's hook lists and is not thread safe.
@@ -107,6 +109,25 @@ void StructRejected(const char* api,const sl::BaseStructure& value,const char* r
   if(const auto count=budget.Admit(key))
     xess_mod::WriteLog("native_struct_rejected","\"api\":\""+std::string(api)+"\",\"version\":"+std::to_string(value.structVersion)
         +",\"next\":"+(chained?"true":"false")+",\"reason\":\""+reason+"\",\"occurrence\":"+std::to_string(count));
+}
+
+// Observation only: separates "the game hid FG" from "FG inputs were refused".
+void FeatureQuery(const char* api,sl::Feature feature,sl::Result result) {
+  static PatternBudget budget(32);
+  const auto key=std::string(api)+'/'+std::to_string(uint32_t(feature))+'/'+std::to_string(uint32_t(result));
+  if(const auto count=budget.Admit(key))
+    xess_mod::WriteLog("native_feature_query","\"api\":\""+std::string(api)+"\",\"feature\":"+std::to_string(uint32_t(feature))
+        +",\"result\":"+std::to_string(uint32_t(result))+",\"occurrence\":"+std::to_string(count));
+}
+sl::Result SupportedHook(sl::Feature feature,const sl::AdapterInfo& adapter) {
+  const auto result=isSupported(feature,adapter);
+  FeatureQuery("slIsFeatureSupported",feature,result);
+  return result;
+}
+sl::Result RequirementsHook(sl::Feature feature,sl::FeatureRequirements& value) {
+  const auto result=requirements(feature,value);
+  FeatureQuery("slGetFeatureRequirements",feature,result);
+  return result;
 }
 
 bool SelectViewport(uint32_t v) {
@@ -593,6 +614,8 @@ void CaptureStreamlineStartup() {
   H("slSetD3DDevice",DeviceHook,setDevice)
   H("slInit",InitHook,initialize)
   H("slGetFeatureFunction",ResolveHook,getFeature)
+  H("slIsFeatureSupported",SupportedHook,isSupported)
+  H("slGetFeatureRequirements",RequirementsHook,requirements)
 #undef H
   // Incomplete installation must not disable NVIDIA or create an Intel output
   // without the query/control/shutdown hooks needed to keep that owner safe.

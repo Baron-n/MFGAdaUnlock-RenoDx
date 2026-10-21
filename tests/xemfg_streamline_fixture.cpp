@@ -31,6 +31,13 @@ EXPORT sl::Result slSetFeatureLoaded(sl::Feature feature,bool enabled) {
   return sl::Result::eOk;
 }
 EXPORT uint32_t FixturePhysicalFgLoaded() { return fgLoaded; }
+static std::atomic<uint32_t> supportQueries{};
+EXPORT sl::Result slIsFeatureSupported(sl::Feature feature,const sl::AdapterInfo&) {
+  ++supportQueries;
+  return feature==sl::kFeatureDLSS_G || feature==sl::kFeatureReflex || feature==sl::kFeaturePCL?sl::Result::eOk:sl::Result::eErrorFeatureNotSupported;
+}
+EXPORT sl::Result slGetFeatureRequirements(sl::Feature,sl::FeatureRequirements&) { ++supportQueries; return sl::Result::eOk; }
+EXPORT uint32_t FixtureSupportQueries() { return supportQueries; }
 EXPORT uint32_t FixtureQueriesAfterShutdown() { return queriesAfterShutdown; }
 static __declspec(noinline) sl::Result Options(const sl::ViewportHandle&,const sl::DLSSGOptions& o) {
   ++calls; fgMode=uint32_t(o.mode); return sl::Result::eOk;

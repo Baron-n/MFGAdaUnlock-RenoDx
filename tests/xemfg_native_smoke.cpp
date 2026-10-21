@@ -299,6 +299,19 @@ int main(int argc,char** argv) {
     if(!flag("--stock-streamline")) Require(addon,"ReShade did not load the addon");
     if(flag("--stall-trace")) Import<void(*)(bool,bool)>(addon,"MFGAXeStallTraceEnable")(true,true);
     Require(Import<PFun_slSetD3DDevice*>(fixture,"slSetD3DDevice")(device.Get())==sl::Result::eOk,"Streamline device initialization");
+    // Games query support before showing their frame-generation option.
+    // Results belong to Streamline; the bridge only observes them. A query
+    // racing the discovery worker may be missed, so it is repeated after the
+    // output exists, when the hooks are guaranteed.
+    const auto queryFeatures=[&] {
+      sl::AdapterInfo adapter{}; const auto luid=device->GetAdapterLuid();
+      adapter.deviceLUID=reinterpret_cast<uint8_t*>(const_cast<LUID*>(&luid)); adapter.deviceLUIDSizeInBytes=sizeof(luid);
+      sl::FeatureRequirements requirements{};
+      const auto supported=Import<PFun_slIsFeatureSupported*>(fixture,"slIsFeatureSupported")(sl::kFeatureDLSS_G,adapter);
+      const auto required=Import<PFun_slGetFeatureRequirements*>(fixture,"slGetFeatureRequirements")(sl::kFeatureDLSS_G,requirements);
+      std::cout<<"Feature query: DLSS-G supported="<<uint32_t(supported)<<" requirements="<<uint32_t(required)<<std::endl;
+    };
+    queryFeatures();
     if(flag("--real-streamline")) {
       bool loaded{};
       Require(Import<PFun_slIsFeatureLoaded*>(fixture,"slIsFeatureLoaded")(sl::kFeatureDLSS_G,loaded)==sl::Result::eOk && loaded!=flag("--isolate-nvidia-hooks"),
@@ -632,6 +645,7 @@ int main(int argc,char** argv) {
       Require(options(sl::ViewportHandle{1},idle)==sl::Result::eOk,"secondary viewport OFF");
     }
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
+    queryFeatures();
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
     if(flag("--struct-probe")) {
       // Newer or chained structures from future SDKs. Results are not asserted
