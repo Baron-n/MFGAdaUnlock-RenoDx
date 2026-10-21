@@ -11,4 +11,9 @@ std::string FileVersion(const std::wstring& path);
 void LogSession() noexcept;
 // Bounded inventory of presentation/Streamline-relevant modules at output creation.
 void LogModules(uint64_t output) noexcept;
+// slInit's sdkVersion plus interposer/plugin file versions, once per slInit.
+void LogStreamlineVersion(uint64_t sdkVersion) noexcept;
+// "major.minor.patch" of the last slInit, or empty before slInit was observed.
+std::string StreamlineSdkVersion();
+bool StreamlineSdkMagic() noexcept;
 }

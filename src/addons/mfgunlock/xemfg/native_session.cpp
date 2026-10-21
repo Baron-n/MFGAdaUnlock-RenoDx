@@ -68,6 +68,32 @@ void LogSession() noexcept {
     xess_mod::WriteLog("native_session",fields);
   } catch(...) {}
 }
+namespace { std::atomic<uint64_t> sdkVersionSeen{}; }
+std::string StreamlineSdkVersion() {
+  const auto v=sdkVersionSeen.load();
+  if(!v) return "unobserved";
+  return std::to_string((v>>48)&0xffff)+'.'+std::to_string((v>>32)&0xffff)+'.'+std::to_string((v>>16)&0xffff);
+}
+// Streamline 2.x packs major/minor/patch above a 0xfedc magic; older callers did not.
+bool StreamlineSdkMagic() noexcept { return (sdkVersionSeen.load()&0xffff)==0xfedc; }
+void LogStreamlineVersion(uint64_t sdkVersion) noexcept {
+  // Games commonly call slInit before this addon hooks it; the first device
+  // boundary then logs with "unobserved" and the interposer file version.
+  static std::atomic<bool> logged{};
+  if(!sdkVersion && logged.exchange(true)) return;
+  logged=true;
+  try {
+    if(sdkVersion) sdkVersionSeen=sdkVersion;
+    std::string fields="\"sdk_version\":\""+StreamlineSdkVersion()+"\",\"sdk_magic\":"+(StreamlineSdkMagic()?"true":"false")
+        +",\"interposer\":\""+FileVersion(GetModuleHandleW(L"sl.interposer.dll"))+"\"";
+    // Plugins may be OTA copies under another file name; report the mapped ones.
+    for(const auto* name:{L"sl.common.dll",L"sl.dlss_g.dll",L"sl.reflex.dll",L"sl.pcl.dll",L"nvngx_dlssg.dll"}) {
+      const auto module=GetModuleHandleW(name);
+      fields+=",\""+Utf8(std::wstring(name))+"\":\""+(module?FileVersion(module):std::string("not_mapped"))+"\"";
+    }
+    xess_mod::WriteLog("native_streamline_version",fields);
+  } catch(...) {}
+}
 void LogModules(uint64_t output) noexcept {
   // Output recreation repeats this call; only a changed inventory is logged.
   static std::mutex lock; static std::string previous; static uint32_t budget{};

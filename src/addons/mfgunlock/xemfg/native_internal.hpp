@@ -8,6 +8,7 @@
 #include "hud_inputs.hpp"
 #include "native_reframework.hpp"
 #include "compatibility_policy.hpp"
+#include "native_session.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>

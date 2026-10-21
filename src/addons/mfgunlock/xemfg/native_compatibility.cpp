@@ -41,6 +41,8 @@ std::string CompatibilityReport() {
       {"external_observer_resolutions",s.externalResolutions.load()}};
   report["modules"]={{"frame_generation",Module(s.api.fgModule)},{"latency",Module(s.api.llModule)},
       {"streamline",Module(GetModuleHandleW(L"sl.interposer.dll"))}};
+  report["streamline"]={{"sdk_version",StreamlineSdkVersion()},{"sdk_magic",StreamlineSdkMagic()},
+      {"interposer_version",FileVersion(GetModuleHandleW(L"sl.interposer.dll"))}};
   report["capabilities"]=Json::object();
   // ordered_json uses vector storage: adding a sibling can invalidate a
   // reference to this child. Look it up for each explicit export field.

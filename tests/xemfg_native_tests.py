@@ -222,6 +222,14 @@ diagnostics_verified['session']=(len(session)==1 and re.match(r'\d{4}-\d\d-\d\dT
     and session[0].get('executable')==executable_name and bool(session[0].get('gpu')) and session[0].get('windows')
     and bool(inventory) and any(m.get('name')=='sl.interposer.dll' for m in inventory[0].get('modules',[]))
     and not re.search(r'[A-Za-z]:[\\/]',json.dumps(session+inventory)))
+# The smoke calls slInit with the kSDKVersion of the Streamline headers it was built with.
+# When slInit ran before the hooks, the version must say so instead of guessing.
+versions=[e for e in events if e.get('event')=='native_streamline_version']
+boundaries=[e.get('boundary') for e in events if e.get('event')=='native_presentation_isolation']
+expected_sdk='2.12.0' if 'slInit' in boundaries else 'unobserved'
+diagnostics_verified['streamline_version']=(bool(versions) and versions[-1].get('sdk_version')==expected_sdk
+    and versions[-1].get('sdk_magic') is (expected_sdk!='unobserved') and 'interposer' in versions[-1]
+    and (not (d/'compatibility.json').is_file() or support.get('streamline',{}).get('sdk_version')==expected_sdk))
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,

@@ -54,6 +54,7 @@ sl::Result InitHook(const sl::Preferences& preferences,uint64_t version) {
   std::lock_guard guard(discovery);
   stopping=false; presentationIsolated=false;
   const auto result=initialize(preferences,version);
+  LogStreamlineVersion(version);
   if(result==sl::Result::eOk) IsolatePresentation("slInit",true);
   return result;
 }
@@ -61,6 +62,7 @@ sl::Result DeviceHook(void* device) {
   std::lock_guard guard(discovery);
   // Covers integrations that initialized SL before the addon was loaded.
   // This explicit initialization call belongs to the host's quiescent startup.
+  LogStreamlineVersion(0);
   if(!presentationIsolated && !stopping && !Snapshot().frames)
     IsolatePresentation("slSetD3DDevice",true);
   return setDevice(device);
