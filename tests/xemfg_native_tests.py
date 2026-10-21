@@ -42,6 +42,16 @@ ap.add_argument('--jittered-motion',action='store_true')
 ap.add_argument('--simulation-sleep',action='store_true')
 ap.add_argument('--midsim-sleep',action='store_true')
 ap.add_argument('--struct-probe',action='store_true')
+ap.add_argument('--reflex-v2',action='store_true')
+ap.add_argument('--reflex-next',action='store_true')
+ap.add_argument('--constants-v3',action='store_true')
+ap.add_argument('--tag-next',action='store_true')
+ap.add_argument('--backbuffer-subrect',action='store_true')
+ap.add_argument('--menu-viewport-first',action='store_true')
+ap.add_argument('--late-interposer',action='store_true')
+ap.add_argument('--sl1-interposer',action='store_true')
+ap.add_argument('--sleep-gap',action='store_true')
+ap.add_argument('--constant-sleep-token',action='store_true')
 ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
@@ -96,13 +106,19 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.sl1_interposer:
+    untouched='PASS: SL 1.x interposer left untouched' in result.stdout
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        sl1_untouched_verified=untouched),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and untouched else 1)
 if args.jittered_motion:
     refused='PASS: unsupported jittered-motion shader reported; native rendering/presentation preserved without Intel context' in result.stdout
     refused=refused and not any(e.get('event') in ('context_create','native_swapchain_init_failed','shader_decode_failure') for e in events)
@@ -260,6 +276,8 @@ except json.JSONDecodeError:
 diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock.compatibility'
     and exported_report.get('export_reason') in ('steady','retired','shutdown')
     and not re.search(r'[A-Za-z]:[\\/]',json.dumps(exported_report)))
+if args.backbuffer_subrect:
+    diagnostics_verified['backbuffer_region']=any(e.get('event')=='native_backbuffer_region' and e.get('width')==320 and e.get('height')==180 for e in events)
 if args.struct_probe:
     refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
     diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),

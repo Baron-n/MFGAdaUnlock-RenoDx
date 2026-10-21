@@ -24,7 +24,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | 1.6 | Diag: consultas de suporte do jogo (`slIsFeatureSupported`, `slGetFeatureRequirements`) em passthrough | `native_feature_query` com feature e resultado; nenhum valor alterado | todos os testes nativos (`feature_query`) | feito |
 | 1.7 | Diag: amostra de constantes na primeira admissão e histograma de tipos de tag/viewports | `native_constants_sample`, `native_tag_histogram` | todos os testes nativos | feito |
 | 1.8 | Diag: exportar o relatório de compatibilidade em disco ao aposentar a saída e no shutdown | `MFGAdaUnlock-XeMFG-compatibility.json` escrito fora do hot path | todos os testes nativos (`report_export`) | feito |
-| 1.9 | Matriz de conformidade no fixture sintético, label `backlog` | Casos registrados e falhando pela razão esperada: `reflex-v2`, `reflex-next`, `constants-v3`, `tag-next`, `backbuffer-subrect`, `menu-viewport-first`, `late-interposer`, `sl1-interposer`, `sleep-gap` | `ctest -L backlog` lista todos | pendente |
+| 1.9 | Matriz de conformidade no fixture sintético, label `backlog` | Casos registrados; os que falham ficam no `backlog`, pela razão esperada | `ctest -L backlog`: `reflex-v2`, `reflex-next`, `constants-v3`, `backbuffer-subrect`, `menu-viewport-first`, `sl1-interposer`, `constant-sleep-token` | feito |
 | 1.10 | Streamline_Sample em 3-4 versões 2.x, incluindo 2.11.1 | Build reproduzível por script; smoke com o addon reporta `ready` | `xemfg_sl_sample_<versão>` (opcional, pulado sem SDK) | pendente |
 
 ## Fase 2 — Falhas duras (Etapa 2 da auditoria)
@@ -33,7 +33,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Critério de saída | Teste | Status |
 |---|---|---|---|---|
-| 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `sleep-gap` sai do backlog; nova sessão de campo do Plague Tale no corpus | pendente |
+| 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `constant-sleep-token` sai do backlog; nova sessão de campo do Plague Tale no corpus | pendente |
 | 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | pendente |
 | 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | pendente |
 | 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | pendente |
@@ -87,3 +87,19 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 - **1.6** `native_feature_query` em passthrough para `slIsFeatureSupported` e `slGetFeatureRequirements`, com o resultado que o jogo recebeu. Com o Streamline real (do PRAGMATA), `slIsFeatureSupported(DLSS_G)` devolve `eOk` mesmo com o plugin DLSS-G desligado pela ponte: o isolamento não faz o jogo esconder o FG nessa versão, o que responde à dúvida do §4 da auditoria. Uma rodada da matriz mostrou que o worker de descoberta corre com as primeiras consultas do jogo; o teste agora repete a consulta depois da criação da saída. Essa corrida também vale em jogo (consultas muito precoces podem não aparecer) e será tratada no 2.4. Matriz: 142 aprovados; replay: 6.
 - **1.7** `native_constants_sample`: as primeiras constantes de cada saída, literais (mvecScale, jitter, near/far/FOV/aspecto, as sete flags; `INVALID_FLOAT` sai como `null`). `native_tag_histogram`: todos os tags por tipo de buffer (inclusive os não mapeados) e por viewport, em 240 chamadas e na aposentadoria. No smoke, o histograma já mostra o tipo 23 (o HUD inválido de teste), que a ponte não mapeia. Matriz: 142 aprovados; replay: 6.
 - **1.8** O relatório de compatibilidade é gravado sozinho em `MFGAdaUnlock-XeMFG-compatibility.json`, com `export_reason`: `steady` (240 chamadas de tag), `retired` (aposentadoria da saída) e `shutdown` (síncrono no `slShutdown`). As duas primeiras usam uma thread coalescida; a escrita é atômica (temporário + `MoveFileEx`). Matriz: 142 aprovados; replay: 6.
+- **1.9** Matriz de conformidade `xemfg_conformance_<caso>`; cada caso afirma o comportamento desejado.
+  - Já passam: `tag-next`, `late-interposer` (os eventos de device cobrem o interposer tardio) e `sleep-gap`.
+  - No backlog, cada um falhando pelo motivo esperado:
+    - `reflex-v2`/`reflex-next`: "Reflex disable".
+    - `constants-v3`: entradas recusadas.
+    - `backbuffer-subrect`: região não registrada.
+    - `menu-viewport-first`: "native FG disable".
+    - `sl1-interposer`: **o processo cai com 0xC0000005**. Os detours 2.x leem a ABI 1.x; isso confirma o risco que a auditoria marcou como não verificado.
+    - `constant-sleep-token`: reproduz exatamente o Plague Tale.
+  - **Causa raiz do Plague Tale, completa:**
+    - O jogo chama `slReflexSleep` sempre com o token 0, em todo frame (8.514 chamadas após ligar o FG, no trace de campo), e manda os markers com tokens reais.
+    - A disassembly do `xellSleep` (libxell 1.3.0.5 e 1.3.2.10) mostra que, depois de 16 sleeps aceitos, o XeLL entra em modo estrito e exige `último + 1` (campos `+0x6614`, `+0x6630`, `+0x6638`, contador `+0x6634`).
+    - A ponte intercala `xellSleep(1)` com a espera de fronteira `xellSleep(N)`, e o modo estrito recusa uma e outra alternadamente.
+  - **Correção do 2.0, agora definida:** uma espera explícita com token anterior à simulação mais recente é velha e nunca vai ao XeLL. A espera de fronteira cobre o frame real.
+  - O log assíncrono perdia registros sob contenção de trava (duas intermitências na matriz); corrigido em commit próprio, com teste.
+  - Gate: 145 aprovados; backlog: 7; replay: 6.

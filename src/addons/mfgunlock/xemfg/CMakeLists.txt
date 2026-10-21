@@ -75,6 +75,9 @@ target_compile_definitions(xemfg_streamline_fixture PRIVATE SL_INTERPOSER)
 target_include_directories(xemfg_streamline_fixture PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_link_options(xemfg_streamline_fixture PRIVATE /OPT:NOICF)
 set_target_properties(xemfg_streamline_fixture PROPERTIES OUTPUT_NAME "sl.interposer")
+add_library(xemfg_sl1_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_sl1_fixture.cpp")
+target_link_options(xemfg_sl1_fixture PRIVATE /OPT:NOICF)
+set_target_properties(xemfg_sl1_fixture PROPERTIES OUTPUT_NAME "sl1.interposer")
 add_library(xemfg_observer_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_observer_fixture.cpp")
 target_include_directories(xemfg_observer_fixture PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_compile_definitions(xemfg_observer_fixture PRIVATE NOMINMAX)
@@ -182,6 +185,29 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --${scenario} --active-support)
     set_tests_properties(xemfg_native_${scenario} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
+  # Universality conformance matrix (docs/plan/xemfg-plano.md, item 1.9). Each
+  # case asserts the target behavior. Cases labelled "backlog" still fail and
+  # are excluded from the gate (ctest -LE backlog); a plan item that fixes one
+  # removes it from XEMFG_BACKLOG.
+  set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
+    menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token)
+  set(XEMFG_BACKLOG reflex-v2 reflex-next constants-v3 backbuffer-subrect
+    menu-viewport-first sl1-interposer constant-sleep-token)
+  foreach(case IN LISTS XEMFG_CONFORMANCE)
+    set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
+    if(case STREQUAL "sl1-interposer")
+      set(fixture $<TARGET_FILE:xemfg_sl1_fixture>)
+    endif()
+    add_test(NAME xemfg_conformance_${case} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture ${fixture} --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --${case})
+    set_tests_properties(xemfg_conformance_${case} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+    if(case IN_LIST XEMFG_BACKLOG)
+      set_tests_properties(xemfg_conformance_${case} PROPERTIES LABELS backlog)
+    endif()
   endforeach()
   add_test(NAME xemfg_native_retained_legacy COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

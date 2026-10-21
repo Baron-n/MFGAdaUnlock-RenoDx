@@ -235,7 +235,37 @@ int main(int argc,char** argv) {
       Require(LoadLibraryW(L".\\_storage_\\libxess_fg.dll")!=nullptr,"preload stored XeFG");
       Require(LoadLibraryW(L".\\_storage_\\libxell.dll")!=nullptr,"preload stored XeLL");
     }
+    if(flag("--late-interposer")) {
+      // Conformance: ReShade and the addon start first; the interposer maps
+      // after the bounded 20 s discovery window has ended.
+      auto module=LoadLibraryW(L".\\dxgi.dll"); Require(module,"early ReShade");
+      ComPtr<ID3D12Device> earlyDevice;
+      Check(D3D12CreateDevice(nullptr,D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&earlyDevice)),"early ReShade device");
+      Require(GetModuleHandleW(L"renodx-mfgunlock-native.addon64"),"early addon not loaded");
+      ::Sleep(21000);
+    }
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
+    if(flag("--sl1-interposer")) {
+      // Conformance: a Streamline 1.x interposer exports slSetTag/slSetConstants
+      // with older signatures. Input detours must not be installed on them.
+      auto module=LoadLibraryW(L".\\dxgi.dll"); Require(module,"ReShade");
+      ComPtr<ID3D12Device> sl1Device;
+      Check(D3D12CreateDevice(nullptr,D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&sl1Device)),"SL1 device");
+      auto addonModule=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addonModule,"addon not loaded");
+      ::Sleep(1500); // Several discovery passes of the bounded worker.
+      bool untouched=true;
+      for(const char* name:{"slSetTag","slSetConstants","slEvaluateFeature","slIsFeatureSupported"}) {
+        const auto* entry=reinterpret_cast<const uint8_t*>(GetProcAddress(fixture,name));
+        Require(entry,"SL1 export");
+        if(entry[0]==0xE9 || entry[0]==0xFF) { untouched=false; std::cout<<"SL1 detour installed on "<<name<<std::endl; }
+      }
+      using Sl1SetTag=int(*)(const void*,uint32_t,uint32_t,const void*);
+      Require(reinterpret_cast<Sl1SetTag>(GetProcAddress(fixture,"slSetTag"))(nullptr,0,0,nullptr)==0,"SL1 call");
+      Require(Import<bool(*)(uint32_t)>(addonModule,"MFGAXeLogFlush")(2000),"SL1 log flush");
+      Require(untouched,"SL 1.x interposer received input detours");
+      std::cout<<"PASS: SL 1.x interposer left untouched"<<std::endl;
+      return 0;
+    }
     if(flag("--legacy-markers") && !flag("--real-streamline")) Import<void(*)(uint32_t)>(fixture,"FixtureMarkerRoute")(1);
     if(flag("--alias-markers")) Import<void(*)(uint32_t)>(fixture,"FixtureMarkerRoute")(2);
     if(flag("--early-addon")) {
@@ -644,9 +674,15 @@ int main(int argc,char** argv) {
       sl::DLSSGOptions idle;idle.mode=sl::DLSSGMode::eOff;
       Require(options(sl::ViewportHandle{1},idle)==sl::Result::eOk,"secondary viewport OFF");
     }
+    // Conformance (plan 1.9): a menu viewport enables FG before the scene viewport.
+    if(flag("--menu-viewport-first")) Require(options(sl::ViewportHandle{1},opt)==sl::Result::eOk,"menu viewport FG request");
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
     queryFeatures();
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
+    // Conformance: a newer ReflexOptions or one with an extension chain.
+    sl::ReflexOptions reflexExtension;
+    if(flag("--reflex-v2")) ro.structVersion=2;
+    if(flag("--reflex-next")) ro.next=&reflexExtension;
     if(flag("--struct-probe")) {
       // Newer or chained structures from future SDKs. Results are not asserted
       // here (plan 2.1/2.2); the bridge must name each refused structure.
@@ -730,6 +766,7 @@ int main(int argc,char** argv) {
     c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=flag("--normal-depth")?sl::eFalse:sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
     c.motionVectors3D=sl::eFalse; c.reset=sl::eFalse;
     if(flag("--jittered-motion")) {c.motionVectorsJittered=sl::eTrue;c.jitterOffset={.25f,-.25f};}
+    if(flag("--constants-v3")) c.structVersion=3; // Conformance: newer Constants, same known prefix.
     if(flag("--struct-probe")) {
       sl::Constants newer=c; newer.structVersion=3; Token unused; unused.id=900;
       Require(constants(newer,unused,viewport)==sl::Result::eOk,"original constants result");
@@ -798,8 +835,13 @@ int main(int argc,char** argv) {
       Token token; token.id=frame;
       const bool boundaryScenario=flag("--simulation-sleep") || flag("--midsim-sleep");
       const bool midSimulationSleep=flag("--midsim-sleep") && frame<=16;
-      const bool missingSleep=boundaryScenario && frame<=16;
-      if(!flag("--tail-sleep") && !missingSleep) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
+      // Conformance: the game waits on frame 1, skips frames 2-8 (a loading
+      // screen) and resumes; fewer than eight unslept starts, no boundary wait.
+      const bool missingSleep=(boundaryScenario && frame<=16) || (flag("--sleep-gap") && frame>=2 && frame<=8);
+      // Conformance (Plague Tale field trace): the game calls slReflexSleep with
+      // token 0 on every frame while its markers carry the real frame tokens.
+      if(flag("--constant-sleep-token")) { Token constant; constant.id=0; sleep(constant); mark(static_cast<sl::PCLMarker>(6),token); }
+      else if(!flag("--tail-sleep") && !missingSleep) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
       else mark(static_cast<sl::PCLMarker>(6),token); // Actual legacy input marker before simulation.
       mark(sl::PCLMarker::eSimulationStart,token);
       // A wait inside simulation has no safe translation. It is refused and
@@ -826,8 +868,17 @@ int main(int argc,char** argv) {
       auto* producerCommand=reinterpret_cast<sl::CommandBuffer*>(producer?static_cast<ID3D12CommandList*>(producer.Get()):static_cast<ID3D12CommandList*>(list.Get()));
       for(auto& tag:tagged) tag.lifecycle=volatileInputs?sl::eOnlyValidNow:sl::eValidUntilPresent;
       const uint32_t tagCount=frame==34?1:frame==17?2:3; // Missing MV bypass; missing HUD-less uses UI interpolation.
+      // Conformance: tags carrying an extension chain.
+      sl::ResourceTag tagExtension;
+      if(flag("--tag-next")) for(auto& tag:tagged) tag.next=&tagExtension;
       if(frame%2) tags(token,viewport,tagged,tagCount,producerCommand);
       else legacyTags(viewport,tagged,tagCount,producerCommand);
+      if(flag("--backbuffer-subrect")) {
+        // Conformance: the game renders into a 320x180 region of its backbuffer.
+        sl::ResourceTag region{&rc,sl::kBufferTypeBackbuffer,sl::eValidUntilPresent,nullptr};
+        region.extent={0,0,320,180};
+        Require(tags(token,viewport,&region,1,producerCommand)==sl::Result::eOk,"original backbuffer tag result");
+      }
       if(frame==37 || frame==38) {
         sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
         tags(token,viewport,&invalidOptional,1,reinterpret_cast<sl::CommandBuffer*>(list.Get()));
@@ -906,7 +957,9 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    const auto expectedSleeps=flag("--simulation-sleep") || flag("--midsim-sleep")?41u:48u;
+    // Constant-token waits never reach XeLL; boundary waits cover frames 8-48.
+    const auto expectedSleeps=flag("--simulation-sleep") || flag("--midsim-sleep") || flag("--sleep-gap")
+        || flag("--constant-sleep-token")?41u:48u;
     Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:expectedSleeps)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
