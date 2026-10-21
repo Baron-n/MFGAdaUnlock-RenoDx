@@ -737,6 +737,12 @@ int main(int argc,char** argv) {
         }
       }
       if(observer && frame==12) {bridgeStatus(&bs,sizeof(bs));Require(bs.enabled,"observer options changed the game's FG request");}
+      if(frame==48 && flag("--active-support")) {
+        const auto exportReport=Import<uint32_t(*)(char*,uint32_t)>(addon,"MFGAXeCompatibilityReport");
+        std::vector<char> active(exportReport(nullptr,0));
+        Require(exportReport(active.data(),uint32_t(active.size()))==active.size(),"active support export changed size");
+        std::ofstream("active-compatibility.json",std::ios::binary)<<active.data();
+      }
       if(frame==9 || frame==17 || frame==18 || frame==25) {
         controlStatus(&cs,sizeof(cs));
         const bool composed=frame==9 || frame==18;

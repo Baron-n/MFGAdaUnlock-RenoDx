@@ -36,6 +36,7 @@ ap.add_argument('--hud-conflict',action='store_true')
 ap.add_argument('--tail-sleep',action='store_true')
 ap.add_argument('--steam-observer',type=Path)
 ap.add_argument('--stale-input',action='store_true')
+ap.add_argument('--active-support',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
@@ -84,6 +85,7 @@ if args.legacy_factory: flags+=['--legacy-factory']
 if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
+if args.active_support: flags+=['--active-support']
 for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
@@ -171,6 +173,16 @@ if (d/'compatibility.json').is_file():
         and not re.search(r'[A-Za-z]:[\\/]',json.dumps(support)))
     if args.steam_observer: compatibility_verified=compatibility_verified and support.get('external_observer_resolutions')==2
     if args.stale_input: compatibility_verified=compatibility_verified and support.get('stale_inputs_discarded')==1
+active_support_verified=None
+if args.active_support:
+    active=json.loads((d/'active-compatibility.json').read_text(encoding='utf-8')) if (d/'active-compatibility.json').is_file() else {}
+    active_support_verified=(active.get('lifecycle')=='active' and active.get('blocker')=='ready'
+        and active.get('frame',{}).get('id')==49
+        and all(active.get('capabilities',{}).get(key)=='confirmed' for key in
+                ('depth','motion_vectors','constants','source_wait','latency_markers'))
+        and len(active.get('frame',{}).get('resource_receipts',[]))==3
+        and all(r['accepted'] and r['width']==640 and r['height']==360 and r['rejection']=='none'
+                for r in active.get('frame',{}).get('resource_receipts',[])))
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
@@ -186,8 +198,9 @@ if (d/'compatibility.json').is_file():
     'observer_isolation_verified':observer_verified,
     'stale_input_verified':stale_verified,
     'compatibility_export_verified':compatibility_verified,
+    'active_support_verified':active_support_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
