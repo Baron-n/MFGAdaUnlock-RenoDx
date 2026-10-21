@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Independent Streamline/DXGI transport. No OptiScaler source is used here.
 #include "native_internal.hpp"
+#include "native_session.hpp"
 #include "native_overlay.hpp"
 #include "native_factory.hpp"
 #include "native_continuity.hpp"
@@ -190,6 +191,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   auto o=std::make_shared<Output>(); o->queue=queue;o->hwnd=hwnd;
   o->reframeworkPeer=std::move(peer);
   static std::atomic<uint64_t> outputGeneration{0}; o->diagnosticOutput=++outputGeneration;
+  LogModules(o->diagnosticOutput);
   xess_mod::WriteLog("native_transport_identity","\"output\":"+std::to_string(o->diagnosticOutput)
       +",\"queue_unwrapped\":"+(queueChanged?"true":"false")+",\"factory_unwrapped\":"+(factoryChanged?"true":"false"));
   ComPtr<ID3D12Device> device;
@@ -369,6 +371,7 @@ static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,
   if(Active()) ++State().outputPresents;
 }
 static DWORD WINAPI DiscoverWorker(void*) {
+  LogSession();
   StartTraceWorker();
   for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;

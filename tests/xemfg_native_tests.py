@@ -214,6 +214,14 @@ if args.active_support:
         and len(active.get('frame',{}).get('resource_receipts',[]))==3
         and all(r['accepted'] and r['width']==640 and r['height']==360 and r['rejection']=='none'
                 for r in active.get('frame',{}).get('resource_receipts',[])))
+# Diagnostics every native session must emit (plan items 1.2-1.8).
+diagnostics_verified={}
+session=[e for e in events if e.get('event')=='native_session']
+inventory=[e for e in events if e.get('event')=='native_modules']
+diagnostics_verified['session']=(len(session)==1 and re.match(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ',session[0].get('utc','')) is not None
+    and session[0].get('executable')==executable_name and bool(session[0].get('gpu')) and session[0].get('windows')
+    and bool(inventory) and any(m.get('name')=='sl.interposer.dll' for m in inventory[0].get('modules',[]))
+    and not re.search(r'[A-Za-z]:[\\/]',json.dumps(session+inventory)))
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
@@ -230,9 +238,9 @@ if args.active_support:
     'stale_input_verified':stale_verified,
     'input_compatibility_verified':input_verified,
     'compatibility_export_verified':compatibility_verified,
-    'active_support_verified':active_support_verified,
+    'active_support_verified':active_support_verified,'diagnostics_verified':diagnostics_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and all(diagnostics_verified.values()) and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
