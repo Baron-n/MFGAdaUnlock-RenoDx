@@ -633,6 +633,14 @@ int main(int argc,char** argv) {
     }
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
+    if(flag("--struct-probe")) {
+      // Newer or chained structures from future SDKs. Results are not asserted
+      // here (plan 2.1/2.2); the bridge must name each refused structure.
+      sl::ReflexOptions newer=ro; newer.structVersion=2; reflex(newer);
+      sl::ReflexOptions extension; sl::ReflexOptions chained=ro; chained.next=&extension; reflex(chained);
+      sl::DLSSGOptions newerOptions=opt; newerOptions.structVersion=6; options(viewport,newerOptions);
+      Require(options(viewport,opt)==sl::Result::eOk,"restore FG options after probe");
+    }
     Require(reflex(ro)==sl::Result::eOk,"Reflex disable");
     Require(Import<uint32_t(*)()>(fixture,"FixtureModes")()==(nativeReflex?0x100u:0u),"native FG/Reflex mode routing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexLimit")()==(nativeReflex?25000u:0u),"frame cap duplicated/lost in latency translation");
@@ -708,6 +716,10 @@ int main(int argc,char** argv) {
     c.jitterOffset={0,0}; c.mvecScale={1.f/640,1.f/360}; c.depthInverted=flag("--normal-depth")?sl::eFalse:sl::eTrue; c.cameraMotionIncluded=sl::eTrue;
     c.motionVectors3D=sl::eFalse; c.reset=sl::eFalse;
     if(flag("--jittered-motion")) {c.motionVectorsJittered=sl::eTrue;c.jitterOffset={.25f,-.25f};}
+    if(flag("--struct-probe")) {
+      sl::Constants newer=c; newer.structVersion=3; Token unused; unused.id=900;
+      Require(constants(newer,unused,viewport)==sl::Result::eOk,"original constants result");
+    }
     sl::Resource rd(sl::ResourceType::eTex2d,depth.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rm(sl::ResourceType::eTex2d,motion.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     sl::Resource rc(sl::ResourceType::eTex2d,color.Get(),D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);

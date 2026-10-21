@@ -2,6 +2,7 @@
 #include "native_internal.hpp"
 #include "native_constants.hpp"
 #include "native_input_policy.hpp"
+#include "log_budget.hpp"
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
 #include <cmath>
@@ -96,6 +97,16 @@ sl::Result GetLoadedHook(sl::Feature feature,bool& enabled) {
   if(result==sl::Result::eOk && feature==sl::kFeatureDLSS_G && presentationIsolated)
     enabled=logicalLoaded;
   return result;
+}
+// A structure refused for its type, version or extension chain. Grouped per
+// API/version so a game repeating the call every frame logs once.
+void StructRejected(const char* api,const sl::BaseStructure& value,const char* reason) {
+  static PatternBudget budget(32);
+  const bool chained=value.next!=nullptr;
+  const auto key=std::string(api)+'/'+std::to_string(value.structVersion)+'/'+(chained?"1":"0")+'/'+reason;
+  if(const auto count=budget.Admit(key))
+    xess_mod::WriteLog("native_struct_rejected","\"api\":\""+std::string(api)+"\",\"version\":"+std::to_string(value.structVersion)
+        +",\"next\":"+(chained?"true":"false")+",\"reason\":\""+reason+"\",\"occurrence\":"+std::to_string(count));
 }
 
 bool SelectViewport(uint32_t v) {
@@ -298,6 +309,8 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
     if(auto* frame=FindFrame(*o,id)) {
       frame->constants=true;
       frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
+      if(frame->constantIssues&ConstantMetadata)
+        StructRejected("slSetConstants",c,c.structType!=sl::Constants::s_structType?"type":"version");
       frame->valid=frame->constantIssues==0;
       if(frame->constantIssues!=o->lastConstantIssues && o->constantLogBudget<12) {
         o->lastConstantIssues=frame->constantIssues; ++o->constantLogBudget;
@@ -313,8 +326,10 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   return r;
 }
 sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts) {
-  if(opts.structType!=sl::DLSSGOptions::s_structType || opts.structVersion<1 || opts.structVersion>5)
+  if(opts.structType!=sl::DLSSGOptions::s_structType || opts.structVersion<1 || opts.structVersion>5) {
+    StructRejected("slDLSSGSetOptions",opts,opts.structType!=sl::DLSSGOptions::s_structType?"type":"version");
     return sl::Result::eErrorUnsupportedInterface;
+  }
   auto& s=State();
   // OFF from a menu/secondary viewport cannot claim the selected FG output.
   static std::atomic<uint32_t> optionBudget{};
@@ -337,7 +352,10 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
 }
 sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl::DLSSGOptions*) {
   const auto r=getState(v,state,nullptr); if(r!=sl::Result::eOk) return r;
-  if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1 || state.structVersion>4) return r;
+  if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1 || state.structVersion>4) {
+    StructRejected("slDLSSGGetState",state,state.structType!=sl::DLSSGState::s_structType?"type":"version");
+    return r;
+  }
   const auto status=Snapshot();
   const auto originalStatus=uint32_t(state.status);
   // The NVIDIA engine is deliberately disabled. Its Reflex/backbuffer hooks
@@ -358,8 +376,10 @@ sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl:
   return r;
 }
 sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
-  if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion!=1 || opts.next)
+  if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion!=1 || opts.next) {
+    StructRejected("slReflexSetOptions",opts,opts.structType!=sl::ReflexOptions::s_structType?"type":opts.next?"next":"version");
     return sl::Result::eErrorUnsupportedInterface;
+  }
   auto& s=State();
   // A known unsupported jitter convention never creates a XeLL output.
   // Preserve the game's native latency policy in that passthrough case.

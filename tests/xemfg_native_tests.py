@@ -41,6 +41,7 @@ ap.add_argument('--zero-resource',action='store_true')
 ap.add_argument('--jittered-motion',action='store_true')
 ap.add_argument('--simulation-sleep',action='store_true')
 ap.add_argument('--midsim-sleep',action='store_true')
+ap.add_argument('--struct-probe',action='store_true')
 ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
@@ -95,7 +96,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -234,6 +235,10 @@ diagnostics_verified['streamline_version']=(bool(versions) and versions[-1].get(
 xell=[e for e in events if e.get('event')=='native_xell_context']
 diagnostics_verified['xell']=(bool(xell) and all(e.get('logging_result')==0 and re.match(r'\d+\.\d+\.\d+',e.get('version','')) for e in xell)
     and not any(e.get('event')=='native_xell_failure' for e in events))
+if args.struct_probe:
+    refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
+    diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),
+        ('slDLSSGSetOptions',6,False),('slSetConstants',3,False)))
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,
