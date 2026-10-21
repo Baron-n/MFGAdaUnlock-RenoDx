@@ -3,16 +3,21 @@
 // locks never span xellSleep, which may need another thread's late marker.
 #include "native_internal.hpp"
 #include "../latency_marker_policy.hpp"
+#include "log_budget.hpp"
 #include <chrono>
 namespace mfgunlock::xemfg::native {
 namespace {
-// Bounded per process: the first refusals identify the contract that failed.
+// Grouped by operation, result and whether the game requested FG, so loading
+// screens cannot exhaust the log before gameplay refusals are recorded.
 void XellFailure(const char* operation,uint64_t output,uint32_t id,int result,uint32_t interval,bool lowLatency) {
-  static std::atomic<uint32_t> budget{};
-  if(budget.fetch_add(1)>=12) return;
+  static PatternBudget budget(32);
+  const bool requested=State().requested.load();
+  const auto count=budget.Admit(std::string(operation)+'/'+std::to_string(result)+'/'+(requested?"1":"0"));
+  if(!count) return;
   xess_mod::WriteLog("native_xell_failure","\"operation\":\""+std::string(operation)+"\",\"output\":"+std::to_string(output)
       +",\"id\":"+std::to_string(id)+",\"xell_result\":"+std::to_string(result)
-      +",\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false"));
+      +",\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false")
+      +",\"fg_requested\":"+(requested?"true":"false")+",\"occurrence\":"+std::to_string(count));
 }
 }
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,

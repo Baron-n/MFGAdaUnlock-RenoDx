@@ -2,6 +2,7 @@
 // Independent Streamline/DXGI transport. No OptiScaler source is used here.
 #include "native_internal.hpp"
 #include "native_session.hpp"
+#include "log_budget.hpp"
 #include "native_overlay.hpp"
 #include "native_factory.hpp"
 #include "native_continuity.hpp"
@@ -211,8 +212,11 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     const auto versionResult=a.xellGetVersion?a.xellGetVersion(&version):XELL_RESULT_ERROR_NOT_IMPLEMENTED;
     const auto logging=a.xellSetLoggingCallback?a.xellSetLoggingCallback(o->ll,TraceEnabled()?XELL_LOGGING_LEVEL_DEBUG:XELL_LOGGING_LEVEL_WARNING,
         [](const char* message,xell_logging_level_t level) {
-          static std::atomic<uint32_t> messages{0};
-          if(messages.fetch_add(1)<64) xess_mod::WriteLog("native_xell_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(message?message:"")+"\"");
+          static PatternBudget budget(48);
+          const std::string text=message?message:"";
+          if(const auto count=budget.Admit(PatternBudget::Pattern(text)))
+            xess_mod::WriteLog("native_xell_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(text)
+                +"\",\"occurrence\":"+std::to_string(count)+",\"fg_requested\":"+(State().requested.load()?"true":"false"));
         }):XELL_RESULT_ERROR_NOT_IMPLEMENTED;
     xess_mod::WriteLog("native_xell_context","\"output\":"+std::to_string(o->diagnosticOutput)
         +",\"version\":\""+(versionResult==XELL_RESULT_SUCCESS?std::to_string(version.major)+'.'+std::to_string(version.minor)+'.'+std::to_string(version.patch):std::string("unavailable"))

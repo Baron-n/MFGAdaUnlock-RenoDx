@@ -66,6 +66,9 @@ def analyze(lines, pid=None):
         cause = 'jittered_motion_unsupported'
     elif any(e.get('event') == 'native_device_failure' for e in events):
         cause = 'device_lost'
+    elif any('but expected frame' in m for m in messages):
+        # XeLL bound to XeFG requires consecutive sleep frame ids.
+        cause = 'xell_frame_sequence_gap'
     elif boundary and any(e.get('result') for e in boundary):
         cause = 'boundary_sleep_failed'
     elif result['blocker'] == 'source_wait_not_completed':

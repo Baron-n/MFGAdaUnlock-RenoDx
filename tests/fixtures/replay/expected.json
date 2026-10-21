@@ -45,6 +45,19 @@
       "route": "native_xefg",
       "interpolated": false,
       "cause": "jittered_motion_unsupported"
+    },
+    "plague-tale-1.4-xell.jsonl": {
+      "game": "Resonance: A Plague Tale Legacy (Xbox)",
+      "addon_sha256": "plan item 1.4 build (local)",
+      "route": "streamline",
+      "fg_requested": true,
+      "interpolated": false,
+      "blocker": "source_wait_not_completed",
+      "cause": "xell_frame_sequence_gap",
+      "xell_failure": {
+        "operation": "sleep",
+        "xell_result": -4
+      }
     }
   }
 }
