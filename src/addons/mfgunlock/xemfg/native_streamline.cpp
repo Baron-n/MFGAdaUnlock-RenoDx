@@ -119,6 +119,36 @@ void FeatureQuery(const char* api,sl::Feature feature,sl::Result result) {
     xess_mod::WriteLog("native_feature_query","\"api\":\""+std::string(api)+"\",\"feature\":"+std::to_string(uint32_t(feature))
         +",\"result\":"+std::to_string(uint32_t(result))+",\"occurrence\":"+std::to_string(count));
 }
+// Counts every tag call per buffer type and viewport, before any filtering.
+void CountTags(const std::shared_ptr<Output>& o,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count) {
+  if(!o || !tags) return;
+  std::lock_guard guard(o->io);
+  if(o->retired) return;
+  for(uint32_t i=0;i<count && i<64;++i) ++o->tagTypeCounts[(std::min)(uint32_t(tags[i].type),63u)];
+  bool counted{};
+  for(auto& slot:o->tagViewports) {
+    if(slot.count && slot.viewport==viewport) { ++slot.count; counted=true; break; }
+    if(!slot.count) { slot={viewport,1}; counted=true; break; }
+  }
+  if(!counted) ++o->otherViewportTags;
+  if(++o->taggedCalls==240) LogTagHistogram(*o,"steady");
+}
+// First constants of each output, verbatim: the conventions a new game uses.
+void SampleConstants(Output& o,const sl::Constants& c,uint32_t id,uint32_t issues) {
+  if(o.constantsSampled) return;
+  o.constantsSampled=true;
+  // Streamline marks unset values with INVALID_FLOAT (FLT_MAX).
+  const auto f=[](float v) { return ConstantFinite(v)?std::to_string(v):std::string("null"); };
+  const auto b=[](sl::Boolean v) { return v==sl::eTrue?std::string("true"):v==sl::eFalse?std::string("false"):std::string("\"invalid\""); };
+  xess_mod::WriteLog("native_constants_sample","\"output\":"+std::to_string(o.diagnosticOutput)+",\"id\":"+std::to_string(id)
+      +",\"version\":"+std::to_string(c.structVersion)+",\"issues\":"+std::to_string(issues)
+      +",\"mvec_scale\":["+f(c.mvecScale.x)+','+f(c.mvecScale.y)+"],\"jitter\":["+f(c.jitterOffset.x)+','+f(c.jitterOffset.y)
+      +"],\"camera_near\":"+f(c.cameraNear)+",\"camera_far\":"+f(c.cameraFar)+",\"camera_fov\":"+f(c.cameraFOV)
+      +",\"camera_aspect\":"+f(c.cameraAspectRatio)+",\"depth_inverted\":"+b(c.depthInverted)
+      +",\"camera_motion_included\":"+b(c.cameraMotionIncluded)+",\"motion_3d\":"+b(c.motionVectors3D)
+      +",\"motion_jittered\":"+b(c.motionVectorsJittered)+",\"motion_dilated\":"+b(c.motionVectorsDilated)
+      +",\"orthographic\":"+b(c.orthographicProjection)+",\"reset\":"+b(c.reset));
+}
 sl::Result SupportedHook(sl::Feature feature,const sl::AdapterInfo& adapter) {
   const auto result=isSupported(feature,adapter);
   FeatureQuery("slIsFeatureSupported",feature,result);
@@ -306,6 +336,7 @@ sl::Result TagHook(const sl::ViewportHandle& v,const sl::ResourceTag* t,uint32_t
   const auto id=State().recording.load();
   TraceInput("slSetTag",id,uint32_t(v));
   const auto r=setTag(v,t,n,c);
+  CountTags(lease.output,uint32_t(v),t,n);
   if(r==sl::Result::eOk) Tags(lease,id,uint32_t(v),t,n,c);
   else RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetTag");
   return r;
@@ -315,6 +346,7 @@ sl::Result TagFrameHook(const sl::FrameToken& f,const sl::ViewportHandle& v,
   const InputLease lease;
   TraceInput("slSetTagForFrame",FrameId(uint32_t(f)),uint32_t(v));
   const auto id=FrameId(uint32_t(f)); const auto r=setTagFrame(f,v,t,n,c);
+  CountTags(lease.output,uint32_t(v),t,n);
   if(r==sl::Result::eOk) Tags(lease,id,uint32_t(v),t,n,c);
   else RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetTagForFrame");
   return r;
@@ -332,6 +364,7 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
       frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
       if(frame->constantIssues&ConstantMetadata)
         StructRejected("slSetConstants",c,c.structType!=sl::Constants::s_structType?"type":"version");
+      else SampleConstants(*o,c,id,frame->constantIssues);
       frame->valid=frame->constantIssues==0;
       if(frame->constantIssues!=o->lastConstantIssues && o->constantLogBudget<12) {
         o->lastConstantIssues=frame->constantIssues; ++o->constantLogBudget;
@@ -598,6 +631,19 @@ sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
   return r;
 }
 } // namespace
+void LogTagHistogram(Output& o,const char* phase) {
+  if(o.histogramLogged && !strcmp(phase,"steady")) return;
+  if(!o.taggedCalls) return;
+  o.histogramLogged=true;
+  std::string types,viewports;
+  for(uint32_t type=0;type<64;++type) if(o.tagTypeCounts[type])
+    types+=std::string(types.empty()?"":",")+"{\"type\":"+std::to_string(type)+",\"count\":"+std::to_string(o.tagTypeCounts[type])+"}";
+  for(const auto& slot:o.tagViewports) if(slot.count)
+    viewports+=std::string(viewports.empty()?"":",")+"{\"viewport\":"+std::to_string(slot.viewport)+",\"count\":"+std::to_string(slot.count)+"}";
+  xess_mod::WriteLog("native_tag_histogram","\"output\":"+std::to_string(o.diagnosticOutput)+",\"phase\":\""+phase
+      +"\",\"calls\":"+std::to_string(o.taggedCalls)+",\"types\":["+types+"],\"viewports\":["+viewports
+      +"],\"other_viewport_calls\":"+std::to_string(o.otherViewportTags));
+}
 bool OwnsPresentationHooks() noexcept { return lifecycleApi && presentationIsolated && !stopping; }
 bool StreamlineStopping() noexcept { return stopping; }
 void CaptureStreamlineStartup() {

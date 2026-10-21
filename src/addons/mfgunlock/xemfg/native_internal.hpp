@@ -84,6 +84,11 @@ struct Output {
   uint32_t sleepAssociationLogBudget{};
   uint32_t unsleptSimulationStarts{};
   uint32_t sleepRejectLogBudget{},boundarySkipLogBudget{};
+  // Diagnostics only: every tag call, including unselected viewports and
+  // buffer types the bridge does not map. Index 63 collects larger types.
+  uint64_t tagTypeCounts[64]{}, taggedCalls{}, otherViewportTags{};
+  struct ViewportCount { uint32_t viewport; uint64_t count; } tagViewports[8]{};
+  bool constantsSampled{}, histogramLogged{};
   uint64_t rejectedExplicitSleeps{};
   bool explicitSleepObserved{};
   uint32_t markerRejectLogBudget[3]{};
@@ -146,6 +151,8 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& output,uint32_t id,
     PFun_slReflexSleep* nativeSleep=nullptr,const sl::FrameToken* token=nullptr,
     std::optional<uint64_t> expectedEpoch={});
 bool ForwardSourceMarker(const std::shared_ptr<Output>& output,uint32_t id,uint32_t marker);
+// Caller holds output.io.
+void LogTagHistogram(Output& output,const char* phase);
 bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);
 bool Hook(void* entry,void* replacement,void** trampoline);

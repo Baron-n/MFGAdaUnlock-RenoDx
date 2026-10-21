@@ -74,6 +74,7 @@ void Output::RetirePresentation(ComPtr<IDXGISwapChain4> publicProxy) {
     if(retired) return;
     retired=true; enabled=false; ++epoch;
     pendingSleep=sleepActive;
+    LogTagHistogram(*this,"retired");
   }
   auto& a=State().api;
   if(window) window->Retire();

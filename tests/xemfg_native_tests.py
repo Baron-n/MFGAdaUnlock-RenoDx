@@ -241,6 +241,16 @@ queried=re.findall(r'Feature query: DLSS-G supported=(\d+) requirements=(\d+)',r
 queries={(e.get('api'),e.get('feature'),e.get('result')) for e in events if e.get('event')=='native_feature_query'}
 diagnostics_verified['feature_query']=bool(queried) and ('slIsFeatureSupported',1000,int(queried[-1][0])) in queries \
     and ('slGetFeatureRequirements',1000,int(queried[-1][1])) in queries
+# One constants sample per output at its first complete frame, and a bounded
+# histogram of the buffer types and viewports the game tagged.
+samples=[e for e in events if e.get('event')=='native_constants_sample']
+diagnostics_verified['constants_sample']=bool(samples) and all(
+    all(k in s for k in ('mvec_scale','jitter','camera_near','camera_far','camera_fov','depth_inverted','motion_jittered','motion_dilated','orthographic'))
+    for s in samples)
+histogram=[e for e in events if e.get('event')=='native_tag_histogram']
+diagnostics_verified['tag_histogram']=bool(histogram) and any(
+    any(t.get('type')==0 and t.get('count',0)>0 for t in h.get('types',[])) and any(v.get('viewport')==0 for v in h.get('viewports',[]))
+    for h in histogram)
 if args.struct_probe:
     refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
     diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),
