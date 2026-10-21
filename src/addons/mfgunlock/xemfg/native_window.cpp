@@ -18,12 +18,29 @@ bool SetStyle(HWND hwnd,int index,LONG_PTR value) {
 bool SameRect(const RECT& a,const RECT& b) {
   return a.left==b.left && a.top==b.top && a.right==b.right && a.bottom==b.bottom;
 }
+struct PhysicalCoordinates {
+  DPI_AWARENESS_CONTEXT old{SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)};
+  ~PhysicalCoordinates() { if(old) SetThreadDpiAwarenessContext(old); }
+};
+bool Geometry(HWND hwnd,bool& borderless,bool& covers) {
+  PhysicalCoordinates coordinates;
+  MONITORINFO monitor{sizeof(MONITORINFO)}; RECT outer{},client{};
+  const auto style=Style(hwnd,GWL_STYLE),ex=Style(hwnd,GWL_EXSTYLE);
+  borderless=!(style&(WS_CAPTION|WS_THICKFRAME)) && !(ex&(WS_EX_WINDOWEDGE|WS_EX_CLIENTEDGE|WS_EX_DLGMODALFRAME));
+  if(!GetWindowRect(hwnd,&outer) || !GetClientRect(hwnd,&client)
+      || !GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)) return false;
+  SetLastError(0);
+  if(!MapWindowPoints(hwnd,nullptr,reinterpret_cast<POINT*>(&client),2) && GetLastError()) return false;
+  covers=SameRect(outer,monitor.rcMonitor) && SameRect(client,monitor.rcMonitor);
+  return GetDpiForWindow(hwnd)!=0;
 }
-std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force) {
+}
+std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force,bool known,bool fullscreen) {
   DWORD pid{}; const DWORD tid=GetWindowThreadProcessId(hwnd,&pid);
   if(!tid || pid!=GetCurrentProcessId() || !ControlMessage()) { SetLastError(ERROR_INVALID_WINDOW_HANDLE); return {}; }
   auto value=std::shared_ptr<WindowControl>(new WindowControl);
   value->hwnd=hwnd; value->thread=tid; value->generation=nextGeneration++;
+  value->dxgiKnown=known; value->exclusive=fullscreen;
   HMODULE module{};
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
       reinterpret_cast<LPCWSTR>(&MessageHook),&module)) return {};
@@ -52,38 +69,56 @@ void WindowControl::Request(bool force) {
   requested=force; pending=true; error=0;
   if(!PostMessageW(hwnd,ControlMessage(),generation,0)) { error=GetLastError(); pending=false; }
 }
+void WindowControl::ObserveFullscreen(bool known,bool fullscreen) {
+  std::lock_guard guard(lock);
+  dxgiKnown=known; exclusive=fullscreen;
+}
 WindowStatus WindowControl::Snapshot() {
   std::lock_guard guard(lock);
   WindowStatus status{};
   status.available=hook && IsWindow(hwnd) && GetPropW(hwnd,property)==this; status.requested=requested;
   status.pending=pending; status.managed=managed; status.error=error;
   if(status.available) {
-    const auto style=GetWindowLongPtrW(hwnd,GWL_STYLE);
-    status.borderless=!(style&WS_CAPTION) && !(style&WS_THICKFRAME);
-    MONITORINFO monitor{sizeof(MONITORINFO)}; RECT rect{};
-    if(GetWindowRect(hwnd,&rect) && GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor))
-      status.coversMonitor=SameRect(rect,monitor.rcMonitor);
+    const bool geometry=Geometry(hwnd,status.borderless,status.coversMonitor);
+    if(dxgiKnown && exclusive) status.mode=DisplayMode::Exclusive;
+    else if(dxgiKnown && geometry) status.mode=status.borderless && status.coversMonitor?
+        (managed?DisplayMode::ManagedBorderless:DisplayMode::NativeBorderless):DisplayMode::Windowed;
   }
   return status;
 }
 void WindowControl::Apply() {
   // Called ONLY by WH_GETMESSAGE, without the bridge/SDK/registry locks.
-  bool force{}, owned{}; LONG_PTR oldStyle{},oldEx{},ourStyle{},ourEx{};
+  bool force{}, owned{},known{},fullscreen{}; LONG_PTR oldStyle{},oldEx{},ourStyle{},ourEx{};
   WINDOWPLACEMENT saved{sizeof(WINDOWPLACEMENT)}; RECT ourRect{};
   {
     std::lock_guard guard(lock);
     if(!pending || GetCurrentThreadId()!=thread) return;
     force=requested; owned=managed; pending=false; applying=true;
+    known=dxgiKnown; fullscreen=exclusive;
     oldStyle=originalStyle; oldEx=originalEx; saved=placement;
     ourStyle=appliedStyle; ourEx=appliedEx; ourRect=appliedRect;
   }
   // Window APIs can synchronously enter the game's WndProc. No mutex is held
   // across them: a resize handler may wait for a rendering thread/overlay.
   DWORD failure{};
+  PhysicalCoordinates coordinates;
   if(!IsWindow(hwnd) || GetPropW(hwnd,property)!=this) failure=ERROR_INVALID_WINDOW_HANDLE;
   else if(force) {
+    bool borderless{},covers{};
+    RECT now{}; GetWindowRect(hwnd,&now);
+    if(owned && (Style(hwnd,GWL_STYLE)!=ourStyle || Style(hwnd,GWL_EXSTYLE)!=ourEx || !SameRect(now,ourRect))) {
+      // Relinquish on any foreign transition; never overwrite it in a retry.
+      failure=ERROR_BUSY; owned=false;
+    }
+    else if(!known || fullscreen) failure=ERROR_NOT_SUPPORTED;
+    else if(!Geometry(hwnd,borderless,covers)) failure=ERROR_INVALID_DATA;
+    else if(borderless && covers) {
+      // The desired state is already satisfied. In particular, do NOT adopt
+      // native styles/placement or emit WM_SIZE / SWP_FRAMECHANGED here.
+      std::lock_guard guard(lock); applying=false; managed=owned; error=0; return;
+    }
     MONITORINFO monitor{sizeof(MONITORINFO)};
-    if(!GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)) failure=GetLastError();
+    if(!failure && !GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor)) failure=GetLastError();
     if(!owned && !failure) {
       oldStyle=Style(hwnd,GWL_STYLE); oldEx=Style(hwnd,GWL_EXSTYLE);
       if(!GetWindowPlacement(hwnd,&saved)) failure=GetLastError();
@@ -99,7 +134,7 @@ void WindowControl::Apply() {
     }
     if(failure) {
       // Roll back only if this attempt actually changed styles.
-      if(oldStyle) {
+      if(oldStyle && !owned && failure!=ERROR_BUSY && failure!=ERROR_NOT_SUPPORTED && failure!=ERROR_INVALID_DATA) {
         SetStyle(hwnd,GWL_STYLE,oldStyle); SetStyle(hwnd,GWL_EXSTYLE,oldEx);
         SetWindowPlacement(hwnd,&saved);
         SetWindowPos(hwnd,nullptr,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOZORDER|SWP_NOACTIVATE|SWP_FRAMECHANGED);

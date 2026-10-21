@@ -236,7 +236,8 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   // Keep Intel's default (composition disabled). The user's opt-in preference
   // is consumed at Present, after the matching frame's inputs are known.
   a.xefgSwapChainSetEnabled(o->fg,0);
-  SetLastError(0); o->window=WindowControl::Bind(hwnd,forceBorderless);
+  BOOL exclusive{}; const bool known=SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr));
+  SetLastError(0); o->window=WindowControl::Bind(hwnd,forceBorderless,known,exclusive!=FALSE);
   if(!o->window) o->windowBindError=GetLastError();
   xess_mod::WriteLog("native_window_bind","\"hwnd\":"+std::to_string(uintptr_t(hwnd))
       +",\"thread\":"+std::to_string(GetCurrentThreadId())+",\"available\":"+(o->window?"true":"false")
