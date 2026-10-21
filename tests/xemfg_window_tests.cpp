@@ -24,6 +24,16 @@ void Require(bool value,const char* message) { if(!value) throw std::runtime_err
 void Pump() { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
 int main() {
   try {
+    struct Query {
+      HRESULT result{S_OK}; BOOL exclusive{TRUE}; unsigned calls{};
+      HRESULT GetFullscreenState(BOOL* value,void*) { ++calls;*value=exclusive;return result; }
+    } query;
+    auto observed=ReadFullscreen(&query);
+    Require(observed.known && observed.exclusive && query.calls==1,"fullscreen output read before query");
+    query.exclusive=FALSE;observed=ReadFullscreen(&query);
+    Require(observed.known && !observed.exclusive && query.calls==2,"windowed query not observed");
+    query.result=E_FAIL;query.exclusive=TRUE;observed=ReadFullscreen(&query);
+    Require(!observed.known && !observed.exclusive && query.calls==3,"failed query trusted fullscreen output");
     WNDCLASSW wc{}; wc.lpfnWndProc=WndProc; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"MFGWindowControlTest";
     RegisterClassW(&wc);
     const auto hwnd=CreateWindowW(wc.lpszClassName,L"window control",WS_OVERLAPPEDWINDOW,45,60,640,360,nullptr,nullptr,wc.hInstance,nullptr);

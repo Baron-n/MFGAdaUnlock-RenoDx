@@ -10,8 +10,8 @@ class Swapchain final : public IDXGISwapChain4 {
   void Resized(HRESULT hr) {
     if(FAILED(hr)) return;
     if(owner->window) {
-      BOOL exclusive{};
-      owner->window->ObserveFullscreen(SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr)),exclusive!=FALSE);
+      const auto display=ReadFullscreen(chain.Get());
+      owner->window->ObserveFullscreen(display.known,display.exclusive);
       if(ControlsSettings().forceBorderless) owner->window->Request(true,false);
     }
     std::lock_guard lock(owner->io);
@@ -66,14 +66,18 @@ public:
     if(a) {
       if(ControlsSettings().forceBorderless && owner->window) {
         const auto hr=chain->SetFullscreenState(FALSE,nullptr);
-        BOOL exclusive{}; owner->window->ObserveFullscreen(SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr)),exclusive!=FALSE);
+        const auto display=ReadFullscreen(chain.Get());
+        owner->window->ObserveFullscreen(display.known,display.exclusive);
         if(SUCCEEDED(hr)) owner->window->Request(true);
         return hr;
       }
       return DXGI_ERROR_UNSUPPORTED;
     }
     const auto hr=chain->SetFullscreenState(a,b);
-    if(owner->window) { BOOL exclusive{}; owner->window->ObserveFullscreen(SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr)),exclusive!=FALSE); }
+    if(owner->window) {
+      const auto display=ReadFullscreen(chain.Get());
+      owner->window->ObserveFullscreen(display.known,display.exclusive);
+    }
     return hr;
   }
   HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL* a,IDXGIOutput** b) override { return chain->GetFullscreenState(a,b); }

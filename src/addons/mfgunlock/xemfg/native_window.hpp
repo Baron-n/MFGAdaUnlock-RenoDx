@@ -7,6 +7,14 @@
 
 namespace mfgunlock::xemfg::native {
 enum class DisplayMode : uint32_t { Unknown, Windowed, NativeBorderless, ManagedBorderless, Exclusive };
+struct FullscreenObservation { bool known{},exclusive{}; };
+template<class Chain> FullscreenObservation ReadFullscreen(Chain* chain) {
+  BOOL exclusive=FALSE;
+  // Sequence the query before reading its output. Function arguments may be
+  // evaluated right-to-left: Observe(SUCCEEDED(Query(&x)),x) reads stale x.
+  const auto result=chain->GetFullscreenState(&exclusive,nullptr);
+  return {SUCCEEDED(result),SUCCEEDED(result) && exclusive!=FALSE};
+}
 struct WindowStatus {
   bool available{}, requested{}, pending{}, borderless{}, coversMonitor{}, managed{};
   uint32_t error{};
