@@ -12,7 +12,7 @@ class Swapchain final : public IDXGISwapChain4 {
     if(owner->window) {
       BOOL exclusive{};
       owner->window->ObserveFullscreen(SUCCEEDED(chain->GetFullscreenState(&exclusive,nullptr)),exclusive!=FALSE);
-      if(ControlsSettings().forceBorderless) owner->window->Request(true);
+      if(ControlsSettings().forceBorderless) owner->window->Request(true,false);
     }
     std::lock_guard lock(owner->io);
     DXGI_SWAP_CHAIN_DESC1 desc{}; chain->GetDesc1(&desc);

@@ -3,17 +3,28 @@ project(mfgunlock_tests LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+# ModelPort exposes explicitly asserted release-layout STL views to the Intel
+# binary. Debug retains _DEBUG, assertions and /Od; iterator wrappers would
+# change those wire layouts. Do not silence the layout assertions with NDEBUG.
+add_compile_definitions($<$<CONFIG:Debug>:_ITERATOR_DEBUG_LEVEL=0>)
 set(RENODX_SOURCE_DIR "" CACHE PATH "Existing RenoDX checkout with dependencies")
 if(NOT EXISTS "${RENODX_SOURCE_DIR}/external/Streamline/include/sl.h")
   message(FATAL_ERROR "Set RENODX_SOURCE_DIR to the existing RenoDX build tree")
 endif()
 enable_testing()
+add_executable(config_store_tests config_store_tests.cpp)
+target_compile_definitions(config_store_tests PRIVATE NOMINMAX)
+add_test(NAME config_atomic_save COMMAND config_store_tests "${CMAKE_CURRENT_BINARY_DIR}/config-checks")
+add_executable(latency_marker_policy_tests latency_marker_policy_tests.cpp)
+add_test(NAME latency_marker_admission COMMAND latency_marker_policy_tests)
+add_test(NAME dependency_repair COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+  -File "${CMAKE_CURRENT_SOURCE_DIR}/dependency_repair_tests.ps1" -TestRoot "${CMAKE_CURRENT_BINARY_DIR}/dependency-checks")
 option(MFGUNLOCK_BUILD_XEMFG "Build the OptiScaler XeMFG companion and dual backend addon" OFF)
 set(ENGINEERING_OFFLINE_PROVIDERS "" CACHE STRING "Explicit local provider/plugin inputs for mutation and profile tests")
 add_library(mfgunlock_addon_compile OBJECT
   ../src/addons/mfgunlock/addon.cpp)
 target_compile_definitions(mfgunlock_addon_compile PRIVATE
-  WIN32 _WINDOWS NDEBUG NOMINMAX mfgunlock_EXPORTS)
+  WIN32 _WINDOWS $<$<NOT:$<CONFIG:Debug>>:NDEBUG> NOMINMAX mfgunlock_EXPORTS)
 target_compile_options(mfgunlock_addon_compile PRIVATE /bigobj)
 target_include_directories(mfgunlock_addon_compile SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/Detours/include"

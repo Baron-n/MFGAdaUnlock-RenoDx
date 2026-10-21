@@ -102,6 +102,9 @@
 #include "xemfg/backend_api.hpp"
 #ifdef MFGUNLOCK_NATIVE_XEMFG
 #include "xemfg/native_bridge.hpp"
+#include "xemfg/dependency_manager.hpp"
+#include "dlssg_display.hpp"
+#include "dlssg_latency.hpp"
 #endif
 
 #define ImTextureID ImU64
@@ -2701,6 +2704,9 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
                              const reshade::api::rect* /*dest_rect*/,
                              uint32_t /*dirty_rect_count*/,
                              const reshade::api::rect* /*dirty_rects*/) {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+  if(swapchain==g_primary_swapchain.load(std::memory_order_acquire)) mfgunlock::dlssgdisplay::Observe(swapchain);
+#endif
 #if defined(MFGUNLOCK_ENGINEERING_EXPERIMENTAL)
   // Do not pin ReShade's temporary addon/device probes during startup. Once a
   // real Present is observed, hot unload cannot establish CUDA quiescence.
@@ -2864,6 +2870,9 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
 }
 
 void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+  mfgunlock::dlssgdisplay::Retire(swapchain);
+#endif
   AcquireSRWLockExclusive(&g_reflex_waitable.lock);
   if (swapchain != nullptr && swapchain == g_reflex_waitable.owner) {
     RestoreReflexWaitableLocked(
@@ -5226,7 +5235,7 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   mfgunlock::ui::Theme panel_theme;
   if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
-    ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG (1.4.5 base)");
+    ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::xemfg::native::Draw();
     return;
@@ -5492,6 +5501,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const char* player_state=runtime_error?"Compatibility issue":!enabled?"Disabled this session":mfg_confirmed?"Generating frames":
       mfg_live?"Driver reports MFG active":mfg_request_accepted?"Multiplier requested":provider_ready?"Ready - enable FG in the game":"Waiting for frame generation";
   mfgunlock::ui::Hero(multiplier_text.c_str(),"DLSS-G",RenderApiName(render_api),player_state,mfg_live);
+  mfgunlock::ui::RepositoryButton();
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
   if(sleep_status_available && (driver_vsync_active || gsync_active))
     mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");
@@ -5716,6 +5726,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     mfgunlock::ui::Section("Frame generation","Enable Frame Generation in the game, then choose how many frames to generate.");
     mfgunlock::ui::Card generation_card("##dlssg_general_card");
     mfgunlock::ui::BackendSelector();
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    mfgunlock::dlssgdisplay::Draw();
+#endif
     if (ImGui::BeginTable("##frame_generation_settings", 2,
                         ImGuiTableFlags_SizingStretchProp)) {
     ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
@@ -5879,6 +5892,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   if (page == UiPage::Latency) {
     ImGui::Spacing();
     mfgunlock::ui::Section("Responsiveness","NVIDIA Reflex controls the timing of real frames. Generated FPS does not replace a healthy base frame rate.");
+#if defined(MFGUNLOCK_NATIVE_XEMFG)
+    mfgunlock::dlssglatency::Draw();
+#endif
     if(ImGui::CollapsingHeader("Advanced pacing (testing)")) DrawReflexPacingLabControl();
     ImGui::Spacing();
     ImGui::TextDisabled("LATENCY GUARD");
@@ -7951,7 +7967,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "Native ReShade XeMFG R1.9.3 - source-call-safe presentation retirement; official DLSS-G 1.4.5 base";
+    "MFG Unlock 1.5.0-rc.1 - local DLSS-G and XeMFG engineering candidate; gameplay validation pending";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

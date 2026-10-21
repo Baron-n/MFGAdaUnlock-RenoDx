@@ -63,9 +63,11 @@ std::shared_ptr<WindowControl> WindowControl::Bind(HWND hwnd,bool force,bool kno
   if(force) value->Request(true);
   return value;
 }
-void WindowControl::Request(bool force) {
+void WindowControl::Request(bool force,bool explicitRequest) {
   std::lock_guard guard(lock);
   if(retiring || !IsWindow(hwnd)) return;
+  if(relinquished && force && !explicitRequest) return;
+  if(explicitRequest) relinquished=false;
   requested=force; pending=true; error=0;
   if(!PostMessageW(hwnd,ControlMessage(),generation,0)) { error=GetLastError(); pending=false; }
 }
@@ -145,7 +147,7 @@ void WindowControl::Apply() {
   } else if(owned) {
     RECT now{}; GetWindowRect(hwnd,&now);
     // If the game/another addon took ownership, don't overwrite their change.
-    if(Style(hwnd,GWL_STYLE)!=ourStyle || Style(hwnd,GWL_EXSTYLE)!=ourEx
+    if(!known || fullscreen || Style(hwnd,GWL_STYLE)!=ourStyle || Style(hwnd,GWL_EXSTYLE)!=ourEx
         || !SameRect(now,ourRect)) { failure=ERROR_BUSY; owned=false; }
     else if(!SetStyle(hwnd,GWL_STYLE,oldStyle) || !SetStyle(hwnd,GWL_EXSTYLE,oldEx)
         || !SetWindowPlacement(hwnd,&saved)
@@ -155,6 +157,7 @@ void WindowControl::Apply() {
   }
   std::lock_guard guard(lock);
   error=failure; managed=owned; originalStyle=oldStyle; originalEx=oldEx; placement=saved;
+  if(failure==ERROR_BUSY) relinquished=true;
   appliedStyle=ourStyle; appliedEx=ourEx; appliedRect=ourRect;
   applying=false;
 }

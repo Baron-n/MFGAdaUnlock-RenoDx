@@ -8,7 +8,9 @@ std::weak_ptr<WindowControl> resizeController;
 bool retireDuringResize{}, reentryObserved{};
 unsigned windowMutations{};
 LRESULT CALLBACK WndProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
-  if(message==WM_STYLECHANGED || message==WM_WINDOWPOSCHANGED) ++windowMutations;
+  // WM_WINDOWPOSCHANGED can also arrive asynchronously from the desktop.
+  // Count synchronous style writes and separately check final placement.
+  if(message==WM_STYLECHANGED) ++windowMutations;
   if(message==WM_SIZE && retireDuringResize) {
     retireDuringResize=false;
     if(auto controller=resizeController.lock()) {
@@ -49,6 +51,12 @@ int main() {
     SetWindowLongPtrW(hwnd,GWL_STYLE,GetWindowLongPtrW(hwnd,GWL_STYLE)|WS_THICKFRAME);
     controller->Request(false); Pump();
     Require(controller->Snapshot().error==ERROR_BUSY && (GetWindowLongPtrW(hwnd,GWL_STYLE)&WS_THICKFRAME),"foreign style overwritten");
+    const auto foreignMutations=windowMutations;
+    RECT foreignRect{}; GetWindowRect(hwnd,&foreignRect);
+    controller->Request(true,false); Pump();
+    RECT afterForeign{}; GetWindowRect(hwnd,&afterForeign); const auto foreign=controller->Snapshot();
+    Require(windowMutations==foreignMutations && EqualRect(&foreignRect,&afterForeign)
+        && !foreign.managed && !foreign.pending && foreign.error==ERROR_BUSY,"automatic revalidation overrode foreign ownership");
     controller->Retire();
     auto second=WindowControl::Bind(hwnd,true,true); Require(bool(second),"retired generation still owns HWND"); Pump();
     second->Retire(); Pump(); Require(!second->Snapshot().available,"retirement did not remove hook");

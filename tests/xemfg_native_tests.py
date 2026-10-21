@@ -31,6 +31,7 @@ ap.add_argument('--foreign-refs',action='store_true')
 ap.add_argument('--retained-output',action='store_true')
 ap.add_argument('--secondary-viewport',action='store_true')
 ap.add_argument('--normal-depth',action='store_true')
+ap.add_argument('--hud-conflict',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
 ap.add_argument('--ref-legacy',type=Path)
@@ -74,7 +75,7 @@ if args.retire_sleep: flags+=['--retire-sleep']
 if args.producer_shadow: flags+=['--producer-shadow']
 if args.legacy_factory: flags+=['--legacy-factory']
 if args.reframework: flags+=['--ref-'+args.reframework]
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
 #include "backend_api.hpp"
+#include "dependency_manager.hpp"
 #include "../panel_ui.hpp"
 #include <sstream>
 namespace mfgunlock::xemfg::native {
@@ -49,16 +50,22 @@ void Draw() {
     ui::Card card("##xemfg_generation");
     ui::BackendSelector();
     int choice=int(s.multiplier.load())-2;
+    static bool multiplierSaveFailed{};
     ui::Setting("##xe_multiplier_row","Frame multiplier","Applies while playing. 2x adds up to one generated frame per rendered frame; 4x adds up to three. Higher values use more GPU time.",[&] {
       if(ImGui::Combo("##xe_multiplier",&choice,"2x\0" "3x\0" "4x\0" "5x\0" "6x\0")) {
-        s.multiplier=uint32_t(choice+2);
         const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
-        WritePrivateProfileStringW(L"XeFG",L"Multiplier",std::to_wstring(choice+2).c_str(),ini.c_str());
+        const auto text=std::to_wstring(choice+2);
+        multiplierSaveFailed=!config::Save(ini,{{L"XeFG",L"Multiplier",text.c_str()}});
+        if(!multiplierSaveFailed) s.multiplier=uint32_t(choice+2);
       }
     });
+    if(multiplierSaveFailed) ui::Notice("Multiplier was not applied: settings could not be saved.");
   }
   DrawControls(page);
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.4.5 + XeMFG R1.12");
+  if(page==PanelPage::Diagnostics && ImGui::CollapsingHeader("Intel files and repair")) dependencies::Draw();
+  if(page==PanelPage::General && unavailable) dependencies::Draw();
+  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.1 (local test build)");
+  ui::RepositoryButton();
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

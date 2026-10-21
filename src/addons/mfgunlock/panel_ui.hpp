@@ -7,6 +7,7 @@
 #endif
 #include "backend_selection.hpp"
 #include <algorithm>
+#include <shellapi.h>
 
 namespace mfgunlock::ui {
 inline constexpr ImVec4 Accent{0.39f,0.84f,0.71f,1.f};
@@ -135,12 +136,24 @@ inline void Hero(const char* multiplier,const char* backend,const char* renderer
 }
 inline void BackendSelector() {
 #ifdef MFGUNLOCK_NATIVE_XEMFG
+  static bool saveFailed{};
   const auto selected=backend::Read(); int choice=selected==backend::Kind::XeMfg?1:0;
   Setting("##backend_selection","Frame generation method","Choose the frame-generation system. Requires a game restart.",[&] {
     if(ImGui::Combo("##backend",&choice,"NVIDIA DLSS-G\0Intel XeMFG\0"))
-      backend::Select(choice?backend::Kind::XeMfg:backend::Kind::DlssG);
+      saveFailed=!backend::Select(choice?backend::Kind::XeMfg:backend::Kind::DlssG);
   });
+  if(saveFailed) Notice("Backend change was not saved. Check write access to the game folder.");
+  if(selected==backend::Kind::Invalid) Notice("Invalid backend preference. Select a supported method and restart.");
   if(backend::Read()!=backend::active) Notice("Saved. Restart the game to switch frame generation.");
 #endif
+}
+inline void RepositoryButton() {
+  static bool failed{};
+  if(ImGui::SmallButton("GitHub repository")) {
+    failed=reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr,L"open",
+        L"https://github.com/mavismmg/MFGAdaUnlock-RenoDx",nullptr,nullptr,SW_SHOWNORMAL))<=32;
+  }
+  Tooltip("Open the maintained MFGAdaUnlock repository in your default browser.");
+  if(failed) Notice("Could not open the browser. Repository: github.com/mavismmg/MFGAdaUnlock-RenoDx");
 }
 }

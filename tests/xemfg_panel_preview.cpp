@@ -29,8 +29,8 @@ std::shared_ptr<Output> Active() {
   output->uiCompositionAvailable=true;
   return output;
 }
-WindowStatus WindowControl::Snapshot() { WindowStatus value; value.available=value.borderless=value.coversMonitor=true; return value; }
-void WindowControl::Request(bool) {}
+WindowStatus WindowControl::Snapshot() { WindowStatus value; value.available=value.borderless=value.coversMonitor=true; value.mode=DisplayMode::NativeBorderless; return value; }
+void WindowControl::Request(bool,bool) {}
 }
 }
 namespace xefg_cuda {
@@ -159,6 +159,7 @@ int wmain(int argc,wchar_t** argv) {
         return nullptr;
       };
       if(frame>=8) {
+        if(scenario==L"dependencies") ImGui::GetCurrentWindow()->StateStorage.SetInt(ImGui::GetID("Intel files and repair"),1);
         const char* group=scenario==L"expanded"?"##xe_latency":scenario==L"performance"?"##xe_model_details":"##xe_presentation";
         const char* heading=scenario==L"expanded"?"Advanced latency routing":scenario==L"performance"?"Performance capture (advanced)":"Advanced pacing comparison";
         if(scenario==L"expanded" || scenario==L"performance" || scenario==L"pacing")
@@ -177,6 +178,7 @@ int wmain(int argc,wchar_t** argv) {
         if(!window || !window->StateStorage.GetInt(window->GetID(heading))) throw std::runtime_error("advanced group was not expanded");
       }
       if(frame==47 && scenario==L"multiplier" && GImGui->OpenPopupStack.empty()) throw std::runtime_error("multiplier popup did not open");
+      if(frame==47 && scenario==L"dependencies" && !groupWindow("##intel_dependencies")) throw std::runtime_error("dependency controls were not expanded");
       if(frame==47 && scenario==L"tooltip") {
         bool found=false; for(auto* window:GImGui->Windows) if(window->Active && (window->Flags&ImGuiWindowFlags_Tooltip)) found=true;
         if(!found) throw std::runtime_error("control tooltip did not appear");

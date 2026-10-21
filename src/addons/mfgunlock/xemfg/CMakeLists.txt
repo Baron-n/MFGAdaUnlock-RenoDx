@@ -24,7 +24,7 @@ add_library(mfgunlock_xemfg SHARED ${XEMFG_MODEL_SOURCES} "${CMAKE_CURRENT_BINAR
 target_compile_definitions(mfgunlock_xemfg PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
 target_compile_options(mfgunlock_xemfg PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/bigobj> /utf-8)
 target_compile_options(mfgunlock_xemfg PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/Zi>)
-target_link_options(mfgunlock_xemfg PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
+target_link_options(mfgunlock_xemfg PRIVATE /DEBUG:FULL $<$<NOT:$<CONFIG:Debug>>:/OPT:REF> $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>)
 target_include_directories(mfgunlock_xemfg PRIVATE vendor
   "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${XEMFG_INPUTS}" "${XEMFG_GENERATED}")
@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -55,7 +55,7 @@ target_include_directories(mfgunlock_native_xemfg PRIVATE vendor
 target_include_directories(mfgunlock_native_xemfg SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
 target_link_libraries(mfgunlock_native_xemfg PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES} d3d12 dxgi bcrypt psapi)
-target_link_options(mfgunlock_native_xemfg PRIVATE /DEBUG:FULL /OPT:REF /OPT:ICF)
+target_link_options(mfgunlock_native_xemfg PRIVATE /DEBUG:FULL $<$<NOT:$<CONFIG:Debug>>:/OPT:REF> $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>)
 set_target_properties(mfgunlock_native_xemfg PROPERTIES PREFIX "" SUFFIX ".addon64"
   OUTPUT_NAME "renodx-mfgunlock-native" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
@@ -74,6 +74,9 @@ add_executable(xemfg_window_tests "${CMAKE_SOURCE_DIR}/xemfg_window_tests.cpp" n
 target_compile_definitions(xemfg_window_tests PRIVATE NOMINMAX UNICODE _UNICODE)
 target_link_libraries(xemfg_window_tests PRIVATE user32)
 add_test(NAME xemfg_window_controls COMMAND xemfg_window_tests)
+add_library(mfgunlock_window_analysis OBJECT EXCLUDE_FROM_ALL native_window.cpp)
+target_compile_definitions(mfgunlock_window_analysis PRIVATE NOMINMAX UNICODE _UNICODE)
+target_compile_options(mfgunlock_window_analysis PRIVATE /analyze /W4)
 foreach(kind IN ITEMS v1 legacy)
   add_library(xemfg_reframework_${kind} SHARED "${CMAKE_SOURCE_DIR}/xemfg_reframework_fixture.cpp" "${CMAKE_SOURCE_DIR}/xemfg_reframework_fixture.rc")
   target_compile_definitions(xemfg_reframework_${kind} PRIVATE NOMINMAX UNICODE _UNICODE)
@@ -125,15 +128,16 @@ add_executable(xemfg_async_log_tests "${CMAKE_SOURCE_DIR}/xemfg_async_log_tests.
 add_test(NAME xemfg_async_log COMMAND xemfg_async_log_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)
 add_test(NAME xemfg_cpu_diagnostics COMMAND xemfg_diagnostics_tests)
-add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_trace.cpp native_reframework.cpp
+add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_trace.cpp native_reframework.cpp dependency_manager.cpp
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_draw.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_tables.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_widgets.cpp")
 target_compile_definitions(xemfg_panel_preview PRIVATE NOMINMAX UNICODE _UNICODE MFGUNLOCK_NATIVE_XEMFG MFGUNLOCK_UI_PREVIEW)
 target_include_directories(xemfg_panel_preview PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
-  "${RENODX_SOURCE_DIR}/external/Streamline/include" "${RENODX_SOURCE_DIR}/external/reshade")
-target_link_libraries(xemfg_panel_preview PRIVATE d3d12 dxgi user32 ole32 windowscodecs bcrypt version psapi)
+  "${RENODX_SOURCE_DIR}/external/Streamline/include" "${RENODX_SOURCE_DIR}/external/reshade"
+  "${RENODX_SOURCE_DIR}/external/json/include")
+target_link_libraries(xemfg_panel_preview PRIVATE d3d12 dxgi user32 ole32 windowscodecs bcrypt version psapi shell32)
 foreach(page RANGE 0 3)
   add_test(NAME xemfg_panel_page_${page} COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/page-${page}.png" ${page} 800)
   set_tests_properties(xemfg_panel_page_${page} PROPERTIES RUN_SERIAL TRUE)
@@ -143,11 +147,11 @@ set_tests_properties(xemfg_panel_large_font PROPERTIES RUN_SERIAL TRUE)
 add_test(NAME xemfg_panel_keyboard_navigation COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/navigation.png" 0 930 20 navigation)
 add_test(NAME xemfg_panel_keyboard_navigation_compact COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/navigation-compact.png" 0 460 22 navigation)
 set_tests_properties(xemfg_panel_keyboard_navigation xemfg_panel_keyboard_navigation_compact PROPERTIES RUN_SERIAL TRUE)
-foreach(scenario IN ITEMS expanded performance pacing tooltip multiplier)
+foreach(scenario IN ITEMS expanded performance pacing tooltip multiplier dependencies)
   set(page 0)
   if(scenario STREQUAL "expanded")
     set(page 2)
-  elseif(scenario STREQUAL "performance")
+  elseif(scenario STREQUAL "performance" OR scenario STREQUAL "dependencies")
     set(page 3)
   endif()
   add_test(NAME xemfg_panel_${scenario} COMMAND xemfg_panel_preview "${CMAKE_BINARY_DIR}/ui-preview/${scenario}.png" ${page} 800 16 ${scenario})
@@ -192,7 +196,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --legacy-markers --latency-output ${route})
     set_tests_properties(xemfg_native_historical_markers_${route} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   endforeach()
-  foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs retained-output secondary-viewport normal-depth)
+  foreach(scenario IN ITEMS mixed-markers alias-markers stall-trace queue-proxy parallel-factory foreign-refs retained-output secondary-viewport normal-depth hud-conflict)
     add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
       --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
