@@ -21,10 +21,10 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
-def compiler_inputs(project):
+def compiler_inputs(project, configuration='Release'):
     """Record MSVC's actual header/library read set, including external inputs."""
     files, logs = {}, {}
-    directory = project.parent / (project.stem + '.dir') / 'Release'
+    directory = project.parent / (project.stem + '.dir') / configuration
     for pattern in ['CL.read.1.tlog', 'link.read.1.tlog']:
         matches = list(directory.rglob(pattern))
         if len(matches) != 1:
@@ -40,7 +40,7 @@ def compiler_inputs(project):
     if not any(x.lower().endswith('detours.lib') for x in files):
         raise ValueError('Actual external Detours link input was not recorded')
     return dict(read_logs=logs, files=files,
-        scope='MSVC Release header/library read set; includes external SDK/CRT/dependency hashes, not a reproducible-build guarantee')
+        scope=f'MSVC {configuration} header/library read set; includes external SDK/CRT/dependency hashes, not a reproducible-build guarantee')
 
 
 def check_validation(report, variant, directory, header_digest):
