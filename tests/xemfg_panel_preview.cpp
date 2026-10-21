@@ -161,7 +161,6 @@ int wmain(int argc,wchar_t** argv) {
         return nullptr;
       };
       if(frame>=8) {
-        if(scenario==L"dependencies") ImGui::GetCurrentWindow()->StateStorage.SetInt(ImGui::GetID("Intel files and repair"),1);
         const char* group=scenario==L"expanded"?"##xe_latency":scenario==L"performance"?"##xe_model_details":"##xe_presentation";
         const char* heading=scenario==L"expanded"?"Advanced latency routing":scenario==L"performance"?"Performance capture (advanced)":"Advanced pacing comparison";
         if(scenario==L"expanded" || scenario==L"performance" || scenario==L"pacing")

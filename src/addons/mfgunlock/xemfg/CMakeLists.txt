@@ -175,7 +175,7 @@ endforeach()
 set(XEMFG_OFFLINE_RESHADE "" CACHE FILEPATH "Real ReShade addon-enabled DXGI loader for native bridge test")
 if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   find_package(Python3 COMPONENTS Interpreter REQUIRED)
-  foreach(scenario IN ITEMS zero-resource jittered-motion simulation-sleep)
+  foreach(scenario IN ITEMS zero-resource jittered-motion simulation-sleep midsim-sleep)
     add_test(NAME xemfg_native_${scenario} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
       --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>

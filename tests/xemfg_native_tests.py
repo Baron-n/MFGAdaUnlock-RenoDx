@@ -40,6 +40,7 @@ ap.add_argument('--active-support',action='store_true')
 ap.add_argument('--zero-resource',action='store_true')
 ap.add_argument('--jittered-motion',action='store_true')
 ap.add_argument('--simulation-sleep',action='store_true')
+ap.add_argument('--midsim-sleep',action='store_true')
 ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
@@ -94,7 +95,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -185,6 +186,12 @@ if args.simulation_sleep:
     recovered=[e for e in events if e.get('event')=='native_simulation_boundary_sleep']
     input_verified['simulation_sleep']=('Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep' in result.stdout
         and bool(recovered) and all(e.get('result')==0 for e in recovered))
+if args.midsim_sleep:
+    recovered=[e for e in events if e.get('event')=='native_simulation_boundary_sleep']
+    refused=[e for e in events if e.get('event')=='native_sleep_rejected']
+    input_verified['midsim_sleep']=('Simulation boundary: refused mid-simulation waits recovered after warmup; explicit source waits resumed without duplicate sleep' in result.stdout
+        and bool(recovered) and all(e.get('result')==0 for e in recovered)
+        and bool(refused) and all(e.get('reason')=='inside_simulation' and e.get('observed',0)&3==1 for e in refused))
 compatibility_verified=False
 if (d/'compatibility.json').is_file():
     support=json.loads((d/'compatibility.json').read_text(encoding='utf-8'))

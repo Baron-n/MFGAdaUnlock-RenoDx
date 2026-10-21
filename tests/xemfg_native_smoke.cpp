@@ -770,10 +770,16 @@ int main(int argc,char** argv) {
         Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
       }
       Token token; token.id=frame;
-      const bool missingSleep=flag("--simulation-sleep") && frame<=16;
+      const bool boundaryScenario=flag("--simulation-sleep") || flag("--midsim-sleep");
+      const bool midSimulationSleep=flag("--midsim-sleep") && frame<=16;
+      const bool missingSleep=boundaryScenario && frame<=16;
       if(!flag("--tail-sleep") && !missingSleep) Require(sleep(token)==sl::Result::eOk,"XeLL sleep");
       else mark(static_cast<sl::PCLMarker>(6),token); // Actual legacy input marker before simulation.
-      mark(sl::PCLMarker::eSimulationStart,token); mark(sl::PCLMarker::eSimulationEnd,token);
+      mark(sl::PCLMarker::eSimulationStart,token);
+      // A wait inside simulation has no safe translation. It is refused and
+      // must not disable the boundary wait that covers this same frame.
+      if(midSimulationSleep) Require(sleep(token)==sl::Result::eErrorInvalidState,"mid-simulation wait was translated");
+      mark(sl::PCLMarker::eSimulationEnd,token);
       std::future<sl::Result> tailSleep;
       if(flag("--tail-sleep")) tailSleep=std::async(std::launch::async,[sleep,&token] {return sleep(token);});
       mark(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
@@ -814,7 +820,7 @@ int main(int argc,char** argv) {
       if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
       mark(sl::PCLMarker::ePresentStart,token);
       Check(chain->Present(0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
-      if(flag("--simulation-sleep") && (frame==7 || frame==8)) {
+      if(boundaryScenario && (frame==7 || frame==8)) {
         bridgeStatus(&bs,sizeof(bs));Require(bs.enabled==(frame==8),"simulation-boundary sleep warmup/admission");
       }
       if(lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
@@ -874,7 +880,7 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    const auto expectedSleeps=flag("--simulation-sleep")?41u:48u;
+    const auto expectedSleeps=flag("--simulation-sleep") || flag("--midsim-sleep")?41u:48u;
     Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:expectedSleeps)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
@@ -882,6 +888,7 @@ int main(int argc,char** argv) {
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     if(flag("--tail-sleep")) std::cout<<"Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved"<<std::endl;
     if(flag("--simulation-sleep")) std::cout<<"Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
+    if(flag("--midsim-sleep")) std::cout<<"Simulation boundary: refused mid-simulation waits recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
     if(flag("--zero-resource")) std::cout<<"Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted"<<std::endl;
     if(flag("--jittered-motion")) std::cout<<"Jittered motion: observed executable default initialized the matching SDK convention"<<std::endl;
     Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");

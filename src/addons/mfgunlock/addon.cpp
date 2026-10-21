@@ -3531,11 +3531,9 @@ void SettingLabel(const char* label, const char* summary, const char* tooltip,
                   const char* badge = nullptr,
                   const ImVec4& badge_color = kUiMuted) {
   ImGui::AlignTextToFramePadding();
-  const float help_width=tooltip?ImGui::CalcTextSize("(?)").x+ImGui::GetStyle().ItemInnerSpacing.x:0.f;
-  ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+(std::max)(1.f,ImGui::GetContentRegionAvail().x-help_width));
+  ImGui::PushTextWrapPos(ImGui::GetCursorPosX()+(std::max)(1.f,ImGui::GetContentRegionAvail().x));
   ImGui::TextUnformatted(label); ImGui::PopTextWrapPos();
   mfgunlock::ui::Tooltip(tooltip);
-  mfgunlock::ui::Help(tooltip);
   if (badge != nullptr) {
     ImGui::SameLine();
     ImGui::TextColored(badge_color, "%s", badge);
@@ -5235,7 +5233,6 @@ void DrawLegacyOverlay(reshade::api::effect_runtime* /*runtime*/) {
 void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   mfgunlock::ui::Theme panel_theme;
   if (mfgunlock::backend::active != mfgunlock::backend::Kind::DlssG) {
-    ImGui::TextUnformatted("MFG Ada Unlock - DLSS-G + XeMFG");
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
     mfgunlock::xemfg::native::Draw();
     return;
@@ -5501,7 +5498,6 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
   const char* player_state=runtime_error?"Compatibility issue":!enabled?"Disabled this session":mfg_confirmed?"Generating frames":
       mfg_live?"Driver reports MFG active":mfg_request_accepted?"Multiplier requested":provider_ready?"Ready - enable FG in the game":"Waiting for frame generation";
   mfgunlock::ui::Hero(multiplier_text.c_str(),"DLSS-G",RenderApiName(render_api),player_state,mfg_live);
-  mfgunlock::ui::RepositoryButton();
   if(dynamic_applied) mfgunlock::ui::Description("Dynamic MFG is choosing the multiplier automatically.");
   if(sleep_status_available && (driver_vsync_active || gsync_active))
     mfgunlock::ui::Description(driver_vsync_active && gsync_active?"Driver VSync + G-SYNC active":driver_vsync_active?"Driver VSync active":"G-SYNC active");
@@ -5535,11 +5531,11 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       ImGui::SameLine(); if(ImGui::RadioButton("Runtime information",show_runtime_info)) show_runtime_info=true;
       page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
     }
-  } else if(ImGui::BeginTabBar("##mfg_unlock_pages")) {
-    if(ImGui::BeginTabItem("General")) { page=UiPage::General; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Quality")) { page=UiPage::Quality; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Latency")) { page=UiPage::Latency; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Diagnostics")) {
+  } else if(const float tab=mfgunlock::ui::TabWidth(4); ImGui::BeginTabBar("##mfg_unlock_pages")) {
+    if(mfgunlock::ui::TabItem("General",tab)) { page=UiPage::General; ImGui::EndTabItem(); }
+    if(mfgunlock::ui::TabItem("Quality",tab)) { page=UiPage::Quality; ImGui::EndTabItem(); }
+    if(mfgunlock::ui::TabItem("Latency",tab)) { page=UiPage::Latency; ImGui::EndTabItem(); }
+    if(mfgunlock::ui::TabItem("Diagnostics",tab)) {
       if(ImGui::RadioButton("Status",!show_runtime_info)) show_runtime_info=false;
       ImGui::SameLine(); if(ImGui::RadioButton("Runtime information",show_runtime_info)) show_runtime_info=true;
       page=show_runtime_info?UiPage::DlssInfo:UiPage::Support;
@@ -7540,8 +7536,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   }
 
-  ImGui::Spacing();
-  ImGui::Separator();
+  mfgunlock::ui::Footer("MFG Unlock | 1.5.0-rc.5 (local test build)");
   ImGui::TextDisabled(
       "Changes marked for restart keep the current session unchanged.");
 }
@@ -7967,7 +7962,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "MFG Unlock 1.5.0-rc.4 - local DLSS-G and XeMFG engineering candidate; gameplay validation pending";
+    "MFG Unlock 1.5.0-rc.5 - local DLSS-G and XeMFG engineering candidate; gameplay validation pending";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

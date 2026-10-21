@@ -380,20 +380,30 @@ sl::Result SleepHook(const sl::FrameToken& f) {
   uint32_t target{};uint64_t epoch{};
   {
     std::lock_guard guard(o->io);
-    o->explicitSleepObserved=true;
+    // Rejected waits are never dispatched, so they must not disable the
+    // per-frame simulation boundary that covers the same frames.
+    const auto rejected=[&](const char* reason,uint32_t observed) {
+      ++o->rejectedExplicitSleeps;
+      if(o->sleepRejectLogBudget++<8)
+        xess_mod::WriteLog("native_sleep_rejected","\"source\":"+std::to_string(source)
+            +",\"reason\":\""+reason+"\",\"observed\":"+std::to_string(observed));
+      return sl::Result::eErrorInvalidState;
+    };
     auto* frame=FindFrame(*o,source);
-    if(o->retired || !frame) return sl::Result::eErrorInvalidState;
+    if(o->retired) return sl::Result::eErrorInvalidState;
+    if(!frame) return rejected("frame_unavailable",0);
     if(!frame->sourceSleepResolved) {
       const auto selected=latencymarkers::SourceSleepFrame(source,frame->observedMarkers);
-      if(!selected) return sl::Result::eErrorInvalidState;
+      if(!selected) return rejected("inside_simulation",frame->observedMarkers);
       // A next simulation that has already started cannot receive this wait.
       // Duplicates reuse the first resolved target and never dispatch twice.
       if(selected!=source) {
         const auto* next=o->frames.Find(selected);
         if(next && (next->observedMarkers || next->sleeping || next->sleepInFlight))
-          return sl::Result::eErrorInvalidState;
+          return rejected("next_simulation_started",frame->observedMarkers);
       }
       frame->sourceSleepResolved=true;frame->sourceSleepTarget=selected;
+      o->explicitSleepObserved=true;
       if(selected!=source && o->sleepAssociationLogBudget++<8)
         xess_mod::WriteLog("native_sleep_association","\"source\":"+std::to_string(source)
             +",\"target\":"+std::to_string(selected)+",\"observed\":"+std::to_string(frame->observedMarkers));
@@ -418,15 +428,23 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
       std::lock_guard guard(o->io);
       if(!o->retired) if(auto* frame=FindFrame(*o,id)) {
         const auto previous=frame->observedMarkers;
-        if(mapped==XELL_SIMULATION_START && !(previous&1u) && !frame->sleeping && !o->explicitSleepObserved) {
+        if(mapped==XELL_SIMULATION_START && !(previous&1u) && !frame->sleeping) {
           if(o->unsleptSimulationStarts<8) ++o->unsleptSimulationStarts;
-          // A real simulation boundary is a legal XeLL sleep site when the
-          // integration never calls slReflexSleep. Do not replay timestamps,
-          // sleep after simulation began, or override native Reflex output.
+          // A real simulation boundary is a legal XeLL sleep site for a frame
+          // without a completed wait: no slReflexSleep call, or one placed where
+          // it cannot be translated (inside simulation, after the next start).
+          // Accepted explicit waits mark the frame sleeping and skip this path.
+          // Do not replay timestamps, sleep after simulation began, or
+          // override native Reflex output.
           boundarySleep=o->unsleptSimulationStarts>=8 && !(previous&63u)
               && !o->sleepActive && !frame->sleepInFlight && s.requested && s.nativeOff && s.reflexOff
               && s.latencyOutput.load()==LatencyOutput::XeLL;
           if(boundarySleep) {epoch=o->epoch;boundaryLog=o->sleepAssociationLogBudget++<8;}
+          else if(s.requested && o->unsleptSimulationStarts>=8 && o->boundarySkipLogBudget++<4)
+            xess_mod::WriteLog("native_simulation_boundary_skipped","\"id\":"+std::to_string(id)
+                +",\"observed\":"+std::to_string(previous)+",\"sleep_active\":"+std::to_string(o->sleepActive)
+                +",\"in_flight\":"+std::to_string(frame->sleepInFlight)+",\"native_off\":"+std::to_string(s.nativeOff.load())
+                +",\"reflex_off\":"+std::to_string(s.reflexOff.load())+",\"xell\":"+std::to_string(s.latencyOutput.load()==LatencyOutput::XeLL));
         }
         optionalBeforeSleep=mapped==XELL_INPUT_SAMPLE && !frame->sleeping;
         frame->observedMarkers|=1u<<mapped;

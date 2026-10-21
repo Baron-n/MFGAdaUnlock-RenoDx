@@ -33,7 +33,7 @@ Json Module(HMODULE module) {
 }
 std::string CompatibilityReport() {
   auto& s=State();const auto status=Snapshot();
-  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.5.0-rc.4"},
+  Json report={{"schema","mfgunlock.compatibility"},{"version",1},{"build","1.5.0-rc.5"},
       {"adapter",status.output?"streamline_d3d12":"none"},{"fallback","xemfg_selected_passthrough"},
       {"status",status.detail},
       {"displayed_frames_measured",false},{"physical_latency_measured",false},
@@ -64,6 +64,8 @@ std::string CompatibilityReport() {
         {"windowed_presentation_supported",o->presentationSupported},
         {"dred_query_hresult",uint32_t(o->dredResult)},{"dred_nodes",o->dredNodes},
         {"dred_unfinished_lists",o->dredUnfinished}};
+    report["source_wait"]={{"explicit_accepted",o->explicitSleepObserved},
+        {"explicit_rejected",o->rejectedExplicitSleeps},{"unslept_simulation_starts",o->unsleptSimulationStarts}};
     report["blocker"]=compatibility::Name(o->blocker);
     report["lifecycle"]=o->deviceLost?"device_lost":o->retired?"retired":o->enabled?"active":"passthrough";
     const auto* frame=o->frames.Find(o->last);

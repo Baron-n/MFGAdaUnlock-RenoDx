@@ -44,9 +44,37 @@ Check ((Get-XeDigest $target) -eq $before) 'interrupted transaction did not reco
 $journal=Invoke-XeTransaction $game $plan $closed
 [IO.File]::WriteAllText($target,'foreign edit after install')
 Reject { Restore-XeTransaction $journal $closed } 'rollback overwrote foreign change'
+# Store/Game Pass: the process reports a WindowsApps junction to the real install.
+$real=Join-Path $root 'XboxGames\Game\Content'; New-Item -ItemType Directory -Path $real | Out-Null
+$link=Join-Path $root 'WindowsApps-package'; New-Item -ItemType Junction -Path $link -Target $real | Out-Null
+Check ((Resolve-XeFinalPath $link) -eq $real) 'junction was not resolved to the real install'
+Reject { Assert-XePath $link (Join-Path $link 'libxell.dll') } 'write through a junction accepted'
+[void](Assert-XePath (Resolve-XeFinalPath $link) (Join-Path $real 'libxell.dll'))
+Check ((Find-XeInstallRoot $real) -eq $real) 'Xbox Content root not detected'
+Check ((Find-XeInstallRoot (Join-Path $real 'Binaries\Win64')) -eq $real) 'nested Xbox executable root not detected'
+$steam=Join-Path $root 'steamapps\common\Game'
+Check ((Find-XeInstallRoot (Join-Path $steam 'bin\x64')) -eq $steam) 'Steam root not detected'
+Check ((Find-XeInstallRoot $steam) -eq $steam) 'Steam root executable folder changed'
+$unreal=Join-Path $root 'Store\Game'
+Check ((Find-XeInstallRoot (Join-Path $unreal 'Project\Binaries\Win64')) -eq $unreal) 'Unreal root not detected'
+$other=Join-Path $root 'Other\Game'
+Check ((Find-XeInstallRoot $other) -eq $other) 'unknown layout widened the search scope'
+# Engine plugin copies are found; junctions and helper backups are not followed.
+$exe=Join-Path $steam 'bin\x64'; $plugin=Join-Path $steam 'Engine\Plugins\XeSS\Binaries\Win64'
+$backup=Join-Path $steam '.mfg-dependency-backups\old'; $outside=Join-Path $root 'outside'
+New-Item -ItemType Directory -Path $exe,$plugin,$backup,$outside | Out-Null
+foreach($p in @((Join-Path $plugin 'libxess_fg.dll'),(Join-Path $backup 'libxess_fg.dll'),(Join-Path $outside 'libxell.dll'))) { [IO.File]::WriteAllText($p,'copy') }
+New-Item -ItemType Junction -Path (Join-Path $steam 'linked') -Target $outside | Out-Null
+$scan=Find-XeRuntimeCopies $steam @('libxess_fg.dll','libxell.dll')
+Check ($scan.complete -and @($scan.files).Count -eq 1 -and $scan.files[0] -eq (Join-Path $plugin 'libxess_fg.dll')) 'shipped copy search followed links/backups or missed a plugin copy'
+Check (!(Find-XeRuntimeCopies $steam @('libxess_fg.dll') -Limit 2).complete) 'search limit not reported'
+$targets=Get-XeRuntimeTargets $exe $steam 'libxess_fg.dll' @((Join-Path $exe 'LIBXESS_FG.dll')) $scan.files
+Check (@($targets).Count -eq 2 -and $targets[0].role -eq 'game folder' -and $targets[1].role -eq 'shipped with the game') 'runtime targets not deduplicated/classified'
+Reject { Get-XeRuntimeTargets $exe $steam 'libxess_fg.dll' @((Join-Path $outside 'libxess_fg.dll')) @() } 'loaded copy outside the installation planned'
+Check (Test-XeWritable $exe) 'writable folder reported read-only'
 $catalog=Join-Path $PSScriptRoot '../src/addons/mfgunlock/xemfg/dependency_catalog.json'
 [void](Read-XeCatalog $catalog)
 $bad=Get-Content -LiteralPath $catalog -Raw | ConvertFrom-Json;$bad.files[0].sha256='0000'
 $badPath=Join-Path $cache 'bad.json';$bad | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $badPath -Encoding UTF8
 Reject { Read-XeCatalog $badPath } 'tampered catalog accepted'
-Write-Output 'PASS: install/rollback, new files, closed-game gate, unknown edits, hash failure, locked target, interrupted recovery, pinned catalog'
+Write-Output 'PASS: install/rollback, new files, closed-game gate, unknown edits, hash failure, locked target, interrupted recovery, junction resolution, install roots, shipped copies, pinned catalog'

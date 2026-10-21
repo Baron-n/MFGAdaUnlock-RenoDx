@@ -39,11 +39,11 @@ void Draw() {
   if(ImGui::GetContentRegionAvail().x<ImGui::GetFontSize()*26.f) {
     int selected=int(page); ImGui::SetNextItemWidth(-1);
     if(ImGui::Combo("##xe_page",&selected,"General\0Quality\0Latency\0Diagnostics\0")) page=PanelPage(selected);
-  } else if(ImGui::BeginTabBar("##xemfg_pages")) {
-    if(ImGui::BeginTabItem("General")) { page=PanelPage::General; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Quality")) { page=PanelPage::Quality; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Latency")) { page=PanelPage::Latency; ImGui::EndTabItem(); }
-    if(ImGui::BeginTabItem("Diagnostics")) { page=PanelPage::Diagnostics; ImGui::EndTabItem(); }
+  } else if(const float tab=ui::TabWidth(4); ImGui::BeginTabBar("##xemfg_pages")) {
+    if(ui::TabItem("General",tab)) { page=PanelPage::General; ImGui::EndTabItem(); }
+    if(ui::TabItem("Quality",tab)) { page=PanelPage::Quality; ImGui::EndTabItem(); }
+    if(ui::TabItem("Latency",tab)) { page=PanelPage::Latency; ImGui::EndTabItem(); }
+    if(ui::TabItem("Diagnostics",tab)) { page=PanelPage::Diagnostics; ImGui::EndTabItem(); }
     ImGui::EndTabBar();
   }
   if(page==PanelPage::General) {
@@ -63,10 +63,8 @@ void Draw() {
     if(multiplierSaveFailed) ui::Notice("Multiplier was not applied: settings could not be saved.");
   }
   DrawControls(page);
-  if(page==PanelPage::Diagnostics && ImGui::CollapsingHeader("Intel files and repair")) dependencies::Draw();
-  if(page==PanelPage::General && unavailable) dependencies::Draw();
-  ImGui::Spacing(); ui::Description("MFG Unlock | 1.5.0-rc.4 (local test build)");
-  ui::RepositoryButton();
+  if(page==PanelPage::Diagnostics || (page==PanelPage::General && unavailable)) dependencies::Draw();
+  ui::Footer("MFG Unlock | 1.5.0-rc.5 (local test build)");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

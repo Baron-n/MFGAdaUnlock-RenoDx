@@ -16,8 +16,8 @@ BEGIN
   BEGIN
    VALUE "ProductName", "MFGAdaUnlock Native ReShade\0"
    VALUE "FileVersion", "1.5.0.4\0"
-   VALUE "FileDescription", "MFG Unlock 1.5.0-rc.4 - local engineering candidate\0"
-   VALUE "ProductVersion", "1.5.0-rc.4\0"
+   VALUE "FileDescription", "MFG Unlock 1.5.0-rc.5 - local engineering candidate\0"
+   VALUE "ProductVersion", "1.5.0-rc.5\0"
    VALUE "LegalCopyright", "MIT: MFGAdaUnlock contributors; Michael Robles; MinHook authors. Intel program data retains Intel terms.\0"
   END
  END

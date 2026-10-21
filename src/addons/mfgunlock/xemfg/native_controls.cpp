@@ -162,7 +162,7 @@ void DrawControls(PanelPage page) {
     });
     ui::Readout("##xe_flip_state","Pacing status",flip,flipHelp,metering?ui::Accent:ui::Muted);
     if(!value.sdkDeadlines && status.flipRequested!=status.flipEnabled) ui::Description("Change pending - applies with the next group of generated frames.");
-    if(ImGui::CollapsingHeader("Advanced pacing comparison")) {
+    if(ui::Expander("Advanced pacing comparison")) {
       ui::Setting("##xe_queue_row","Queue metered frames early","Lets the driver space a verified group of frames while the SDK prepares its next work. GPU fences and resource waits remain owned by Intel. Applies only when the driver accepts flip metering and Present uses sync interval 0. Turn off to compare with the previous CPU timing.",[&] {
         ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);
         if(ImGui::Checkbox("##xe_queue_ahead",&value.queueAhead)) ConfigureControls(value);
@@ -209,7 +209,7 @@ void DrawControls(PanelPage page) {
     ui::Tooltip("Avoid stacking external FPS limiters while comparing responsiveness. Generated FPS and physical input latency measure different things.");
     if(status.activeLatencyOutput==LatencyOutput::Reflex && status.reflexOptionsReady && !status.gameReflexMode) ui::Notice("Enable NVIDIA Reflex in the game to use this latency output.");
     if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");
-    if(ImGui::CollapsingHeader("Advanced latency routing")) {
+    if(ui::Expander("Advanced latency routing")) {
       int input=int(value.input),output=int(value.output);
       ui::Setting("##xe_input_row","Timing input","Auto uses Reflex / Streamline timing. This bridge currently supports that input route.",[&] {
         if(ImGui::Combo("##xe_timing_input",&input,"Auto (recommended)\0Reflex / Streamline\0")) { value.input=LatencyInput(input); ConfigureControls(value); }
@@ -224,7 +224,7 @@ void DrawControls(PanelPage page) {
     const auto overlay=OverlaySnapshot();
     const auto overlayInput=OverlayInputSnapshot();
     const auto ref=reframework::Snapshot();
-    ui::Section("System status","Use Copy diagnostic report when reporting a problem.");
+    ui::Section("System status","Use Copy compatibility report when reporting a problem.");
     ui::Card card("##xe_model_details");
     ui::Readout("##xe_diag_bridge","Game connection",bridge.streamline && bridge.output?"Connected":"Waiting for the game",
         "Checks the Streamline input hooks and DirectX 12 output. Load a scene and enable Frame Generation in the game.");
@@ -243,12 +243,14 @@ void DrawControls(PanelPage page) {
     if(State().retirementFailed || !reframework::Safe(ref.result)) ui::Notice("Output retirement could not be coordinated safely. Restart the game before creating another XeMFG output.");
     if(w.error) ui::Notice("Window mode could not be applied. Copy the report for details.");
     if(bridge.sdkResult<0) ui::Notice("Frame generation reported an error. Copy the report for details.");
-    if(ImGui::Button("Copy compatibility report")) ImGui::SetClipboardText(CompatibilityReport().c_str());
-    ui::Tooltip("Copies structured metadata: module hashes, the first unmet frame requirement, input validation and DirectX errors. No resource contents, personal paths or GPU addresses.");
-    if(ImGui::Button("Copy detailed counters")) {
+    ImGui::Spacing();
+    ui::ButtonRow reports(2);
+    if(reports("Copy compatibility report","Copies structured metadata: module hashes, the first unmet frame requirement, input validation and DirectX errors. No resource contents, personal paths or GPU addresses."))
+      ImGui::SetClipboardText(CompatibilityReport().c_str());
+    if(reports("Copy detailed counters","Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.")) {
       mfgunlock::xemfg::Status model;
       const bool modelAvailable=TryModelStatus(model);
-      std::ostringstream report; report<<"MFG Unlock 1.5.0-rc.4\nstartup_failed="<<ModelStartupFailed()
+      std::ostringstream report; report<<"MFG Unlock 1.5.0-rc.5\nstartup_failed="<<ModelStartupFailed()
           <<" model_status_available="<<modelAvailable<<" model_detail="<<(modelAvailable?model.detail:"busy")
           <<"\nmodel="<<status.modelPort<<" initialized="<<status.modelInitialized
           <<"\nCUDA="<<status.cudaState<<" compute="<<status.cudaMajor<<'.'<<status.cudaMinor<<" layers="<<status.cudaLayers
@@ -276,8 +278,7 @@ void DrawControls(PanelPage page) {
       report<<"\n\nCompatibility metadata (JSON v1):\n"<<CompatibilityReport();
       ImGui::SetClipboardText(report.str().c_str());
     }
-    ui::Tooltip("Copies technical status, error codes and accumulated counters for support. These counters are not displayed FPS or physical input latency.");
-    if(ImGui::CollapsingHeader("Performance capture (advanced)")) {
+    if(ui::Expander("Performance capture (advanced)")) {
       bool enabled=TimingEnabled();
       ui::Setting("##xe_cpu_capture","Collect CPU timings","Off by default. Records a bounded window of source Present timing, SDK-call duration and XeLL sleep. Adds profiling overhead; does not measure displayed frames or GPU execution.",[&] {
         if(ImGui::Checkbox("##xe_cpu_enabled",&enabled)) {
@@ -285,9 +286,10 @@ void DrawControls(PanelPage page) {
           WritePrivateProfileStringW(L"Diagnostics",L"CpuTiming",enabled?L"1":L"0",Ini().c_str());
         }
       });
-      if(ImGui::Button("Copy timing summary")) ImGui::SetClipboardText(TimingReport().c_str());
-      ui::Tooltip("Includes CPU p95/p99/p99.9 and reports unavailable display/GPU/physical measurements explicitly. Use PresentMon for displayed intervals.");
-      if(ImGui::Button("Clear timing window")) ClearTiming();
+      ui::ButtonRow timing(2);
+      if(timing("Copy timing summary","Includes CPU p95/p99/p99.9 and reports unavailable display/GPU/physical measurements explicitly. Use PresentMon for displayed intervals."))
+        ImGui::SetClipboardText(TimingReport().c_str());
+      if(timing("Clear timing window")) ClearTiming();
     }
   }
   if(status.latencyRestartPending) ui::Notice("Latency output saved. Restart the game to apply it.");

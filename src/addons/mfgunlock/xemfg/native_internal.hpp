@@ -80,6 +80,8 @@ struct Output {
   uint32_t rejectedTagLogBudget{};
   uint32_t sleepAssociationLogBudget{};
   uint32_t unsleptSimulationStarts{};
+  uint32_t sleepRejectLogBudget{},boundarySkipLogBudget{};
+  uint64_t rejectedExplicitSleeps{};
   bool explicitSleepObserved{};
   uint32_t markerRejectLogBudget[3]{};
   uint32_t presentFailureLogBudget{};
