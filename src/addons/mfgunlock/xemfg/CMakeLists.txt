@@ -143,7 +143,7 @@ add_executable(xemfg_async_log_tests "${CMAKE_SOURCE_DIR}/xemfg_async_log_tests.
 add_test(NAME xemfg_async_log COMMAND xemfg_async_log_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)
 add_test(NAME xemfg_cpu_diagnostics COMMAND xemfg_diagnostics_tests)
-add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_compatibility.cpp native_trace.cpp native_reframework.cpp dependency_manager.cpp
+add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_session.cpp native_compatibility.cpp native_trace.cpp native_reframework.cpp dependency_manager.cpp
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_draw.cpp"
   "${RENODX_SOURCE_DIR}/external/reshade/deps/imgui/imgui_tables.cpp"

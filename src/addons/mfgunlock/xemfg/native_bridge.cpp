@@ -58,6 +58,8 @@ bool Api::Load() {
   F(xellD3D12CreateContext,ll) F(xellSetSleepMode,ll) F(xellSleep,ll)
   F(xellAddMarkerData,ll) F(xellDestroyContext,ll)
 #undef F
+  xellSetLoggingCallback=reinterpret_cast<decltype(xellSetLoggingCallback)>(GetProcAddress(ll,"xellSetLoggingCallback"));
+  xellGetVersion=reinterpret_cast<decltype(xellGetVersion)>(GetProcAddress(ll,"xellGetVersion"));
   return true;
 }
 void Output::RetirePresentation(ComPtr<IDXGISwapChain4> publicProxy) {
@@ -201,6 +203,20 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   auto& a=s.api;
   if(a.xellD3D12CreateContext(o->device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
     Report("XeLL D3D12 context creation failed"); return E_NOINTERFACE;
+  }
+  {
+    // Warnings and errors explain refused sleeps and markers (for example
+    // "Sleep() called after markers"); debug level only with stall tracing.
+    xell_version_t version{};
+    const auto versionResult=a.xellGetVersion?a.xellGetVersion(&version):XELL_RESULT_ERROR_NOT_IMPLEMENTED;
+    const auto logging=a.xellSetLoggingCallback?a.xellSetLoggingCallback(o->ll,TraceEnabled()?XELL_LOGGING_LEVEL_DEBUG:XELL_LOGGING_LEVEL_WARNING,
+        [](const char* message,xell_logging_level_t level) {
+          static std::atomic<uint32_t> messages{0};
+          if(messages.fetch_add(1)<64) xess_mod::WriteLog("native_xell_log","\"level\":"+std::to_string(level)+",\"message\":\""+escape(message?message:"")+"\"");
+        }):XELL_RESULT_ERROR_NOT_IMPLEMENTED;
+    xess_mod::WriteLog("native_xell_context","\"output\":"+std::to_string(o->diagnosticOutput)
+        +",\"version\":\""+(versionResult==XELL_RESULT_SUCCESS?std::to_string(version.major)+'.'+std::to_string(version.minor)+'.'+std::to_string(version.patch):std::string("unavailable"))
+        +"\",\"logging_result\":"+std::to_string(logging));
   }
   xell_sleep_params_t sleep{}; sleep.bLowLatencyMode=s.latencyOutput==LatencyOutput::Reflex?0:1;
   if(a.xellSetSleepMode(o->ll,&sleep)!=XELL_RESULT_SUCCESS) return E_NOINTERFACE;

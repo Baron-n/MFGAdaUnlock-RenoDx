@@ -230,6 +230,10 @@ expected_sdk='2.12.0' if 'slInit' in boundaries else 'unobserved'
 diagnostics_verified['streamline_version']=(bool(versions) and versions[-1].get('sdk_version')==expected_sdk
     and versions[-1].get('sdk_magic') is (expected_sdk!='unobserved') and 'interposer' in versions[-1]
     and (not (d/'compatibility.json').is_file() or support.get('streamline',{}).get('sdk_version')==expected_sdk))
+# Every XeLL context reports its runtime version and a registered SDK log callback.
+xell=[e for e in events if e.get('event')=='native_xell_context']
+diagnostics_verified['xell']=(bool(xell) and all(e.get('logging_result')==0 and re.match(r'\d+\.\d+\.\d+',e.get('version','')) for e in xell)
+    and not any(e.get('event')=='native_xell_failure' for e in events))
 # The child checks each real API call, SDK status and output lifetime directly;
 # event counts are supporting evidence, not the acceptance oracle.
 (d/'result.json').write_text(json.dumps({'latency_output':args.latency_output,'runtime_layout':args.runtime_layout,'runtime_selection_verified':runtime_selection,'inputs':manifest,'exit':result.returncode,

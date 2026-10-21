@@ -34,6 +34,8 @@ struct Api {
   F(xefgSwapChainSetLoggingCallback)
   F(xellD3D12CreateContext) F(xellSetSleepMode) F(xellSleep)
   F(xellAddMarkerData) F(xellDestroyContext)
+  // Optional diagnostics; their absence never blocks an output.
+  F(xellSetLoggingCallback) F(xellGetVersion)
 #undef F
   bool Load();
 };

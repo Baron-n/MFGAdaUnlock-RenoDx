@@ -48,6 +48,12 @@ def analyze(lines, pid=None):
     }
     if boundary:
         result['boundary_sleep_result'] = boundary[-1].get('result')
+    xell = [e for e in events if e.get('event') == 'native_xell_failure']
+    if xell:
+        result['xell_failure'] = {'operation': xell[0].get('operation'), 'xell_result': xell[0].get('xell_result')}
+    messages = [e.get('message') for e in events if e.get('event') == 'native_xell_log' and e.get('level', 0) >= 3]
+    if messages:
+        result['xell_errors'] = sorted(set(messages))[:4]
     startup = [e for e in events if e.get('event') == 'startup_rejected']
     jitter = any('jittered-motion' in d for d in details) or any(
         e.get('event') == 'shader_decode_failure' and e.get('key') == JITTER_KEY for e in events) or any(

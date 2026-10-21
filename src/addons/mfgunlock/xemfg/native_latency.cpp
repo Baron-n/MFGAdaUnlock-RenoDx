@@ -5,6 +5,16 @@
 #include "../latency_marker_policy.hpp"
 #include <chrono>
 namespace mfgunlock::xemfg::native {
+namespace {
+// Bounded per process: the first refusals identify the contract that failed.
+void XellFailure(const char* operation,uint64_t output,uint32_t id,int result,uint32_t interval,bool lowLatency) {
+  static std::atomic<uint32_t> budget{};
+  if(budget.fetch_add(1)>=12) return;
+  xess_mod::WriteLog("native_xell_failure","\"operation\":\""+std::string(operation)+"\",\"output\":"+std::to_string(output)
+      +",\"id\":"+std::to_string(id)+",\"xell_result\":"+std::to_string(result)
+      +",\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false"));
+}
+}
 sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
     PFun_slReflexSleep* nativeSleep,const sl::FrameToken* token,std::optional<uint64_t> expectedEpoch) {
   auto& s=State(); auto& a=s.api;
@@ -22,7 +32,10 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
     const bool lowLatency=!reflex;
     if(!o->sleepConfigured || o->sleepInterval!=interval || o->sleepLowLatency!=lowLatency) {
       xell_sleep_params_t mode{}; mode.bLowLatencyMode=lowLatency; mode.minimumIntervalUs=interval;
-      if(a.xellSetSleepMode(o->ll,&mode)!=XELL_RESULT_SUCCESS) return sl::Result::eErrorReflexAPI;
+      if(const auto r=a.xellSetSleepMode(o->ll,&mode); r!=XELL_RESULT_SUCCESS) {
+        XellFailure("set_sleep_mode",o->diagnosticOutput,id,int(r),interval,lowLatency);
+        return sl::Result::eErrorReflexAPI;
+      }
       o->sleepConfigured=true; o->sleepInterval=interval; o->sleepLowLatency=lowLatency; ++s.latencyModeUpdates;
       xess_mod::WriteLog("native_sleep_mode","\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false"));
     }
@@ -51,7 +64,10 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
     if(epoch!=o->epoch || !found) return sl::Result::eErrorInvalidState;
     auto& frame=*found; frame.sleepInFlight=false;
     if(nativeResult!=sl::Result::eOk) { frame.failed=true; return nativeResult; }
-    if(result!=XELL_RESULT_SUCCESS) { frame.failed=true; return sl::Result::eErrorReflexAPI; }
+    if(result!=XELL_RESULT_SUCCESS) {
+      XellFailure("sleep",o->diagnosticOutput,id,int(result),o->sleepInterval,o->sleepLowLatency);
+      frame.failed=true; return sl::Result::eErrorReflexAPI;
+    }
     frame.sleeping=true; frame.sleepUs=sleepUs; frame.latencyOutput=route; ++s.latencySleeps;
     if(reflex) { ++s.reflexSleeps; if(s.gameReflexMode!=0) s.reflexOutputTick=GetTickCount64(); }
     else { ++s.xellSleeps; s.outputTick=GetTickCount64(); }
@@ -69,7 +85,8 @@ bool ForwardSourceMarker(const std::shared_ptr<Output>& o,uint32_t id,uint32_t m
       frame->firstFailure=kind==0?compatibility::Failure::SourceWait:kind==1?compatibility::Failure::MarkerOrder:compatibility::Failure::MarkerSdk;
       frame->rejectedMarker=marker;frame->markerSdkResult=result;frame->markerObservedBeforeSleep=frame->observedMarkers;
     }
-    if(TraceEnabled() && o->markerRejectLogBudget[kind]<8) {
+    // SDK refusals are always logged; ordering refusals need stall tracing.
+    if((kind==2 || TraceEnabled()) && o->markerRejectLogBudget[kind]<8) {
       ++o->markerRejectLogBudget[kind];
       xess_mod::WriteLog("native_marker_rejected","\"id\":"+std::to_string(id)
           +",\"marker\":"+std::to_string(marker)+",\"reason\":\""+reason+"\",\"sdk_result\":"+std::to_string(result)
