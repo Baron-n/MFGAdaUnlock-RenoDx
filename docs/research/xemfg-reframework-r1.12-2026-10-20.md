@@ -52,6 +52,8 @@ O fixture V1 também chama `MFGAXeNativeRefresh` em outra thread durante o hando
 
 Os resultados finais da suíte, os recibos por execução e o controle negativo com a R1.11 acompanham o pacote. Não converter esses testes em alegação de compatibilidade de gameplay.
 
+Resultado final: **124 casos, 121 passaram, três opcionais ignorados, zero falhas**, em 333,84 segundos reportados pelo CTest. Os opcionais foram `provider_identity`, `engineering_manifest` e `release_1_4_5_manifest`. Os nove casos novos passaram. No controle negativo, a R1.11 selada falhou com `blocked peer released the Intel context`; a R1.12 preservou o contexto e recusou recriação no mesmo cenário. Essa comparação valida o novo contrato de retirada, não uma correção visual ou de stalls em jogo.
+
 Na primeira rodada, executada no sandbox restrito, os cenários com o Streamline real completaram inferência e retirada dos contextos, mas o shutdown do NGX não retornou em 60 segundos. O dump do processo de teste tem candidatos de pilha em `NvTelemetryAPI64`/`_nvngx`; o scan bruto não substitui um unwind simbólico. Sem alterar essas DLLs nem os serviços do sistema, o teste de quatro recriações e encerramento passou para a R1.11 selada e para a candidata quando executado fora do sandbox. A rodada final usa essa condição normal de acesso ao driver/IPC. Não se atribui esse resultado a uma correção de telemetria no addon, nem se identifica qual restrição causou a diferença.
 
 ## Limites e verificação em jogo

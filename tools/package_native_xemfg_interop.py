@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,10 +58,14 @@ def main():
         'notices/Intel-SDK-LICENSE.txt':a.intel_sdk/'LICENSE.txt',
     }
     receipts={}
+    # CTest truncates successful JUnit stdout at 1024 bytes. Match the same
+    # case in the complete log so its final Evidence line is preserved.
+    complete=(build/'Testing/Temporary/LastTest.log').read_text(encoding='utf-8')
     for case in cases:
         name=case.attrib['name']
         if not name.startswith('xemfg_native_ref_'):continue
-        text=case.findtext('system-out','')
+        section=re.search(r'^\d+/\d+ Testing: '+re.escape(name)+r'\r?\n(.*?)(?=^\d+/\d+ Testing: |\Z)',complete,re.M|re.S)
+        text=section[1] if section else case.findtext('system-out','')
         directories=[Path(line.split('Evidence:',1)[1].strip()) for line in text.splitlines() if 'Evidence:' in line]
         if len(directories)!=1:raise ValueError('Missing final integration receipt '+name)
         directory=directories[0];result=json.loads((directory/'result.json').read_text())
