@@ -58,6 +58,14 @@
         "operation": "sleep",
         "xell_result": -4
       }
+    },
+    "plague-tale-1.4-trace.jsonl": {
+      "game": "Resonance: A Plague Tale Legacy (Xbox), StallTrace=1",
+      "addon_sha256": "plan item 1.4 build (local)",
+      "route": "streamline",
+      "fg_requested": true,
+      "interpolated": false,
+      "cause": "xell_frame_sequence_gap"
     }
   }
 }
