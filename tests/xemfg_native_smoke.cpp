@@ -526,6 +526,8 @@ int main(int argc,char** argv) {
     if(hotkeyTest) { ShowWindow(hwnd,SW_SHOWNORMAL); SetForegroundWindow(hwnd); }
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
+    // Plan 4.4: an HDR game presenting scRGB (FP16, linear BT.709).
+    if(flag("--scrgb-output")) desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
     if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
     if(flag("--parallel-factory")) {
@@ -554,20 +556,6 @@ int main(int argc,char** argv) {
       return 0;
     }
     ComPtr<IDXGISwapChain1> base;
-    if(legacyFactory && !retainNativeOutput) {
-      // An unsupported XeFG format must still return the original native
-      // output, without publishing an Intel context or a manual final overlay.
-      auto unsupported=desc; unsupported.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
-      Check(CreateTestSwapchain(true,factory.Get(),queue.Get(),hwnd,unsupported,nullptr,&base),"legacy native fallback");
-      DXGI_SWAP_CHAIN_DESC1 actual{}; Check(base->GetDesc1(&actual),"fallback description");
-      Require(actual.Format==unsupported.Format && actual.BufferCount==unsupported.BufferCount
-          && actual.Flags==unsupported.Flags,"legacy fallback changed native description");
-      mfgunlock::xemfg::native::Status fallback; bridgeStatus(&fallback,sizeof(fallback));
-      mfgunlock::xemfg::native::OverlayStatus overlay; overlayStatus(&overlay,sizeof(overlay));
-      Require(!fallback.output && overlay.created==0,"legacy fallback falsely published Intel/manual overlay");
-      base.Reset();
-      std::cout<<"Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay"<<std::endl;
-    }
     // Normal inference runs in the game's windowed mode. The bridge must
     // preserve it even if a legacy INI still requests forced borderless.
     DXGI_SWAP_CHAIN_FULLSCREEN_DESC exclusive{}; exclusive.Windowed=TRUE;
@@ -577,6 +565,24 @@ int main(int argc,char** argv) {
     Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
+    if(legacyFactory && !retainNativeOutput) {
+      // An integration the bridge cannot own (one output at a time; every
+      // flip-model format is supported since plan 4.4) must still return the
+      // original native output, with the caller's description.
+      mfgunlock::xemfg::native::OverlayStatus before; overlayStatus(&before,sizeof(before));
+      mfgunlock::xemfg::Status models; modelStatus(&models,sizeof(models)); const auto contexts=models.contexts;
+      const auto other=CreateWindowW(wc.lpszClassName,L"Second legacy output",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
+      Require(other,"second legacy window");
+      ComPtr<IDXGISwapChain1> native;
+      Check(CreateTestSwapchain(true,factory.Get(),queue.Get(),other,desc,nullptr,&native),"legacy native fallback");
+      DXGI_SWAP_CHAIN_DESC1 actual{}; Check(native->GetDesc1(&actual),"fallback description");
+      Require(actual.Format==desc.Format && actual.BufferCount==desc.BufferCount && actual.Flags==desc.Flags,
+          "legacy fallback changed native description");
+      mfgunlock::xemfg::native::OverlayStatus overlay; overlayStatus(&overlay,sizeof(overlay)); modelStatus(&models,sizeof(models));
+      Require(models.contexts==contexts && overlay.created==before.created,"legacy fallback falsely published Intel/manual overlay");
+      native.Reset(); DestroyWindow(other);
+      std::cout<<"Legacy native fallback: second output native and unchanged; no extra Intel context or manual final overlay"<<std::endl;
+    }
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
     if(retainNativeOutput) {
       Require(foreignNativeA && foreignNativeB,"observer did not retain native references");
@@ -728,7 +734,7 @@ int main(int argc,char** argv) {
     };
     auto depth=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
     auto motion=texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_FLAG_NONE);
-    auto color=texture(DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    auto color=texture(flag("--scrgb-output")?DXGI_FORMAT_R16G16B16A16_FLOAT:DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     auto upload=[&](ID3D12Resource* resource,bool isDepth) {
       auto d=resource->GetDesc(); D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{}; UINT rows{}; UINT64 rowBytes{},bytes{};
       device->GetCopyableFootprints(&d,0,1,0,&fp,&rows,&rowBytes,&bytes);
@@ -926,6 +932,18 @@ int main(int argc,char** argv) {
         controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+      if(flag("--scrgb-output") && frame==8) {
+        // The game keeps its FP16 view of the chain; XeFG runs on the HDR10 copy.
+        // FP16 HUD-less is filtered (not converted yet), so composition checks do not apply.
+        DXGI_SWAP_CHAIN_DESC1 seen{}; Check(chain->GetDesc1(&seen),"scRGB desc");
+        ComPtr<ID3D12Resource> buffer; Check(chain->GetBuffer(0,IID_PPV_ARGS(&buffer)),"scRGB buffer");
+        Require(seen.Format==DXGI_FORMAT_R16G16B16A16_FLOAT && buffer->GetDesc().Format==DXGI_FORMAT_R16G16B16A16_FLOAT,"game view is not FP16");
+        bridgeStatus(&bs,sizeof(bs));
+        Require(bs.output && bs.enabled,"scRGB output did not interpolate");
+        Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"scRGB flush");
+        std::cout<<"PASS: scRGB output converted to HDR10 and interpolated"<<std::endl;
+        return 0;
+      }
       if(flag("--convention-probe") && frame==8) {
         // First session of the learned-convention case (plan 3.3): the game's
         // constants disagree with the initialized output; nothing is overridden.

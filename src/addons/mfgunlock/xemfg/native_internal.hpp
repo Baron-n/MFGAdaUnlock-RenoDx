@@ -10,6 +10,7 @@
 #include "compatibility_policy.hpp"
 #include "native_session.hpp"
 #include "native_dejitter.hpp"
+#include "native_scrgb.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -21,6 +22,7 @@
 #include <atomic>
 #include <memory>
 #include <optional>
+#include <vector>
 
 namespace mfgunlock::xemfg::native {
 struct Api {
@@ -121,6 +123,12 @@ struct Output {
   uint32_t lastJitterId{}, dejitterLogBudget{};
   uint32_t backbufferLogBudget{};
   DejitterRegion backbufferRegion{}; // last region the game declared; HUD inputs match it
+  // Plan 4.4: the game's FP16 scRGB view over the Intel HDR10 proxy. The game
+  // renders into scrgbBuffers; Present encodes them into Intel's buffers.
+  bool scrgb{};
+  std::unique_ptr<ScrgbEncoder> scrgbEncoder;
+  std::vector<ComPtr<ID3D12Resource>> scrgbBuffers;
+  uint32_t scrgbLogBudget{};
   bool deviceLost{};
   bool presentationSupported{true};
   HRESULT presentFailure{S_OK},removedReason{S_OK};
@@ -186,6 +194,8 @@ void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe=nullptr,HRESU
 HRESULT CreateOutput(IDXGIFactory2*,IUnknown*,HWND,const DXGI_SWAP_CHAIN_DESC1*,
     const DXGI_SWAP_CHAIN_FULLSCREEN_DESC*,IDXGIOutput*,IDXGISwapChain1**);
 IDXGISwapChain1* Wrap(ComPtr<IDXGISwapChain4> chain,std::shared_ptr<Output> owner);
+// Plan 4.4: creates the encoder, the game's FP16 buffers and the HDR10 color space.
+bool PrepareScrgb(Output& o,IDXGISwapChain4* chain);
 // Token zero maps to one. Used consistently by inputs, markers and Present.
 inline uint32_t FrameId(uint32_t token) { return token==UINT32_MAX?0:token+1; }
 }

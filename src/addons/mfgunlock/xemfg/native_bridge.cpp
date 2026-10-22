@@ -141,11 +141,16 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeMFG is unavailable in exclusive fullscreen; the game's display mode was preserved");
     return E_NOINTERFACE;
   }
+  // FP16 is scRGB: XeFG supports HDR only as RGB10A2 HDR10, so the Intel chain
+  // is created in that format and the game keeps an FP16 view (plan 4.4).
+  const bool scrgb=desc->Format==DXGI_FORMAT_R16G16B16A16_FLOAT;
   if(desc->Format!=DXGI_FORMAT_R10G10B10A2_UNORM && desc->Format!=DXGI_FORMAT_R8G8B8A8_UNORM
-      && desc->Format!=DXGI_FORMAT_B8G8R8A8_UNORM) {
-    Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
+      && desc->Format!=DXGI_FORMAT_B8G8R8A8_UNORM && !scrgb) {
+    Report("XeMFG: unsupported swapchain format");
     return E_NOINTERFACE;
   }
+  DXGI_SWAP_CHAIN_DESC1 intelDesc=*desc;
+  if(scrgb) intelDesc.Format=ScrgbEncoder::kTargetFormat;
   // Capability/identity discovery is confined to output creation/retirement.
   // No REFramework is loaded and no per-frame probing or hashing is added.
   if(State().retirementFailed) {Report("XeMFG output retirement was not confirmed; restart required");return E_FAIL;}
@@ -192,7 +197,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   ComPtr<ID3D12Device> device;
   if(FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))
       || !single_overlay::native::Unwrap(device.Get(),o->device)) return E_NOINTERFACE;
-  o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height; o->format=desc->Format;
+  o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height; o->format=intelDesc.Format;
 #if !defined(XESS_INIT_PROBE)
   if(o->jitter) {
     // The portable program set has no d243=1 (jittered) reconstruction variant
@@ -254,7 +259,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   o->factory=FinalOutputFactory(transportFactory.Get());
   const auto code=[&] {
     RuntimeCall trace("xefg_init",o->diagnosticOutput);
-    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,desc,full,queue.Get(),o->factory.Get(),&init);
+    const auto r=a.xefgSwapChainD3D12InitFromSwapChainDesc(o->fg,hwnd,&intelDesc,full,queue.Get(),o->factory.Get(),&init);
     trace.Result(r);return r;
   }();
   if(code!=0) {
@@ -262,11 +267,12 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeFG swapchain initialization failed; inspect the XeMFG log"); return E_NOINTERFACE;
   }
   xess_mod::WriteLog("native_swapchain_init","\"output\":"+std::to_string(o->diagnosticOutput)+",\"init_flags\":"+std::to_string(init.initFlags)
-      +",\"motion_dejitter\":"+(o->dejitter?"true":"false"));
+      +",\"motion_dejitter\":"+(o->dejitter?"true":"false")+",\"scrgb\":"+(scrgb?"true":"false"));
   ComPtr<IDXGISwapChain4> chain;
   if(a.xefgSwapChainD3D12GetSwapChainPtr(o->fg,IID_PPV_ARGS(&chain))!=0) return E_FAIL;
   DXGI_SWAP_CHAIN_DESC1 actual{};
   if(SUCCEEDED(chain->GetDesc1(&actual))) { o->width=actual.Width; o->height=actual.Height; o->format=actual.Format; }
+  if(scrgb && !PrepareScrgb(*o,chain.Get())) { Report("XeMFG: the scRGB to HDR10 conversion could not be created; inspect the XeMFG log"); return E_NOINTERFACE; }
   using Debug=xefg_swapchain_result_t(*)(xefg_swapchain_handle_t,uint32_t,uint32_t,void*);
   if(auto debug=reinterpret_cast<Debug>(GetProcAddress(a.fgModule,"xefgSwapChainEnableDebugFeature")))
     debug(o->fg,0,0,nullptr);

@@ -52,10 +52,24 @@ add_custom_command(OUTPUT "${XEMFG_SHADER_HEADERS}/native_dejitter_cs.h"
   COMMAND "${XEMFG_FXC}" /nologo /T cs_5_0 /E main /O3 /Vn g_native_dejitter_cs
     /Fh "${XEMFG_SHADER_HEADERS}/native_dejitter_cs.h" "${CMAKE_CURRENT_SOURCE_DIR}/native_dejitter.hlsl"
   DEPENDS native_dejitter.hlsl VERBATIM)
-set(XEMFG_DEJITTER_SOURCES native_dejitter.cpp "${XEMFG_SHADER_HEADERS}/native_dejitter_cs.h")
+# Plan 4.4: scRGB to HDR10 encoder (fullscreen triangle).
+foreach(stage IN ITEMS vs ps)
+  string(TOUPPER "${stage}" XEMFG_STAGE)
+  set(XEMFG_ENTRY FullscreenVS)
+  if(stage STREQUAL "ps")
+    set(XEMFG_ENTRY EncodePS)
+  endif()
+  add_custom_command(OUTPUT "${XEMFG_SHADER_HEADERS}/native_scrgb_${stage}.h"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${XEMFG_SHADER_HEADERS}"
+    COMMAND "${XEMFG_FXC}" /nologo /T ${stage}_5_0 /E ${XEMFG_ENTRY} /O3 /Vn g_native_scrgb_${stage}
+      /Fh "${XEMFG_SHADER_HEADERS}/native_scrgb_${stage}.h" "${CMAKE_CURRENT_SOURCE_DIR}/native_scrgb.hlsl"
+    DEPENDS native_scrgb.hlsl VERBATIM)
+endforeach()
+set(XEMFG_GPU_PASS_SOURCES native_dejitter.cpp "${XEMFG_SHADER_HEADERS}/native_dejitter_cs.h"
+  native_scrgb.cpp "${XEMFG_SHADER_HEADERS}/native_scrgb_vs.h" "${XEMFG_SHADER_HEADERS}/native_scrgb_ps.h")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  ${XEMFG_DEJITTER_SOURCES}
+  ${XEMFG_GPU_PASS_SOURCES}
   native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
@@ -135,11 +149,17 @@ add_executable(xemfg_constants_tests "${CMAKE_SOURCE_DIR}/xemfg_constants_tests.
 target_compile_definitions(xemfg_constants_tests PRIVATE NOMINMAX)
 target_include_directories(xemfg_constants_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME xemfg_constants_translation COMMAND xemfg_constants_tests)
-add_executable(xemfg_dejitter_numeric "${CMAKE_SOURCE_DIR}/xemfg_dejitter_numeric.cpp" ${XEMFG_DEJITTER_SOURCES})
+add_executable(xemfg_dejitter_numeric "${CMAKE_SOURCE_DIR}/xemfg_dejitter_numeric.cpp" ${XEMFG_GPU_PASS_SOURCES})
 target_include_directories(xemfg_dejitter_numeric PRIVATE "${XEMFG_SHADER_HEADERS}")
 target_link_libraries(xemfg_dejitter_numeric PRIVATE d3d12 dxgi)
 add_test(NAME xemfg_dejitter_numeric COMMAND xemfg_dejitter_numeric)
 set_tests_properties(xemfg_dejitter_numeric PROPERTIES TIMEOUT 60)
+add_executable(xemfg_scrgb_numeric "${CMAKE_SOURCE_DIR}/xemfg_scrgb_numeric.cpp" ${XEMFG_GPU_PASS_SOURCES})
+target_include_directories(xemfg_scrgb_numeric PRIVATE "${XEMFG_SHADER_HEADERS}")
+target_link_libraries(xemfg_scrgb_numeric PRIVATE d3d12 dxgi)
+target_compile_definitions(xemfg_scrgb_numeric PRIVATE NOMINMAX)
+add_test(NAME xemfg_scrgb_numeric COMMAND xemfg_scrgb_numeric)
+set_tests_properties(xemfg_scrgb_numeric PROPERTIES TIMEOUT 60)
 add_executable(xemfg_trace_tests "${CMAKE_SOURCE_DIR}/xemfg_trace_tests.cpp" native_trace.cpp)
 target_compile_definitions(xemfg_trace_tests PRIVATE NOMINMAX)
 target_link_libraries(xemfg_trace_tests PRIVATE d3d12 dxgi)
@@ -215,7 +235,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
-    unsupported-dlssg learned-depth)
+    unsupported-dlssg learned-depth scrgb-output)
   set(XEMFG_BACKLOG menu-viewport-first)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
@@ -451,6 +471,6 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/xemfg_cuda" "${CMAKE_BINARY_DIR}/xemfg-cud
 
 # Targets that include native_internal.hpp own an Output, hence the pass.
 foreach(target IN ITEMS xemfg_latency_tests xemfg_ui_tests xemfg_panel_preview)
-  target_sources(${target} PRIVATE ${XEMFG_DEJITTER_SOURCES})
+  target_sources(${target} PRIVATE ${XEMFG_GPU_PASS_SOURCES})
   target_include_directories(${target} PRIVATE "${XEMFG_SHADER_HEADERS}")
 endforeach()

@@ -47,6 +47,7 @@ ap.add_argument('--reflex-next',action='store_true')
 ap.add_argument('--constants-v3',action='store_true')
 ap.add_argument('--tag-next',action='store_true')
 ap.add_argument('--backbuffer-subrect',action='store_true')
+ap.add_argument('--scrgb-output',action='store_true')
 ap.add_argument('--menu-viewport-first',action='store_true')
 ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
@@ -109,7 +110,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -126,6 +127,18 @@ if args.learned_depth:
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.scrgb_output:
+    # Plan 4.4: FP16 scRGB is converted to HDR10 PQ for the Intel proxy.
+    inits=[e for e in events if e.get('event')=='native_swapchain_init']
+    converted=[e for e in events if e.get('event')=='native_scrgb']
+    verified=('PASS: scRGB output converted to HDR10 and interpolated' in result.stdout
+        and any(e.get('event')=='native_scrgb_ready' and e.get('result')==0 for e in events)
+        and bool(inits) and all(e.get('scrgb') is True for e in inits)
+        and bool(converted) and all(e.get('ok') is True for e in converted))
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        scrgb_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.sl1_interposer:
     untouched='PASS: SL 1.x interposer left untouched' in result.stdout
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
@@ -193,7 +206,7 @@ persisted=(prefs.get('Latency','Input',fallback='')=='Reflex'
     and prefs.get('XeFG','UIComposition',fallback='')=='0'
     and prefs.get('XeFG','SdkDeadlines',fallback='')=='0')
 legacy_verified=(('Legacy factory: inference, resize, fallback and recreation verified' in result.stdout
-    and 'Legacy native fallback: FP16 unchanged; no Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
+    and 'Legacy native fallback: second output native and unchanged; no extra Intel context or manual final overlay' in result.stdout) if args.legacy_factory else None)
 markers_verified=('Historical markers: original calls preserved, real inference and duplicate forwarding verified' in result.stdout) if args.legacy_markers or args.mixed_markers or args.alias_markers else None
 tail_verified=(('Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved' in result.stdout)
     and any(e.get('event')=='native_sleep_association' and e.get('target')==e.get('source',0)+1 for e in events)) if args.tail_sleep else None
