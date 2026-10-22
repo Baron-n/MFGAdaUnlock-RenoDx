@@ -116,13 +116,27 @@ void StructRejected(const char* api,const sl::BaseStructure& value,const char* r
 void StructAdapted(const char* api,const sl::BaseStructure& value,const char* reason) { StructEvent("native_struct_adapted",api,value,reason); }
 
 // Observation only: separates "the game hid FG" from "FG inputs were refused".
-void FeatureQuery(const char* api,sl::Feature feature,sl::Result result) {
+void FeatureQuery(const char* api,sl::Feature feature,sl::Result result,sl::Result native) {
   static PatternBudget budget(32);
-  const auto key=std::string(api)+'/'+std::to_string(uint32_t(feature))+'/'+std::to_string(uint32_t(result));
+  const auto key=std::string(api)+'/'+std::to_string(uint32_t(feature))+'/'+std::to_string(uint32_t(result))+'/'+std::to_string(uint32_t(native));
   if(const auto count=budget.Admit(key))
     xess_mod::WriteLog("native_feature_query","\"api\":\""+std::string(api)+"\",\"feature\":"+std::to_string(uint32_t(feature))
-        +",\"result\":"+std::to_string(uint32_t(result))+",\"occurrence\":"+std::to_string(count));
+        +",\"result\":"+std::to_string(uint32_t(result))+",\"native_result\":"+std::to_string(uint32_t(native))
+        +",\"occurrence\":"+std::to_string(count));
 }
+// RTX 20/30 (plan 2.5): Streamline refuses DLSS-G on adapters without the
+// NVIDIA frame-generation hardware, so the game hides its FG option. With
+// XeMFG selected (this bridge only runs then), generation is Intel's: present
+// DLSS-G as supported for adapter/driver refusals only. Other refusals, such
+// as a missing plugin file or OS, are returned unchanged.
+bool XeMfgCoversRefusal(sl::Feature feature,sl::Result result) noexcept {
+  return feature==sl::kFeatureDLSS_G && (result==sl::Result::eErrorAdapterNotSupported
+      || result==sl::Result::eErrorNoSupportedAdapterFound || result==sl::Result::eErrorFeatureNotSupported
+      || result==sl::Result::eErrorDriverOutOfDate);
+}
+// Set when the DLSS-G plugin exposes no option/state functions; the bridge
+// then implements both itself and NVIDIA generation is absent by construction.
+std::atomic<bool> syntheticGeneration{};
 // Counts every tag call per buffer type and viewport, before any filtering.
 void CountTags(const std::shared_ptr<Output>& o,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count) {
   if(!o || !tags) return;
@@ -154,13 +168,15 @@ void SampleConstants(Output& o,const sl::Constants& c,uint32_t id,uint32_t issue
       +",\"orthographic\":"+b(c.orthographicProjection)+",\"reset\":"+b(c.reset));
 }
 sl::Result SupportedHook(sl::Feature feature,const sl::AdapterInfo& adapter) {
-  const auto result=isSupported(feature,adapter);
-  FeatureQuery("slIsFeatureSupported",feature,result);
+  const auto native=isSupported(feature,adapter);
+  const auto result=XeMfgCoversRefusal(feature,native)?sl::Result::eOk:native;
+  FeatureQuery("slIsFeatureSupported",feature,result,native);
   return result;
 }
 sl::Result RequirementsHook(sl::Feature feature,sl::FeatureRequirements& value) {
-  const auto result=requirements(feature,value);
-  FeatureQuery("slGetFeatureRequirements",feature,result);
+  const auto native=requirements(feature,value);
+  const auto result=XeMfgCoversRefusal(feature,native)?sl::Result::eOk:native;
+  FeatureQuery("slGetFeatureRequirements",feature,result,native);
   return result;
 }
 
@@ -405,7 +421,8 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   // A known V1 prefix is enough to turn NVIDIA generation off. Do not copy
   // the newer structure from an older/smaller allocation supplied by a game.
   sl::DLSSGOptions disabled; disabled.structVersion=1; disabled.mode=sl::DLSSGMode::eOff;
-  const auto r=setOptions(v,disabled);
+  // Without a DLSS-G plugin there is no NVIDIA generation to turn off.
+  const auto r=setOptions?setOptions(v,disabled):sl::Result::eOk;
   if(!SelectedViewport(uint32_t(v))) return r;
   s.nativeOff=r==sl::Result::eOk;
   s.requested=logicalLoaded && opts.mode!=sl::DLSSGMode::eOff;
@@ -417,7 +434,10 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   return r;
 }
 sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl::DLSSGOptions*) {
-  const auto r=getState(v,state,nullptr); if(r!=sl::Result::eOk) return r;
+  // Without a DLSS-G plugin the state starts from the game's default
+  // structure; the fields below are filled by the bridge.
+  if(!getState) state.status=sl::DLSSGStatus::eOk;
+  const auto r=getState?getState(v,state,nullptr):sl::Result::eOk; if(r!=sl::Result::eOk) return r;
   // Fields are written only up to the known V4 layout; newer ones stay as
   // Streamline filled them.
   if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1) {
@@ -633,6 +653,16 @@ sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
   if(stopping) return getFeature(feature,name,fn);
   std::lock_guard guard(discovery);
   const auto r=getFeature(feature,name,fn);
+  const bool generationName=name && (!strcmp(name,"slDLSSGSetOptions") || !strcmp(name,"slDLSSGGetState"));
+  if(!stopping && generationName && (r!=sl::Result::eOk || !fn) && feature==sl::kFeatureDLSS_G
+      && r!=sl::Result::eErrorNotInitialized) {
+    // No DLSS-G plugin functions (RTX 20/30): the bridge owns both entries.
+    syntheticGeneration=true;
+    static std::atomic<bool> logged{};
+    if(!logged.exchange(true)) xess_mod::WriteLog("native_synthetic_generation_api","\"native_result\":"+std::to_string(uint32_t(r)));
+    fn=!strcmp(name,"slDLSSGSetOptions")?reinterpret_cast<void*>(&OptionsHook):reinterpret_cast<void*>(&StateHook);
+    return sl::Result::eOk;
+  }
   if(!stopping && r==sl::Result::eOk && name && fn) {
     const bool generation=!strcmp(name,"slDLSSGSetOptions") || !strcmp(name,"slDLSSGGetState");
     if(generation) {
@@ -729,11 +759,16 @@ void DiscoverStreamline() {
     for(const auto& e:{Entry{sl::kFeatureDLSS_G,"slDLSSGSetOptions"},Entry{sl::kFeatureDLSS_G,"slDLSSGGetState"},
         Entry{sl::kFeatureReflex,"slReflexSetOptions"},Entry{sl::kFeatureReflex,"slReflexSleep"},
         Entry{sl::kFeaturePCL,"slPCLSetMarker"},Entry{sl::kFeatureReflex,"slReflexSetMarker"}}) {
-      void* fn{}; if(getFeature(e.feature,e.name,fn)==sl::Result::eOk && fn) Feature(e.name,fn);
+      void* fn{}; const auto found=getFeature(e.feature,e.name,fn);
+      if(found==sl::Result::eOk && fn) Feature(e.name,fn);
+      // An initialized SDK without DLSS-G functions (RTX 20/30): synthetic API.
+      else if(e.feature==sl::kFeatureDLSS_G) {
+        if(!syntheticGeneration.exchange(true)) xess_mod::WriteLog("native_synthetic_generation_api","\"native_result\":"+std::to_string(uint32_t(found)));
+      }
     }
   }
   auto& s=State(); std::lock_guard lock(s.lock);
-  s.status.streamline=setOptions && getState && reflexOptions && reflexSleep
+  s.status.streamline=((setOptions && getState) || syntheticGeneration) && reflexOptions && reflexSleep
       && (pclMarker || legacyMarker || evaluate) && setConstants && (setTag || setTagFrame);
   s.hookCapabilities=(uint32_t(setOptions && getState)<<0)|(uint32_t(reflexOptions && reflexSleep)<<1)
       |(uint32_t(pclMarker || legacyMarker)<<2)|(uint32_t(evaluate!=nullptr)<<3)

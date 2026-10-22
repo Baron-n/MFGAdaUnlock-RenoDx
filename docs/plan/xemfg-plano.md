@@ -38,7 +38,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | feito |
 | 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | feito |
 | 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer`, `late-interposer-hooked` | feito |
-| 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | pendente |
+| 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | feito (fixture; hardware real não testado) |
 
 ## Fase 3 — Convenções aprendidas e perfis (Etapas 1 e 5)
 
@@ -130,3 +130,10 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - Para identificar esse chamador, o fixture passou a guardar o endereço de retorno da consulta e o smoke o resolve para módulo e offset.
   - Limite: um jogo que chame `slInit` logo após o `LoadLibrary`, na mesma thread e sem nenhuma pausa, ainda pode chegar antes do worker; o fallback em `slSetD3DDevice` continua cobrindo esse caso.
   - Gate: 155 aprovados; replay: 8.
+- **2.5** Em GPU sem DLSS-G nativo (RTX 20/30), com o backend XeMFG:
+  - `slIsFeatureSupported`/`slGetFeatureRequirements` do DLSS-G devolvem `eOk` quando a recusa é de adaptador ou driver (`native_feature_query` registra `result` e `native_result`). Outras recusas passam intactas.
+  - Sem funções do plugin DLSS-G, a ponte fornece `slDLSSGSetOptions`/`slDLSSGGetState` próprios (`native_synthetic_generation_api`). Não há geração NVIDIA a desligar.
+  - O caso `unsupported-dlssg` (fixture com `eErrorAdapterNotSupported` e `eErrorFeatureMissing`) interpola.
+  - **Não validado em hardware RTX 20/30 real.** Também não validado: a rota CUDA/Tensor do port em Turing (7.5) e Ampere (8.6); o fatbin pode não conter essas arquiteturas e cair para os shaders. E o comportamento do plugin `sl.dlss_g` real nessas placas (se ele carrega e com quais retornos) só é conhecido em campo.
+  - Gate: 156 aprovados; replay: 8.
+  - **Fase 2 concluída.**

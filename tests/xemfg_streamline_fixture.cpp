@@ -34,8 +34,13 @@ EXPORT sl::Result slSetFeatureLoaded(sl::Feature feature,bool enabled) {
 }
 EXPORT uint32_t FixturePhysicalFgLoaded() { return fgLoaded; }
 static std::atomic<uint32_t> supportQueries{};
+// RTX 20/30-like adapter: Streamline refuses DLSS-G and its plugin exposes no
+// DLSS-G entry points; Reflex and PCL remain available.
+static std::atomic<bool> unsupportedDlssg{};
+EXPORT void FixtureUnsupportedDlssg(bool value) { unsupportedDlssg=value; }
 EXPORT sl::Result slIsFeatureSupported(sl::Feature feature,const sl::AdapterInfo&) {
   ++supportQueries;
+  if(feature==sl::kFeatureDLSS_G && unsupportedDlssg) return sl::Result::eErrorAdapterNotSupported;
   return feature==sl::kFeatureDLSS_G || feature==sl::kFeatureReflex || feature==sl::kFeaturePCL?sl::Result::eOk:sl::Result::eErrorFeatureNotSupported;
 }
 EXPORT sl::Result slGetFeatureRequirements(sl::Feature,sl::FeatureRequirements&) { ++supportQueries; return sl::Result::eOk; }
@@ -75,6 +80,7 @@ EXPORT uint32_t FixtureHistoricalMarkerCalls() { return historicalMarkers; }
 EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   if(!initialized) { ++queriesAfterShutdown; lateQueryCaller=uintptr_t(_ReturnAddress()); fn=nullptr; return sl::Result::eErrorNotInitialized; }
   ++calls;
+  if(unsupportedDlssg && !strncmp(name,"slDLSSG",7)) { fn=nullptr; return sl::Result::eErrorFeatureMissing; }
   if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
   else if(!strcmp(name,"slReflexSetOptions")) fn=reinterpret_cast<void*>(&Reflex);

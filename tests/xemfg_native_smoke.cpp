@@ -245,6 +245,7 @@ int main(int argc,char** argv) {
       ::Sleep(21000);
     }
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
+    if(flag("--unsupported-dlssg")) Import<void(*)(bool)>(fixture,"FixtureUnsupportedDlssg")(true); // Conformance (plan 2.5).
     if(flag("--late-interposer-hooked")) {
       // Conformance (plan 2.4): with no new device or swapchain event, the
       // lifecycle exports must be detoured shortly after the late load.
@@ -1004,7 +1005,8 @@ int main(int argc,char** argv) {
     fixtureState(2|16);
     Require(getState(viewport,live,nullptr)==sl::Result::eOk && uint32_t(live.status)==0,"disabled NVIDIA-only status leaked to Intel output");
     fixtureState(2|16|1|4|8);
-    Require(getState(viewport,live,nullptr)==sl::Result::eOk && uint32_t(live.status)==(1|4|8),"real format/resolution/input errors were masked");
+    // Without a DLSS-G plugin (RTX 20/30) there is no native status to preserve.
+    Require(getState(viewport,live,nullptr)==sl::Result::eOk && uint32_t(live.status)==(flag("--unsupported-dlssg")?0u:(1|4|8)),"real format/resolution/input errors were masked");
     fixtureState(0);
     live.structVersion=1; live.numFramesToGenerateMax=0xdeadbeef;
     Require(getState(viewport,live,nullptr)==sl::Result::eOk && live.numFramesToGenerateMax==0xdeadbeef,"V1 state extension overwritten");
