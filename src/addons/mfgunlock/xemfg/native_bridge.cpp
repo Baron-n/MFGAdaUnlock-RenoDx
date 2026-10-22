@@ -9,6 +9,7 @@
 #include "native_continuity.hpp"
 #include "native_reflex_profile.hpp"
 #include "backend_api.hpp"
+#include "native_ffx.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
@@ -410,7 +411,7 @@ static DWORD WINAPI DiscoverWorker(void*) {
   LogSession();
   LogProfiles();
   StartTraceWorker();
-  for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
+  for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); ffx::Discover(); Sleep(250); }
   return 0;
 }
 // Late interposer loads. The notification runs under the loader lock, so it
@@ -425,14 +426,17 @@ constexpr ULONG Loaded=1;
 HANDLE signal{};
 VOID CALLBACK Notify(ULONG reason,const NotificationData* data,PVOID) {
   if(reason!=Loaded || !data || !data->BaseDllName || !data->BaseDllName->Buffer) return;
-  constexpr wchar_t name[]=L"sl.interposer.dll";
+  // Streamline and the FidelityFX loader (plan 5.3) are both input providers.
   const auto* s=data->BaseDllName;
-  if(s->Length==sizeof(name)-sizeof(wchar_t) && _wcsnicmp(s->Buffer,name,s->Length/sizeof(wchar_t))==0) SetEvent(signal);
+  for(const wchar_t* name:{L"sl.interposer.dll",L"amd_fidelityfx_loader_dx12.dll",L"amd_fidelityfx_dx12.dll"}) {
+    const auto length=wcslen(name)*sizeof(wchar_t);
+    if(s->Length==length && _wcsnicmp(s->Buffer,name,length/sizeof(wchar_t))==0) SetEvent(signal);
+  }
 }
 DWORD WINAPI Worker(void*) {
   while(!StreamlineStopping() && WaitForSingleObject(signal,INFINITE)==WAIT_OBJECT_0) {
     xess_mod::WriteLog("native_interposer_loaded","\"phase\":\"notification\"");
-    DiscoverStreamline(); Install();
+    DiscoverStreamline(); Install(); ffx::Discover();
   }
   return 0;
 }

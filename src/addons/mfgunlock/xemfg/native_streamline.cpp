@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
 #include "native_frame_packet.hpp"
+#include "native_ffx.hpp"
 #include "native_constants.hpp"
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
@@ -615,6 +616,7 @@ sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
   return r;
 }
 } // namespace
+void LearnStatedConventions(std::optional<bool> invert,std::optional<bool> jitter) { LearnConventions(invert,jitter); }
 void LogTagHistogram(Output& o,const char* phase) {
   if(o.histogramLogged && !strcmp(phase,"steady")) return;
   if(!o.taggedCalls) return;
@@ -628,7 +630,11 @@ void LogTagHistogram(Output& o,const char* phase) {
       +"\",\"calls\":"+std::to_string(o.taggedCalls)+",\"types\":["+types+"],\"viewports\":["+viewports
       +"],\"other_viewport_calls\":"+std::to_string(o.otherViewportTags));
 }
-bool OwnsPresentationHooks() noexcept { return lifecycleApi && presentationIsolated && !stopping; }
+// Streamline isolated from presentation, or an output of the FidelityFX
+// adapter (plan 5.3), which has no Streamline presentation proxy at all.
+bool OwnsPresentationHooks() noexcept {
+  return (lifecycleApi && presentationIsolated && !stopping) || ffx::CreatingOutput() || ffx::Owns();
+}
 bool StreamlineStopping() noexcept { return stopping; }
 // The detours below use the Streamline 2.x ABI. A 1.x interposer exports
 // slSetTag/slSetConstants/slEvaluateFeature with other signatures (the

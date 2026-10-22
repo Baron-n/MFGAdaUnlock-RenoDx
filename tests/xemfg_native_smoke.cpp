@@ -13,6 +13,8 @@
 #include <sl_pcl.h>
 #include <xefg_swapchain_d3d12.h>
 #include <xell_d3d12.h>
+#include "../src/addons/mfgunlock/xemfg/vendor/ffx_api/ffx_framegeneration.h"
+#include "../src/addons/mfgunlock/xemfg/vendor/ffx_api/dx12/ffx_api_dx12.h"
 #include <deps/imgui/imgui.h>
 #include <reshade.hpp>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
@@ -532,6 +534,75 @@ int main(int argc,char** argv) {
     if(flag("--scrgb-output")) desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
     if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
+    if(flag("--ffx-adapter")) {
+      // Plan 5.3: an FSR 3.1 game with no Streamline calls. Its swapchain and
+      // generator contexts become the Intel output and prepare feeds it.
+      HMODULE provider=LoadLibraryW(L"amd_fidelityfx_loader_dx12.dll"); Require(provider,"FidelityFX loader fixture");
+      const auto get=[&](const char* name) { auto p=GetProcAddress(provider,name); Require(p,name); return p; };
+      const auto create=reinterpret_cast<PfnFfxCreateContext>(get("ffxCreateContext"));
+      const auto destroy=reinterpret_cast<PfnFfxDestroyContext>(get("ffxDestroyContext"));
+      const auto configure=reinterpret_cast<PfnFfxConfigure>(get("ffxConfigure"));
+      const auto dispatch=reinterpret_cast<PfnFfxDispatch>(get("ffxDispatch"));
+      const auto originals=reinterpret_cast<uint32_t(*)()>(get("FixtureFfxOriginalCalls"));
+      // The late-loaded provider is hooked by the addon's loader worker.
+      const auto* entry=reinterpret_cast<const uint8_t*>(create);
+      const auto deadline=GetTickCount64()+5000;
+      while(entry[0]!=0xE9 && GetTickCount64()<deadline) Sleep(10);
+      Require(entry[0]==0xE9,"FidelityFX provider was not hooked");
+      IDXGISwapChain4* replaced{}; ffxContext swapchainContext{};
+      ffxCreateContextDescFrameGenerationSwapChainForHwndDX12 swapDesc{};
+      swapDesc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_FOR_HWND_DX12;
+      swapDesc.swapchain=&replaced; swapDesc.hwnd=hwnd; swapDesc.desc=&desc; swapDesc.dxgiFactory=factory.Get(); swapDesc.gameQueue=queue.Get();
+      Require(create(&swapchainContext,&swapDesc.header,nullptr)==FFX_API_RETURN_OK && replaced,"FidelityFX swapchain context");
+      ComPtr<IDXGISwapChain4> chain; chain.Attach(replaced);
+      mfgunlock::xemfg::native::Status ready{}; bridgeStatus(&ready,sizeof(ready));
+      Require(ready.output,"FidelityFX swapchain is not the Intel output");
+      ffxCreateBackendDX12Desc backend{}; backend.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12; backend.device=device.Get();
+      ffxCreateContextDescFrameGeneration generationDesc{};
+      generationDesc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION; generationDesc.header.pNext=&backend.header;
+      generationDesc.flags=FFX_FRAMEGENERATION_ENABLE_DEPTH_INVERTED;
+      generationDesc.displaySize={desc.Width,desc.Height}; generationDesc.maxRenderSize={desc.Width,desc.Height};
+      generationDesc.backBufferFormat=FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
+      ffxContext generation{};
+      Require(create(&generation,&generationDesc.header,nullptr)==FFX_API_RETURN_OK && generation,"FidelityFX generation context");
+      ffxConfigureDescFrameGeneration config{};
+      config.header.type=FFX_API_CONFIGURE_DESC_TYPE_FRAMEGENERATION; config.swapChain=replaced; config.frameGenerationEnabled=true;
+      RealInputs inputs(device.Get(),queue.Get(),desc.Width,desc.Height);
+      unsigned readyFrames{};
+      for(uint64_t frame=0;frame<24;++frame) {
+        config.frameID=frame;
+        Require(configure(&generation,&config.header)==FFX_API_RETURN_OK,"FidelityFX configure");
+        ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"FidelityFX back buffer");
+        inputs.Render(back.Get()); back.Reset();
+        inputs.allocator->Reset(); inputs.list->Reset(inputs.allocator.Get(),nullptr);
+        ffxDispatchDescFrameGenerationPrepare prepare{};
+        prepare.header.type=FFX_API_DISPATCH_DESC_TYPE_FRAMEGENERATION_PREPARE; prepare.frameID=frame;
+        prepare.commandList=inputs.list.Get(); prepare.renderSize={desc.Width,desc.Height};
+        prepare.motionVectorScale={float(desc.Width),float(desc.Height)};
+        prepare.cameraNear=.1f; prepare.cameraFar=1000.f; prepare.cameraFovAngleVertical=1.f; prepare.viewSpaceToMetersFactor=1.f;
+        prepare.depth.resource=inputs.depth.Get(); prepare.depth.state=FFX_API_RESOURCE_STATE_COMPUTE_READ;
+        prepare.motionVectors.resource=inputs.motion.Get(); prepare.motionVectors.state=FFX_API_RESOURCE_STATE_COMPUTE_READ;
+        Require(dispatch(&generation,&prepare.header)==FFX_API_RETURN_OK,"FidelityFX prepare");
+        inputs.list->Close(); ID3D12CommandList* raw=inputs.list.Get(); queue->ExecuteCommandLists(1,&raw); inputs.Wait();
+        Check(chain->Present(0,0),"FidelityFX Present");
+        bridgeStatus(&ready,sizeof(ready)); if(ready.enabled) ++readyFrames;
+        MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+      }
+      std::cout<<"FidelityFX ready frames="<<readyFrames<<" provider calls="<<originals()<<" detail="<<ready.detail<<std::endl;
+      mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms));
+      std::cout<<"FidelityFX presented="<<ms.presented<<" generated="<<ms.generated<<" result="<<ms.result<<std::endl;
+      Require(readyFrames>=16,"FidelityFX frames did not reach ready");
+      // framesPresented counts the last source Present: itself plus the generated frames.
+      Require(ms.generated==multiplier-1 && ms.presented==multiplier && ms.result==0,"FidelityFX output presented no generated frames");
+      Require(originals()==0,"a replaced FidelityFX call reached the provider");
+      Require(destroy(&generation,nullptr)==FFX_API_RETURN_OK,"FidelityFX generation destroy");
+      chain.Reset();
+      Require(destroy(&swapchainContext,nullptr)==FFX_API_RETURN_OK,"FidelityFX swapchain destroy");
+      DestroyWindow(hwnd);
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"FidelityFX flush");
+      std::cout<<"PASS: FidelityFX frame generation adapter reached ready"<<std::endl;
+      return 0;
+    }
     if(flag("--native-game-xefg")) {
       // Plan 5.2: a game that owns its XeFG context directly (no Streamline).
       // Its own request (max 1, one generated frame) yields to the user's multiplier.

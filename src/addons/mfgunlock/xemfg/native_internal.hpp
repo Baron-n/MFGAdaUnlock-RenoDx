@@ -183,6 +183,8 @@ bool ApplyUiComposition(Output& output,bool hudlessAvailable);
 void Report(const char* reason);
 bool Hook(void* entry,void* replacement,void** trampoline);
 void DiscoverStreamline();
+// Plan 3.3 learning for conventions an input adapter observed (plan 5.3).
+void LearnStatedConventions(std::optional<bool> invert,std::optional<bool> jitter);
 std::string CompatibilityReport(const char* exportReason=nullptr);
 // Writes MFGAdaUnlock-XeMFG-compatibility.json beside the game. "shutdown"
 // runs synchronously; other reasons use a coalesced worker thread.
