@@ -398,6 +398,39 @@ static DWORD WINAPI DiscoverWorker(void*) {
   for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;
 }
+// Late interposer loads. The notification runs under the loader lock, so it
+// only signals; this thread installs the detours after the load completes
+// (DiscoverStreamline pins the module, which waits for the loader).
+namespace loader {
+struct UnicodeString { USHORT Length,MaximumLength; PWSTR Buffer; };
+struct NotificationData { ULONG Flags; const UnicodeString* FullDllName; const UnicodeString* BaseDllName; PVOID DllBase; ULONG SizeOfImage; };
+using Callback=VOID(CALLBACK*)(ULONG,const NotificationData*,PVOID);
+using Register=LONG(NTAPI*)(ULONG,Callback,PVOID,PVOID*);
+constexpr ULONG Loaded=1;
+HANDLE signal{};
+VOID CALLBACK Notify(ULONG reason,const NotificationData* data,PVOID) {
+  if(reason!=Loaded || !data || !data->BaseDllName || !data->BaseDllName->Buffer) return;
+  constexpr wchar_t name[]=L"sl.interposer.dll";
+  const auto* s=data->BaseDllName;
+  if(s->Length==sizeof(name)-sizeof(wchar_t) && _wcsnicmp(s->Buffer,name,s->Length/sizeof(wchar_t))==0) SetEvent(signal);
+}
+DWORD WINAPI Worker(void*) {
+  while(!StreamlineStopping() && WaitForSingleObject(signal,INFINITE)==WAIT_OBJECT_0) {
+    xess_mod::WriteLog("native_interposer_loaded","\"phase\":\"notification\"");
+    DiscoverStreamline(); Install();
+  }
+  return 0;
+}
+void Start() {
+  const auto ntdll=GetModuleHandleW(L"ntdll.dll");
+  const auto registerNotification=ntdll?reinterpret_cast<Register>(GetProcAddress(ntdll,"LdrRegisterDllNotification")):nullptr;
+  if(!registerNotification || !(signal=CreateEventW(nullptr,FALSE,FALSE,nullptr))) return;
+  PVOID cookie{};
+  if(registerNotification(0,&Notify,nullptr,&cookie)<0) return;
+  // The registration lives for the process, like the pinned addon.
+  if(auto thread=CreateThread(nullptr,0,&Worker,nullptr,0,nullptr)) CloseHandle(thread);
+}
+}
 void Attach(HMODULE module) {
   CaptureStreamlineStartup();
   auto& s=State(); auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
@@ -419,6 +452,7 @@ void Attach(HMODULE module) {
   GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
       reinterpret_cast<LPCWSTR>(module),&pin);
   if(auto worker=CreateThread(nullptr,0,&DiscoverWorker,nullptr,0,nullptr)) CloseHandle(worker);
+  loader::Start();
 }
 
 }

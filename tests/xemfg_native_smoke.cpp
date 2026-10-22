@@ -235,7 +235,7 @@ int main(int argc,char** argv) {
       Require(LoadLibraryW(L".\\_storage_\\libxess_fg.dll")!=nullptr,"preload stored XeFG");
       Require(LoadLibraryW(L".\\_storage_\\libxell.dll")!=nullptr,"preload stored XeLL");
     }
-    if(flag("--late-interposer")) {
+    if(flag("--late-interposer") || flag("--late-interposer-hooked")) {
       // Conformance: ReShade and the addon start first; the interposer maps
       // after the bounded 20 s discovery window has ended.
       auto module=LoadLibraryW(L".\\dxgi.dll"); Require(module,"early ReShade");
@@ -245,6 +245,21 @@ int main(int argc,char** argv) {
       ::Sleep(21000);
     }
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
+    if(flag("--late-interposer-hooked")) {
+      // Conformance (plan 2.4): with no new device or swapchain event, the
+      // lifecycle exports must be detoured shortly after the late load.
+      bool hooked{};
+      for(int i=0;i<50 && !hooked;++i) {
+        hooked=true;
+        for(const char* name:{"slInit","slSetD3DDevice"}) {
+          const auto* entry=reinterpret_cast<const uint8_t*>(GetProcAddress(fixture,name));
+          hooked=hooked && entry && (entry[0]==0xE9 || entry[0]==0xFF);
+        }
+        if(!hooked) ::Sleep(10);
+      }
+      Require(hooked,"late interposer lifecycle exports were not detoured after load");
+      std::cout<<"Late interposer: lifecycle detours installed after load"<<std::endl;
+    }
     if(flag("--sl1-interposer")) {
       // Conformance: a Streamline 1.x interposer exports slSetTag/slSetConstants
       // with older signatures. Input detours must not be installed on them.
@@ -1135,7 +1150,14 @@ int main(int argc,char** argv) {
     modelStatus(&ms,sizeof(ms)); Require(ms.contexts==0,"context/COM lifetime leaked");
     Require(Import<PFun_slShutdown*>(fixture,"slShutdown")()==sl::Result::eOk,"fixture shutdown");
     Sleep(300); // The bounded discovery worker must stay out of retired plugins.
-    Require(!Import<uint32_t(*)()>(fixture,"FixtureQueriesAfterShutdown")(),"discovery queried a retired Streamline session");
+    if(const auto late=Import<uint32_t(*)()>(fixture,"FixtureQueriesAfterShutdown")()) {
+      // Name the caller: module and offset of the post-shutdown query.
+      const auto caller=Import<uintptr_t(*)()>(fixture,"FixtureLateQueryCaller")(); HMODULE owner{}; wchar_t path[MAX_PATH]{};
+      GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,reinterpret_cast<LPCWSTR>(caller),&owner);
+      if(owner) GetModuleFileNameW(owner,path,MAX_PATH);
+      std::wcout<<L"Post-shutdown queries="<<late<<L" caller="<<std::filesystem::path(path).filename().wstring()<<L"+0x"<<std::hex<<(caller-uintptr_t(owner))<<std::dec<<std::endl;
+      Require(false,"discovery queried a retired Streamline session");
+    }
     std::cout<<"Presentation owner: Intel only; feature requests preserved; discovery stopped before shutdown"<<std::endl;
     Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"diagnostic log did not drain at test boundary");
     Require(!GetModuleHandleW(L"OptiScaler.dll") && !GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi"),"external companion loaded");

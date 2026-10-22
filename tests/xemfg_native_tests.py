@@ -52,6 +52,7 @@ ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
 ap.add_argument('--sleep-gap',action='store_true')
 ap.add_argument('--constant-sleep-token',action='store_true')
+ap.add_argument('--late-interposer-hooked',action='store_true')
 ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
@@ -106,7 +107,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']

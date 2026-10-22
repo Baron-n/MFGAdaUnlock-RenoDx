@@ -37,7 +37,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | feito |
 | 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | feito |
 | 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | feito |
-| 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer` | pendente |
+| 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer`, `late-interposer-hooked` | feito |
 | 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | pendente |
 
 ## Fase 3 — Convenções aprendidas e perfis (Etapas 1 e 5)
@@ -124,3 +124,9 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - Saíram do backlog: `reflex-v2`, `reflex-next`, `constants-v3`.
   - Gate: 153 aprovados; replay: 8.
 - **2.3** `StreamlineAbi2`: um interposer sem `slGetFeatureFunction` ou com versão de arquivo 0.x/1.x não recebe nenhum detour (nem de ciclo de vida nem de entrada) e gera `native_streamline_unsupported_abi` uma vez. O caso `sl1-interposer`, que derrubava o processo com 0xC0000005, saiu do backlog. Gate: 154 aprovados; replay: 8.
+- **2.4** `LdrRegisterDllNotification`: o callback (sob a loader lock) só sinaliza um evento; uma thread própria roda a descoberta e instala os hooks. Nada é feito dentro do loader.
+  - Caso novo `late-interposer-hooked`: com o interposer carregado depois da janela de 20 s e sem novo device, `slInit`/`slSetD3DDevice` precisam ter detour em até 500 ms. Falhava antes, agora passa; o `slInit` do jogo passa a ser observado (`boundary: slInit`).
+  - A descoberta precoce consultava `slGetFeatureFunction` antes do `slInit`. Agora as funções só são resolvidas quando `slIsFeatureLoaded` não responde `eErrorNotInitialized`; o resolver captura as consultas do próprio jogo.
+  - Para identificar esse chamador, o fixture passou a guardar o endereço de retorno da consulta e o smoke o resolve para módulo e offset.
+  - Limite: um jogo que chame `slInit` logo após o `LoadLibrary`, na mesma thread e sem nenhuma pausa, ainda pode chegar antes do worker; o fallback em `slSetD3DDevice` continua cobrindo esse caso.
+  - Gate: 155 aprovados; replay: 8.

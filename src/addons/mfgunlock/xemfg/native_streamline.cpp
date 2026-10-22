@@ -719,7 +719,12 @@ void DiscoverStreamline() {
   H("slSetConstants",ConstantsHook,setConstants)
   H("slEvaluateFeature",EvaluateHook,evaluate)
 #undef H
-  if(getFeature) {
+  // A late-load notification can discover the interposer before the game's
+  // slInit. Resolving functions then would query an uninitialized SDK; the
+  // resolver hook catches the game's own queries after slInit instead.
+  bool loadedState{};
+  const bool initialized=!getLoaded || getLoaded(sl::kFeatureDLSS_G,loadedState)!=sl::Result::eErrorNotInitialized;
+  if(getFeature && initialized) {
     struct Entry {sl::Feature feature; const char* name;};
     for(const auto& e:{Entry{sl::kFeatureDLSS_G,"slDLSSGSetOptions"},Entry{sl::kFeatureDLSS_G,"slDLSSGGetState"},
         Entry{sl::kFeatureReflex,"slReflexSetOptions"},Entry{sl::kFeatureReflex,"slReflexSleep"},

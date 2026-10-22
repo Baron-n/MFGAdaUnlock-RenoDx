@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstring>
 #include <windows.h>
+#include <intrin.h>
 static std::atomic<uint32_t> fgMode{}, reflexMode{}, calls{}, reflexLimit{}, reflexSleeps{},lastReflexSleepToken{};
 static std::atomic<bool> holdSleep{},sleepEntered{};
 static std::atomic<bool> rejectTags{};
@@ -14,6 +15,7 @@ static std::atomic<bool> holdConstants{},constantsEntered{};
 static std::atomic<uint32_t> fgStatus{};
 static std::atomic<bool> initialized{},fgLoaded{true},reflexLoaded{true};
 static std::atomic<uint32_t> queriesAfterShutdown{};
+static std::atomic<uintptr_t> lateQueryCaller{};
 static std::atomic<uint32_t> markerRoute{},modernMarkers{},historicalMarkers{};
 #define EXPORT extern "C" __declspec(dllexport) __declspec(noinline)
 EXPORT sl::Result slInit(const sl::Preferences&,uint64_t) {
@@ -39,6 +41,7 @@ EXPORT sl::Result slIsFeatureSupported(sl::Feature feature,const sl::AdapterInfo
 EXPORT sl::Result slGetFeatureRequirements(sl::Feature,sl::FeatureRequirements&) { ++supportQueries; return sl::Result::eOk; }
 EXPORT uint32_t FixtureSupportQueries() { return supportQueries; }
 EXPORT uint32_t FixtureQueriesAfterShutdown() { return queriesAfterShutdown; }
+EXPORT uintptr_t FixtureLateQueryCaller() { return lateQueryCaller; }
 static __declspec(noinline) sl::Result Options(const sl::ViewportHandle&,const sl::DLSSGOptions& o) {
   ++calls; fgMode=uint32_t(o.mode); return sl::Result::eOk;
 }
@@ -70,7 +73,7 @@ EXPORT void FixtureMarkerRoute(uint32_t mode) { markerRoute=mode; }
 EXPORT uint32_t FixtureMarkerCalls() { return modernMarkers; }
 EXPORT uint32_t FixtureHistoricalMarkerCalls() { return historicalMarkers; }
 EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
-  if(!initialized) { ++queriesAfterShutdown; fn=nullptr; return sl::Result::eErrorNotInitialized; }
+  if(!initialized) { ++queriesAfterShutdown; lateQueryCaller=uintptr_t(_ReturnAddress()); fn=nullptr; return sl::Result::eErrorNotInitialized; }
   ++calls;
   if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
