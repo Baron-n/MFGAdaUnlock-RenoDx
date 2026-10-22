@@ -51,6 +51,9 @@ ap.add_argument('--scrgb-output',action='store_true')
 ap.add_argument('--native-game-xefg',action='store_true')
 ap.add_argument('--ffx-adapter',action='store_true')
 ap.add_argument('--ffx-fixture',type=Path)
+ap.add_argument('--dlss-sr-adapter',action='store_true')
+ap.add_argument('--ngx-fixture',type=Path)
+ap.add_argument('--dlss-sr-default-off',action='store_true')
 ap.add_argument('--menu-viewport-first',action='store_true')
 ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
@@ -74,6 +77,11 @@ manifest={}
 for src,name in inputs.items():
     shutil.copy2(src,d/name)
     manifest[name]=hashlib.sha256((d/name).read_bytes()).hexdigest()
+if args.dlss_sr_adapter or args.dlss_sr_default_off:
+    if args.ngx_fixture is None: ap.error('--dlss-sr-adapter requires --ngx-fixture')
+    shutil.copy2(args.ngx_fixture,d/'_nvngx.dll')
+    manifest['_nvngx.dll']=hashlib.sha256(args.ngx_fixture.read_bytes()).hexdigest()
+    # Streamline is never loaded by this executable; the staged copy stays inert.
 if args.ffx_adapter:
     if args.ffx_fixture is None: ap.error('--ffx-adapter requires --ffx-fixture')
     shutil.copy2(args.ffx_fixture,d/'amd_fidelityfx_loader_dx12.dll')
@@ -103,6 +111,8 @@ if args.runtime_layout!='adjacent':
     +('InvertedDepth=0\n' if args.normal_depth else '')+f'[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
 if args.d3d_debug:
     with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Diagnostics]\nStallTrace=1\n')
+if args.dlss_sr_adapter:
+    with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Adapters]\nDlssSr=1\n')
 if args.retained_output:
     with (d/'MFGAdaUnlock.ini').open('a') as f: f.write('[Compatibility]\nRetainNativeOutput=1\n')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[INPUT]\nInputProcessing=2\nKeyOverlay=36,0,0,0\n[OVERLAY]\nTutorialProgress=4\n',encoding='ascii')
@@ -117,7 +127,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -134,6 +144,24 @@ if args.learned_depth:
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.dlss_sr_default_off:
+    verified=('PASS: DLSS-SR adapter is off by default' in result.stdout
+        and not any(e.get('event') in ('native_ngx_hooks','native_synthetic_frames') for e in events))
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        dlss_sr_default_off_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
+if args.dlss_sr_adapter:
+    # Plan 5.4: opt-in NGX DLSS-SR adapter; DLSS itself keeps running.
+    verified=('PASS: DLSS-SR adapter reached ready' in result.stdout
+        and any(e.get('event')=='native_ngx_hooks' and e.get('hooked') is True for e in events)
+        and any(e.get('event')=='native_ngx_feature' for e in events)
+        and any(e.get('event')=='native_synthetic_frames' and e.get('adapter')=='dlss_sr' for e in events)
+        and not any(e.get('event')=='native_synthetic_sleep' for e in events))
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        dlss_sr_adapter_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.ffx_adapter:
     # Plan 5.3: FSR 3.1 contexts replaced by the Intel output; markers synthesized.
     hooks=[e for e in events if e.get('event')=='native_ffx_hooks']
@@ -141,7 +169,7 @@ if args.ffx_adapter:
         and any(e.get('hooked') is True for e in hooks)
         and any(e.get('event')=='native_ffx_swapchain' and e.get('adapter') is True for e in events)
         and any(e.get('event')=='native_ffx_generation' for e in events)
-        and not any(e.get('event')=='native_ffx_sleep' for e in events))
+        and not any(e.get('event')=='native_synthetic_sleep' for e in events))
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         ffx_adapter_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)

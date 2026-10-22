@@ -10,6 +10,7 @@
 #include "native_reflex_profile.hpp"
 #include "backend_api.hpp"
 #include "native_ffx.hpp"
+#include "native_ngx.hpp"
 #include "../backend_selection.hpp"
 #include "vendor/third_party/minhook/include/MinHook.h"
 #include <deps/imgui/imgui.h>
@@ -288,6 +289,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
       +",\"error\":"+std::to_string(o->windowBindError));
   *result=Wrap(std::move(chain),o);
   { std::lock_guard guard(s.lock); s.output=o; s.status.output=true; s.status.xell=true; }
+  if(!ffx::CreatingOutput()) ngx::OutputCreated(o);
   Report("XeMFG swapchain ready; waiting for Streamline inputs and XeLL markers");
   return S_OK;
 }
@@ -411,7 +413,7 @@ static DWORD WINAPI DiscoverWorker(void*) {
   LogSession();
   LogProfiles();
   StartTraceWorker();
-  for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); ffx::Discover(); Sleep(250); }
+  for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); ffx::Discover(); ngx::Discover(); Sleep(250); }
   return 0;
 }
 // Late interposer loads. The notification runs under the loader lock, so it
@@ -428,7 +430,7 @@ VOID CALLBACK Notify(ULONG reason,const NotificationData* data,PVOID) {
   if(reason!=Loaded || !data || !data->BaseDllName || !data->BaseDllName->Buffer) return;
   // Streamline and the FidelityFX loader (plan 5.3) are both input providers.
   const auto* s=data->BaseDllName;
-  for(const wchar_t* name:{L"sl.interposer.dll",L"amd_fidelityfx_loader_dx12.dll",L"amd_fidelityfx_dx12.dll"}) {
+  for(const wchar_t* name:{L"sl.interposer.dll",L"amd_fidelityfx_loader_dx12.dll",L"amd_fidelityfx_dx12.dll",L"_nvngx.dll"}) {
     const auto length=wcslen(name)*sizeof(wchar_t);
     if(s->Length==length && _wcsnicmp(s->Buffer,name,length/sizeof(wchar_t))==0) SetEvent(signal);
   }
@@ -436,7 +438,7 @@ VOID CALLBACK Notify(ULONG reason,const NotificationData* data,PVOID) {
 DWORD WINAPI Worker(void*) {
   while(!StreamlineStopping() && WaitForSingleObject(signal,INFINITE)==WAIT_OBJECT_0) {
     xess_mod::WriteLog("native_interposer_loaded","\"phase\":\"notification\"");
-    DiscoverStreamline(); Install(); ffx::Discover();
+    DiscoverStreamline(); Install(); ffx::Discover(); ngx::Discover();
   }
   return 0;
 }

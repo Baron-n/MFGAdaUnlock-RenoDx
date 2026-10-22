@@ -70,12 +70,13 @@ set(XEMFG_GPU_PASS_SOURCES native_dejitter.cpp "${XEMFG_SHADER_HEADERS}/native_d
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
   ${XEMFG_GPU_PASS_SOURCES}
-  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_frame_packet.cpp native_ffx.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_frame_packet.cpp native_ffx.cpp native_synthetic.cpp native_ngx.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
 target_compile_options(mfgunlock_native_xemfg PRIVATE /bigobj /utf-8 $<$<COMPILE_LANGUAGE:CXX>:/Zi>)
 target_include_directories(mfgunlock_native_xemfg PRIVATE vendor
+  "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include"
   "${XEMFG_SHADER_HEADERS}"
   "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${XEMFG_INPUTS}" "${XEMFG_GENERATED}"
@@ -103,6 +104,13 @@ target_compile_definitions(xemfg_streamline_fixture PRIVATE SL_INTERPOSER)
 target_include_directories(xemfg_streamline_fixture PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include")
 target_link_options(xemfg_streamline_fixture PRIVATE /OPT:NOICF)
 set_target_properties(xemfg_streamline_fixture PROPERTIES OUTPUT_NAME "sl.interposer")
+add_library(xemfg_ngx_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_ngx_fixture.cpp")
+target_link_options(xemfg_ngx_fixture PRIVATE /OPT:NOICF)
+set_target_properties(xemfg_ngx_fixture PROPERTIES OUTPUT_NAME "_nvngx")
+add_executable(xemfg_ngx_smoke "${CMAKE_SOURCE_DIR}/xemfg_ngx_smoke.cpp")
+target_compile_definitions(xemfg_ngx_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_ngx_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/external/ngx-sdk/include")
+target_link_libraries(xemfg_ngx_smoke PRIVATE d3d12 dxgi user32)
 add_library(xemfg_ffx_fixture SHARED "${CMAKE_SOURCE_DIR}/xemfg_ffx_fixture.cpp")
 # Identical entry bodies must keep distinct addresses, as in a real loader.
 target_link_options(xemfg_ffx_fixture PRIVATE /OPT:NOICF)
@@ -239,7 +247,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
-    unsupported-dlssg learned-depth scrgb-output native-game-xefg ffx-adapter)
+    unsupported-dlssg learned-depth scrgb-output native-game-xefg ffx-adapter dlss-sr-adapter dlss-sr-default-off)
   set(XEMFG_BACKLOG menu-viewport-first)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
@@ -247,12 +255,18 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       set(fixture $<TARGET_FILE:xemfg_sl1_fixture>)
     endif()
     set(extra)
+    set(executable $<TARGET_FILE:xemfg_native_smoke>)
     if(case STREQUAL "ffx-adapter")
       set(extra --ffx-fixture $<TARGET_FILE:xemfg_ffx_fixture>)
     endif()
+    if(case STREQUAL "dlss-sr-adapter" OR case STREQUAL "dlss-sr-default-off")
+      # No Streamline in this process: a dedicated NGX game executable.
+      set(extra --ngx-fixture $<TARGET_FILE:xemfg_ngx_fixture>)
+      set(executable $<TARGET_FILE:xemfg_ngx_smoke>)
+    endif()
     add_test(NAME xemfg_conformance_${case} COMMAND "${Python3_EXECUTABLE}"
       "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
-      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe ${executable}
       --fixture ${fixture} --reshade "${XEMFG_OFFLINE_RESHADE}"
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --${case} ${extra})
     set_tests_properties(xemfg_conformance_${case} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)

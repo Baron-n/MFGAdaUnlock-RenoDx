@@ -2,7 +2,7 @@
 // Own COM identity outside the Intel proxy. ReShade wraps the inner DXGI
 // chain, so its effects/overlay run on the final output, after interpolation.
 #include "native_internal.hpp"
-#include "native_ffx.hpp"
+#include "native_synthetic.hpp"
 namespace mfgunlock::xemfg::native {
 constexpr DXGI_FORMAT kScrgbFormat=DXGI_FORMAT_R16G16B16A16_FLOAT;
 bool PrepareScrgb(Output& o,IDXGISwapChain4* chain) {
@@ -170,7 +170,7 @@ public:
     if(GpuTraceEnabled() && !owner->gpuTrace) owner->gpuTrace=std::make_unique<QueueTrace>(owner->device.Get(),owner->queue.Get(),owner->diagnosticOutput);
     if(owner->gpuTrace) owner->gpuTrace->Begin(frame);
     if(owner->scrgb) { RuntimeCall trace("scrgb_encode",owner->diagnosticOutput,frame);EncodeScrgb(); }
-    ffx::BeforeSourcePresent(owner);
+    synthetic::BeforeSourcePresent(owner);
     { RuntimeCall trace("prepare_present",owner->diagnosticOutput,frame);BeforePresent(owner); }
     probe.Prepared();
     HRESULT hr;
@@ -179,7 +179,7 @@ public:
     probe.Returned();
     if(owner->gpuTrace) owner->gpuTrace->End();
     { RuntimeCall trace("after_present",owner->diagnosticOutput,frame);AfterPresent(owner,&probe,hr); }
-    ffx::AfterSourcePresent(owner);
+    synthetic::AfterSourcePresent(owner);
     whole.Result(hr);return hr;
   }
   BOOL STDMETHODCALLTYPE IsTemporaryMonoSupported() override { return chain->IsTemporaryMonoSupported(); }

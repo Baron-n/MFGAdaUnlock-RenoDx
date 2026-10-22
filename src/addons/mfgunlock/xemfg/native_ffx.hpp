@@ -14,7 +14,4 @@ void Discover();
 bool CreatingOutput() noexcept;
 // The current output was created by this adapter and the adapter owns it.
 bool Owns() noexcept;
-// Synthesized boundaries around the source Present of an adapter output.
-void BeforeSourcePresent(const std::shared_ptr<Output>& o);
-void AfterSourcePresent(const std::shared_ptr<Output>& o);
 }

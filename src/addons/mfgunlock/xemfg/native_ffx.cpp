@@ -2,6 +2,7 @@
 #include "native_ffx.hpp"
 #include "native_frame_packet.hpp"
 #include "native_constants.hpp"
+#include "native_synthetic.hpp"
 #include "vendor/ffx_api/ffx_framegeneration.h"
 #include "vendor/ffx_api/dx12/ffx_api_dx12.h"
 #include "../backend_selection.hpp"
@@ -19,17 +20,13 @@ PfnFfxDispatch dispatch{};
 // FidelityFX runtime: the Intel output replaces its swapchain and generator.
 struct StandIn { const char* kind; };
 StandIn swapchainContext{"swapchain"},generationContext{"frame_generation"};
+// Lock order: this lock, then the synthetic-frame lock, then Output::io.
 std::recursive_mutex lock;
-std::weak_ptr<Output> owned;
-// Read during admission with Output::io held, so never behind `lock`.
-std::atomic<const Output*> ownedOutput{};
+const Output* ownedOutput{};
 thread_local bool creating{};
 uint32_t generationFlags{};
 FfxApiResource hudless{};
-// Synthesized frame ids: consecutive from 1, independent of the game's
-// frameID (which only signals history resets).
-uint32_t building{}, pendingPresent{};
-bool started{};
+// The game's frameID only signals history resets; frame ids are synthesized.
 uint64_t lastFfxFrame{UINT64_MAX};
 uint32_t prepareLogBudget{};
 
@@ -94,8 +91,9 @@ ffxReturnCode_t CreateSwapchain(ffxContext* context,ffxCreateContextDescHeader* 
   }
   {
     std::lock_guard guard(lock);
-    owned=o; ownedOutput=o.get(); started=false; building=pendingPresent=0; lastFfxFrame=UINT64_MAX; hudless={};
+    ownedOutput=o.get(); lastFfxFrame=UINT64_MAX; hudless={};
   }
+  synthetic::Begin(o,synthetic::kFidelityFx);
   *out=chain4.Detach(); *context=&swapchainContext;
   Log("native_ffx_swapchain","\"adapter\":true,\"output\":"+std::to_string(o->diagnosticOutput)+","+Kind(desc));
   return FFX_API_RETURN_OK;
@@ -127,7 +125,7 @@ ffxReturnCode_t DestroyHook(ffxContext* context,const ffxAllocationCallbacks* me
   if(!StandInContext(context)) return destroyContext(context,memory);
   std::lock_guard guard(lock);
   if(*context==&generationContext) State().requested=false;
-  else { owned.reset(); ownedOutput=nullptr; } // the swapchain follows the game's COM references
+  else { synthetic::End(ownedOutput); ownedOutput=nullptr; } // the swapchain follows the game's COM references
   Log("native_ffx_destroy","\"context\":\""+std::string(static_cast<StandIn*>(*context)->kind)+"\"");
   *context=nullptr;
   return FFX_API_RETURN_OK;
@@ -218,31 +216,16 @@ uint32_t Constants(const ffxDispatchDescFrameGenerationPrepare& p,uint32_t flags
       || data.motionVectorScaleX==0 || data.motionVectorScaleY==0) issues|=ConstantMotionScale;
   return issues;
 }
-// A synthesized frame starts with its XeLL wait and SIMULATION_START: right
-// after the previous Present, or at the first prepare of the session.
-void StartFrame(const std::shared_ptr<Output>& o,uint32_t id) {
-  const auto result=SleepSourceFrame(o,id);
-  ForwardSourceMarker(o,id,XELL_SIMULATION_START);
-  if(result!=sl::Result::eOk && prepareLogBudget<8) {
-    ++prepareLogBudget;
-    Log("native_ffx_sleep","\"id\":"+std::to_string(id)+",\"result\":"+std::to_string(uint32_t(result)));
-  }
-  started=true; building=id;
-}
 ffxReturnCode_t Prepare(const ffxDispatchDescFrameGenerationPrepare& p) {
-  auto o=owned.lock();
-  if(!o || o!=Active()) {
-    if(prepareLogBudget<4) { ++prepareLogBudget; Log("native_ffx_prepare_skipped","\"owned\":"+std::string(o?"true":"false")+",\"active\":"+(Active()?"true":"false")); }
+  const auto o=Active();
+  std::lock_guard guard(lock);
+  const auto id=o?synthetic::SubmitFrame(o,synthetic::kFidelityFx):0;
+  if(!id) {
+    if(prepareLogBudget<4) { ++prepareLogBudget; Log("native_ffx_prepare_skipped","\"active\":"+std::string(o?"true":"false")); }
     return FFX_API_RETURN_OK;
   }
-  std::lock_guard guard(lock);
   const bool continuous=lastFfxFrame!=UINT64_MAX && p.frameID==lastFfxFrame+1;
   lastFfxFrame=p.frameID;
-  if(!started) StartFrame(o,1);
-  const auto id=building;
-  ForwardSourceMarker(o,id,XELL_SIMULATION_END);
-  ForwardSourceMarker(o,id,XELL_RENDERSUBMIT_START);
-  State().recording=id;
   packet::Conventions learn;
   {
     std::lock_guard io(o->io);
@@ -267,7 +250,6 @@ ffxReturnCode_t Prepare(const ffxDispatchDescFrameGenerationPrepare& p) {
       }
     }
   }
-  pendingPresent=id;
   if(learn.depthInverted || learn.motionJittered) LearnStatedConventions(learn.depthInverted,learn.motionJittered);
   return FFX_API_RETURN_OK;
 }
@@ -281,26 +263,7 @@ ffxReturnCode_t DispatchHook(ffxContext* context,const ffxDispatchDescHeader* de
 }
 }
 bool CreatingOutput() noexcept { return creating; }
-bool Owns() noexcept {
-  const auto* o=ownedOutput.load();
-  return o && Active().get()==o;
-}
-void BeforeSourcePresent(const std::shared_ptr<Output>& o) {
-  std::lock_guard guard(lock);
-  if(owned.lock()!=o) return;
-  const auto id=pendingPresent;
-  State().presenting=id;
-  if(!id) return;
-  ForwardSourceMarker(o,id,XELL_RENDERSUBMIT_END);
-  ForwardSourceMarker(o,id,XELL_PRESENT_START);
-}
-void AfterSourcePresent(const std::shared_ptr<Output>& o) {
-  std::lock_guard guard(lock);
-  if(owned.lock()!=o || !pendingPresent) return;
-  const auto id=pendingPresent; pendingPresent=0;
-  ForwardSourceMarker(o,id,XELL_PRESENT_END);
-  StartFrame(o,id+1);
-}
+bool Owns() noexcept { return synthetic::Owner()==synthetic::kFidelityFx; }
 void Discover() {
   static std::mutex once; std::lock_guard guard(once);
   for(const wchar_t* name:{L"amd_fidelityfx_loader_dx12.dll",L"amd_fidelityfx_dx12.dll"}) {

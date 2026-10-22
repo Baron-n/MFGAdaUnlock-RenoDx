@@ -2,6 +2,8 @@
 #include "native_internal.hpp"
 #include "native_frame_packet.hpp"
 #include "native_ffx.hpp"
+#include "native_ngx.hpp"
+#include "native_synthetic.hpp"
 #include "native_constants.hpp"
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
@@ -630,10 +632,10 @@ void LogTagHistogram(Output& o,const char* phase) {
       +"\",\"calls\":"+std::to_string(o.taggedCalls)+",\"types\":["+types+"],\"viewports\":["+viewports
       +"],\"other_viewport_calls\":"+std::to_string(o.otherViewportTags));
 }
-// Streamline isolated from presentation, or an output of the FidelityFX
-// adapter (plan 5.3), which has no Streamline presentation proxy at all.
+// Streamline isolated from presentation, or an output of an adapter without
+// a Streamline presentation proxy: FidelityFX (5.3) or armed DLSS-SR (5.4).
 bool OwnsPresentationHooks() noexcept {
-  return (lifecycleApi && presentationIsolated && !stopping) || ffx::CreatingOutput() || ffx::Owns();
+  return (lifecycleApi && presentationIsolated && !stopping) || ffx::CreatingOutput() || synthetic::Owner() || ngx::Armed();
 }
 bool StreamlineStopping() noexcept { return stopping; }
 // The detours below use the Streamline 2.x ABI. A 1.x interposer exports
