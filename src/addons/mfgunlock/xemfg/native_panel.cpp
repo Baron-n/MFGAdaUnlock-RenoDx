@@ -57,7 +57,7 @@ void Draw() {
         const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
         const auto text=std::to_wstring(choice+2);
         multiplierSaveFailed=!config::Save(ini,{{L"XeFG",L"Multiplier",text.c_str()}});
-        if(!multiplierSaveFailed) s.multiplier=uint32_t(choice+2);
+        if(!multiplierSaveFailed) { s.multiplier=uint32_t(choice+2); SetGameMultiplier(s.multiplier); }
       }
     });
     if(multiplierSaveFailed) ui::Notice("Multiplier was not applied: settings could not be saved.");

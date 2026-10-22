@@ -112,7 +112,7 @@ target_compile_definitions(xemfg_observer_fixture PRIVATE NOMINMAX)
 set_target_properties(xemfg_observer_fixture PROPERTIES OUTPUT_NAME "gameoverlayrenderer64")
 add_executable(xemfg_native_smoke "${CMAKE_SOURCE_DIR}/xemfg_native_smoke.cpp")
 target_compile_definitions(xemfg_native_smoke PRIVATE NOMINMAX UNICODE _UNICODE)
-target_include_directories(xemfg_native_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include"
+target_include_directories(xemfg_native_smoke PRIVATE "${RENODX_SOURCE_DIR}/external/Streamline/include" "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${RENODX_SOURCE_DIR}/external/reshade"
   "${RENODX_SOURCE_DIR}/external/reshade/include")
 target_link_libraries(xemfg_native_smoke PRIVATE d3d12 dxgi dxguid user32 dbghelp)
@@ -235,7 +235,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
-    unsupported-dlssg learned-depth scrgb-output)
+    unsupported-dlssg learned-depth scrgb-output native-game-xefg)
   set(XEMFG_BACKLOG menu-viewport-first)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)

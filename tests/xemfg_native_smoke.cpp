@@ -11,6 +11,8 @@
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <sl_pcl.h>
+#include <xefg_swapchain_d3d12.h>
+#include <xell_d3d12.h>
 #include <deps/imgui/imgui.h>
 #include <reshade.hpp>
 #include "../src/addons/mfgunlock/xemfg/backend_api.hpp"
@@ -530,6 +532,40 @@ int main(int argc,char** argv) {
     if(flag("--scrgb-output")) desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
     if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
+    if(flag("--native-game-xefg")) {
+      // Plan 5.2: a game that owns its XeFG context directly (no Streamline).
+      // Its own request (max 1, one generated frame) yields to the user's multiplier.
+      HMODULE runtime=LoadLibraryW(L"libxess_fg.dll"); Require(runtime,"game XeFG runtime");
+      const auto api=[&](const char* name) { auto p=GetProcAddress(runtime,name); Require(p,name); return p; };
+      const auto create=reinterpret_cast<decltype(&xefgSwapChainD3D12CreateContext)>(api("xefgSwapChainD3D12CreateContext"));
+      const auto init=reinterpret_cast<decltype(&xefgSwapChainD3D12InitFromSwapChainDesc)>(api("xefgSwapChainD3D12InitFromSwapChainDesc"));
+      const auto count=reinterpret_cast<decltype(&xefgSwapChainSetNumInterpolatedFrames)>(api("xefgSwapChainSetNumInterpolatedFrames"));
+      const auto destroy=reinterpret_cast<decltype(&xefgSwapChainDestroy)>(api("xefgSwapChainDestroy"));
+      xefg_swapchain_handle_t handle{};
+      Require(create(device.Get(),&handle)==XEFG_SWAPCHAIN_RESULT_SUCCESS && handle,"game XeFG context");
+      // As the SDK requires, the game binds its own XeLL context before init.
+      HMODULE latencyRuntime=LoadLibraryW(L"libxell.dll"); Require(latencyRuntime,"game XeLL runtime");
+      const auto createLatency=reinterpret_cast<decltype(&xellD3D12CreateContext)>(GetProcAddress(latencyRuntime,"xellD3D12CreateContext"));
+      const auto destroyLatency=reinterpret_cast<decltype(&xellDestroyContext)>(GetProcAddress(latencyRuntime,"xellDestroyContext"));
+      const auto bindLatency=reinterpret_cast<decltype(&xefgSwapChainSetLatencyReduction)>(api("xefgSwapChainSetLatencyReduction"));
+      xell_context_handle_t latency{};
+      Require(createLatency && destroyLatency && createLatency(device.Get(),&latency)==XELL_RESULT_SUCCESS,"game XeLL context");
+      Require(bindLatency(handle,latency)==XEFG_SWAPCHAIN_RESULT_SUCCESS,"game latency binding");
+      xefg_swapchain_d3d12_init_params_t params{}; params.maxInterpolatedFrames=1;
+      params.initFlags=XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH; params.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
+      const auto initialized=init(handle,hwnd,&desc,nullptr,queue.Get(),factory.Get(),&params);
+      std::cout<<"Game XeFG init result="<<initialized<<std::endl;
+      Require(initialized==XEFG_SWAPCHAIN_RESULT_SUCCESS,"game XeFG init");
+      Require(count(handle,1)==XEFG_SWAPCHAIN_RESULT_SUCCESS,"game count request");
+      mfgunlock::xemfg::Status ms; modelStatus(&ms,sizeof(ms));
+      std::cout<<"Game XeFG generated="<<ms.generated<<" contexts="<<ms.contexts<<std::endl;
+      Require(ms.generated==multiplier-1,"game-owned XeFG kept the game's multiplier");
+      Require(ms.contexts==1,"a second Intel output was stacked under the game's XeFG");
+      destroy(handle); destroyLatency(latency); DestroyWindow(hwnd);
+      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"game XeFG flush");
+      std::cout<<"PASS: game-owned XeFG uses the user multiplier ("<<multiplier<<"x)"<<std::endl;
+      return 0;
+    }
     if(flag("--parallel-factory")) {
       const auto secondWindow=CreateWindowW(wc.lpszClassName,L"Independent factory caller",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
       Require(secondWindow,"second factory window");

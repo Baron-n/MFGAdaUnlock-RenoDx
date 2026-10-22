@@ -15,6 +15,7 @@
 namespace xess_mod { void WriteLog(const char*,const std::string&) noexcept {} }
 namespace mfgunlock::xemfg {
 bool ModelStartupFailed() noexcept { return false; }
+void SetGameMultiplier(uint32_t) noexcept {}
 LogStatus LogSnapshot() noexcept { return {}; }
 bool TryModelStatus(Status& out) { out.model=out.initialized=out.enabled=1; return true; }
 namespace native {

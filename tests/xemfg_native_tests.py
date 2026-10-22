@@ -48,6 +48,7 @@ ap.add_argument('--constants-v3',action='store_true')
 ap.add_argument('--tag-next',action='store_true')
 ap.add_argument('--backbuffer-subrect',action='store_true')
 ap.add_argument('--scrgb-output',action='store_true')
+ap.add_argument('--native-game-xefg',action='store_true')
 ap.add_argument('--menu-viewport-first',action='store_true')
 ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
@@ -110,7 +111,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -127,6 +128,16 @@ if args.learned_depth:
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
+if args.native_game_xefg:
+    # Plan 5.2: the game's own XeFG context receives the user's multiplier.
+    counts=[e for e in events if e.get('event')=='count_result' and e.get('owner')=='game']
+    verified=(f'PASS: game-owned XeFG uses the user multiplier ({args.multiplier}x)' in result.stdout
+        and bool(counts) and all(e.get('generated')==args.multiplier-1 and e.get('result')==0 for e in counts)
+        and any(e.get('event')=='game_multiplier_applied' for e in events))
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        game_multiplier_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.scrgb_output:
     # Plan 4.4: FP16 scRGB is converted to HDR10 PQ for the Intel proxy.
     inits=[e for e in events if e.get('event')=='native_swapchain_init']

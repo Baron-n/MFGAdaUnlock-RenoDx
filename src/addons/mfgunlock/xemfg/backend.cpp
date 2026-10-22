@@ -35,6 +35,11 @@ constexpr auto success = XEFG_SWAPCHAIN_RESULT_SUCCESS;
 constexpr auto unsupported = XEFG_SWAPCHAIN_RESULT_ERROR_UNSUPPORTED;
 HMODULE self{}, host{}, fg{}, ll{};
 std::recursive_mutex mutex;
+// Plan 5.2: the user's generated-frame count for game-owned contexts (0: the
+// game's own). A game context initializing on this thread creates its
+// swapchain through DXGI; the native bridge must not wrap that one.
+std::atomic<uint32_t> userGenerated{0};
+thread_local bool gameInitializing{};
 std::once_flag initializeOnce;
 std::once_flag startupOnce;
 HMODULE bootstrapFg{};
@@ -67,6 +72,7 @@ struct Context {
   bool initialized{}, enabled{};
   uint32_t generated{};
   bool hostOwner{};
+  uint32_t gameRequested{}; // the game's own count request (plan 5.2)
   uint64_t statusTick{};
   uint32_t statusSamples{};
   xefg_swapchain_present_status_t lastStatus{};
@@ -305,15 +311,37 @@ template<class Init> Result Initialize(Handle handle, Init call) {
   xess_mod::WriteLog("context_initialized","\"paced\":true,\"owner\":\""+std::string(c.hostOwner?"host":"game")+"\",\"generation\":"+std::to_string(c.generation));
   return r;
 }
+// A game-owned context is initialized with room for the user's multiplier.
+bool GameOwned(Handle h) {
+  std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
+  return it!=s.contexts.end() && !it->second.hostOwner;
+}
+const xefg_swapchain_d3d12_init_params_t* GameParams(Handle h,const xefg_swapchain_d3d12_init_params_t* p,
+    xefg_swapchain_d3d12_init_params_t& raised) {
+  if(!p || !userGenerated.load() || !GameOwned(h) || p->maxInterpolatedFrames>=5) return p;
+  raised=*p; raised.maxInterpolatedFrames=5;
+  xess_mod::WriteLog("game_init_raised","\"handle\":"+std::to_string(uintptr_t(h))+",\"requested_max\":"+std::to_string(p->maxInterpolatedFrames)+",\"max\":5");
+  return &raised;
+}
+struct GameInitScope {
+  bool previous{gameInitializing};
+  explicit GameInitScope(bool game) { if(game) gameInitializing=true; }
+  ~GameInitScope() { gameInitializing=previous; }
+};
 __declspec(noinline) Result InitChain(Handle h, ID3D12CommandQueue* q,const xefg_swapchain_d3d12_init_params_t* p) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainD3D12InitFromSwapChain(h,q,p);
-  return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChain(h,q,p); });
+  xefg_swapchain_d3d12_init_params_t raised; const auto* params=GameParams(h,p,raised);
+  GameInitScope scope(GameOwned(h));
+  return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChain(h,q,params); });
 }
 __declspec(noinline) Result InitDesc(Handle h,HWND w,const DXGI_SWAP_CHAIN_DESC1* d,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* f,
                 ID3D12CommandQueue* q,IDXGIFactory2* factory,const xefg_swapchain_d3d12_init_params_t* p) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainD3D12InitFromSwapChainDesc(h,w,d,f,q,factory,p);
-  return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChainDesc(h,w,d,f,q,factory,p); });
+  xefg_swapchain_d3d12_init_params_t raised; const auto* params=GameParams(h,p,raised);
+  GameInitScope scope(GameOwned(h));
+  return Initialize(h,[&] { return original_xefgSwapChainD3D12InitFromSwapChainDesc(h,w,d,f,q,factory,params); });
 }
+void ApplyGameCount(Handle h);
 __declspec(noinline) Result Enable(Handle h,uint32_t enabled) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainSetEnabled(h,enabled);
   std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
@@ -323,11 +351,21 @@ __declspec(noinline) Result Enable(Handle h,uint32_t enabled) {
     it->second.enabled=enabled!=0; s.status.enabled=enabled!=0;
     sdk_pacing::Reset(h,it->second.generation);
   }
+  if(r==success && enabled) ApplyGameCount(h);
   s.status.result=r; return r;
 }
 __declspec(noinline) Result Count(Handle h,uint32_t count) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainSetNumInterpolatedFrames(h,count);
   std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
+  // Plan 5.2: a game-owned context generates the user's count, not the game's.
+  if(it!=s.contexts.end() && !it->second.hostOwner && count) {
+    it->second.gameRequested=count;
+    if(const auto user=userGenerated.load()) {
+      xess_mod::WriteLog("game_multiplier_applied","\"handle\":"+std::to_string(uintptr_t(h))
+          +",\"requested\":"+std::to_string(count)+",\"applied\":"+std::to_string(user));
+      count=user;
+    }
+  }
   if (it!=s.contexts.end() && (!count || count>5 || !it->second.initialized)) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
   const auto r=original_xefgSwapChainSetNumInterpolatedFrames(h,count);
   if (r==success && it!=s.contexts.end()) {
@@ -337,7 +375,20 @@ __declspec(noinline) Result Count(Handle h,uint32_t count) {
   if(it!=s.contexts.end()) xess_mod::WriteLog("count_result","\"owner\":\""+std::string(it->second.hostOwner?"host":"game")+"\",\"generated\":"+std::to_string(count)+",\"result\":"+std::to_string(r));
   s.status.result=r; return r;
 }
+// A changed user multiplier reaches an enabled game context on the game's
+// own thread, at its next status or enable call.
+void ApplyGameCount(Handle h) {
+  std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
+  const auto user=userGenerated.load();
+  if(it==s.contexts.end() || it->second.hostOwner || !it->second.initialized || !it->second.gameRequested
+      || !user || it->second.generated==user) return;
+  const auto r=original_xefgSwapChainSetNumInterpolatedFrames(h,user);
+  if(r==success) { sdk_pacing::Reset(h,it->second.generation); it->second.generated=user; s.status.generated=user; }
+  xess_mod::WriteLog("game_multiplier_applied","\"handle\":"+std::to_string(uintptr_t(h))
+      +",\"requested\":"+std::to_string(it->second.gameRequested)+",\"applied\":"+std::to_string(user)+",\"live\":true,\"result\":"+std::to_string(r));
+}
 Result LastStatus(Handle h,xefg_swapchain_present_status_t* p) {
+  ApplyGameCount(h);
   const auto r=original_xefgSwapChainGetLastPresentStatus(h,p);
   if (r==success && p) {
     std::lock_guard lock(mutex); auto& s=Get();
@@ -584,6 +635,8 @@ bool NativeRuntimeModules(NativeRuntimePair& out) {
   out={fg,ll}; return fg && ll;
 }
 bool ModelStartupFailed() noexcept { return startupFailed.load(); }
+void SetGameMultiplier(uint32_t multiplier) noexcept { userGenerated=multiplier>=2 && multiplier<=6?multiplier-1:0; }
+bool GameContextInitializing() noexcept { return gameInitializing; }
 void AttachModel(HMODULE module) {
   self=module;
   InitializeASI();

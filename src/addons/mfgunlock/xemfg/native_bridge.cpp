@@ -314,6 +314,8 @@ HRESULT CreateFinalNativeOutput(IDXGIFactory2* factory,IUnknown* queue,HWND wind
 static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w,
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
+  // Plan 5.2: the game's own XeFG creating its swapchain; never stack a second Intel output.
+  if(GameContextInitializing()) return originalFactory(f,d,w,desc,full,restrictOutput,out);
   if(internalCreate) {
     const auto hr=originalFactory(f,d,w,desc,full,restrictOutput,out);
     if(SUCCEEDED(hr) && creatingWindow==w) WrapFinalOutput(d,w,out);
@@ -331,6 +333,7 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
 }
 static HRESULT STDMETHODCALLTYPE LegacyFactoryHook(IDXGIFactory* factory,IUnknown* source,
     DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** out) {
+  if(GameContextInitializing()) return originalLegacyFactory(factory,source,desc,out);
   if(internalCreate) {
     const auto hr=originalLegacyFactory(factory,source,desc,out);
     // Intel normally creates its native output through ForHwnd. Keep final
@@ -448,6 +451,7 @@ void Attach(HMODULE module) {
   auto& s=State(); auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
   ConfigureNativeContinuity(int(GetPrivateProfileIntW(L"Compatibility",L"RetainNativeOutput",UINT(-1),ini.c_str())));
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
+  SetGameMultiplier(s.multiplier);
   wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable)));
   // Conventions (plans 3.3/3.4): explicit INI > learned for this exact executable >
   // profiles.json > SDK default (inverted depth, unjittered motion). Identity is
