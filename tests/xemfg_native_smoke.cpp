@@ -608,6 +608,11 @@ int main(int argc,char** argv) {
       // Plan 5.2: a game that owns its XeFG context directly (no Streamline).
       // Its own request (max 1, one generated frame) yields to the user's multiplier.
       HMODULE runtime=LoadLibraryW(L"libxess_fg.dll"); Require(runtime,"game XeFG runtime");
+      // The backend hooks the runtime once its startup completes; a call before
+      // that would bypass it (a test-ordering race, not a game path).
+      { mfgunlock::xemfg::Status hooked{}; const auto deadline=GetTickCount64()+10000;
+        do { modelStatus(&hooked,sizeof(hooked)); if(hooked.hooks) break; Sleep(10); } while(GetTickCount64()<deadline);
+        Require(hooked.hooks,"XeFG hooks never became ready"); }
       const auto api=[&](const char* name) { auto p=GetProcAddress(runtime,name); Require(p,name); return p; };
       const auto create=reinterpret_cast<decltype(&xefgSwapChainD3D12CreateContext)>(api("xefgSwapChainD3D12CreateContext"));
       const auto init=reinterpret_cast<decltype(&xefgSwapChainD3D12InitFromSwapChainDesc)>(api("xefgSwapChainD3D12InitFromSwapChainDesc"));
