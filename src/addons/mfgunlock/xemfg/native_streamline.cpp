@@ -12,6 +12,7 @@
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
 #include <cmath>
+#include <array>
 #include <algorithm>
 #include <psapi.h>
 #include <intrin.h>
@@ -205,6 +206,37 @@ sl::Result RequirementsHook(sl::Feature feature,sl::FeatureRequirements& value) 
   return result;
 }
 
+// Viewport selection by complete inputs (user decision 2026-10-22, the
+// menu-viewport-first case): the first FG request selects a viewport, and the
+// selection moves at a Present boundary to another requesting viewport that
+// sends depth, motion and constants when the selected one never has, or has
+// sent none for 30 frames.
+struct ViewportInputs { uint32_t viewport{UINT32_MAX}, mode{}, lastInputs{}, lastConstants{}; bool complete{}; };
+std::mutex viewportLock;
+std::array<ViewportInputs,8> viewportInputs;
+ViewportInputs* ViewportSlot(uint32_t v) {
+  for(auto& slot:viewportInputs) if(slot.viewport==v) return &slot;
+  for(auto& slot:viewportInputs) if(slot.viewport==UINT32_MAX) { slot={}; slot.viewport=v; return &slot; }
+  return nullptr;
+}
+void ObserveViewport(uint32_t v,uint32_t id,bool inputs,bool constants) {
+  if(!id) return;
+  std::lock_guard guard(viewportLock);
+  auto* slot=ViewportSlot(v); if(!slot) return;
+  if(inputs) slot->lastInputs=id;
+  if(constants) slot->lastConstants=id;
+  if(slot->lastInputs && slot->lastConstants && (slot->lastInputs>slot->lastConstants?slot->lastInputs-slot->lastConstants:slot->lastConstants-slot->lastInputs)<=1)
+    slot->complete=true;
+}
+void RecordViewportTags(uint32_t v,uint32_t id,const sl::ResourceTag* tags,uint32_t count) {
+  if(!tags || count>64) return;
+  bool depth{},motion{};
+  for(uint32_t i=0;i<count;++i) {
+    if(!tags[i].resource || !tags[i].resource->native) continue;
+    depth|=tags[i].type==sl::kBufferTypeDepth; motion|=tags[i].type==sl::kBufferTypeMotionVectors;
+  }
+  if(depth && motion) ObserveViewport(v,id,true,false);
+}
 bool SelectViewport(uint32_t v) {
   auto& s=State(); auto expected=UINT32_MAX;
   s.viewport.compare_exchange_strong(expected,v);
@@ -243,6 +275,7 @@ packet::Lifecycle PacketLifecycle(sl::ResourceLifecycle lifecycle) {
   return packet::Lifecycle::Invalid;
 }
 void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
+  RecordViewportTags(viewport,id,tags,count);
   if(!id || !tags || count>64 || !SelectedViewport(viewport)) return;
   auto o=lease.output; if(!o) return;
   std::lock_guard lock(o->io);
@@ -312,6 +345,7 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
   if(r!=sl::Result::eOk) { RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetConstants");return r; }
   std::optional<bool> learnInvert,learnJitter;
+  ObserveViewport(uint32_t(v),id,false,true);
   if(SelectedViewport(uint32_t(v))) if(auto o=lease.output) {
     std::lock_guard lock(o->io);
     if(!lease.Current()) {++State().staleInputs;return r;}
@@ -355,7 +389,8 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   static std::atomic<uint32_t> optionBudget{};
   if(optionBudget.fetch_add(1)<16) xess_mod::WriteLog("native_viewport_options","\"viewport\":"+std::to_string(uint32_t(v))
       +",\"mode\":"+std::to_string(uint32_t(opts.mode))+",\"selected\":"+std::to_string(s.viewport.load()));
-  if(opts.mode!=sl::DLSSGMode::eOff && !SelectViewport(uint32_t(v))) return sl::Result::eErrorFeatureNotSupported;
+  { std::lock_guard guard(viewportLock); if(auto* slot=ViewportSlot(uint32_t(v))) slot->mode=uint32_t(opts.mode); }
+  if(opts.mode!=sl::DLSSGMode::eOff) SelectViewport(uint32_t(v)); // a second requester waits for the selection rule
   // A known V1 prefix is enough to turn NVIDIA generation off. Do not copy
   // the newer structure from an older/smaller allocation supplied by a game.
   sl::DLSSGOptions disabled; disabled.structVersion=1; disabled.mode=sl::DLSSGMode::eOff;
@@ -747,8 +782,31 @@ bool SubmitDejitteredMotion(Output& o,const Frame& f,uint32_t id) {
   }
   return ok;
 }
+// Called at the source Present boundary, before admission (see ViewportInputs).
+void ReselectViewport(Output& o,uint32_t id) {
+  auto& s=State();
+  std::lock_guard guard(viewportLock);
+  const auto selected=s.viewport.load();
+  if(selected==UINT32_MAX || !id) return;
+  const ViewportInputs* current{}; const ViewportInputs* candidate{};
+  for(const auto& slot:viewportInputs) {
+    if(slot.viewport==UINT32_MAX) continue;
+    if(slot.viewport==selected) { current=&slot; continue; }
+    if(slot.mode!=uint32_t(sl::DLSSGMode::eOff) && slot.complete && slot.lastInputs+2>=id && slot.lastConstants+2>=id) candidate=&slot;
+  }
+  if(!candidate) return;
+  const bool never=!current || !current->complete;
+  const bool quiet=current && current->complete && id>std::max(current->lastInputs,current->lastConstants)+30;
+  if(!never && !quiet) return;
+  s.viewport=candidate->viewport;
+  s.requested=logicalLoaded && candidate->mode!=uint32_t(sl::DLSSGMode::eOff);
+  o.viewportReset=true;
+  xess_mod::WriteLog("native_viewport_switch","\"from\":"+std::to_string(selected)+",\"to\":"+std::to_string(candidate->viewport)
+      +",\"id\":"+std::to_string(id)+",\"reason\":\""+(never?"selected_without_inputs":"selected_quiet")+"\"");
+}
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
+  ReselectViewport(*o,s.presenting.load());
   if(o->retired || !o->fg) return;
   if(o->deviceLost) {o->blocker=compatibility::Failure::DeviceLost;Report(compatibility::Description(o->blocker));return;}
   const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
@@ -786,7 +844,8 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
         && (f.resources&required)==required && f.motionWidth && f.motionHeight;
     if(ready) {
       auto data=f.data; data.motionVectorScaleX*=f.motionWidth; data.motionVectorScaleY*=f.motionHeight;
-      data.resetHistory|=o->last==0 || id!=o->last+1;
+      data.resetHistory|=o->last==0 || id!=o->last+1 || o->viewportReset;
+      o->viewportReset=false;
       xefg_swapchain_d3d12_resource_data_t region{}; region.type=XEFG_SWAPCHAIN_RES_BACKBUFFER;
       region.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT; region.resourceSize={o->width,o->height};
       if(f.backbufferRegion.width) {

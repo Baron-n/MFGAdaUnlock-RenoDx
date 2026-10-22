@@ -122,6 +122,7 @@ struct Output {
   DejitterVector lastJitter{};
   uint32_t lastJitterId{}, dejitterLogBudget{};
   uint32_t backbufferLogBudget{};
+  bool viewportReset{}; // the selected viewport changed; the next admitted frame resets history
   DejitterRegion backbufferRegion{}; // last region the game declared; HUD inputs match it
   // Plan 4.4: the game's FP16 scRGB view over the Intel HDR10 proxy. The game
   // renders into scrgbBuffers; Present encodes them into Intel's buffers.
