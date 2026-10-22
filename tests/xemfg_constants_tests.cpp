@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 #include "../src/addons/mfgunlock/xemfg/native_constants.hpp"
-#include "../src/addons/mfgunlock/xemfg/native_game_defaults.hpp"
 #include "../src/addons/mfgunlock/xemfg/native_input_policy.hpp"
 #include <limits>
 #include <iostream>
@@ -8,9 +7,6 @@
 using namespace mfgunlock::xemfg::native;
 void Require(bool b,const char* s){if(!b)throw std::runtime_error(s);}
 int main(){try {
-  Require(!DefaultInvertedDepth(L"C:/Games/tlou-ii.exe") && !DefaultInvertedDepth(L"AlanWake2.exe"),"observed conventional depth defaults");
-  Require(DefaultInvertedDepth(L"re9.exe") && DefaultInvertedDepth(L"unknown.exe"),"unobserved default changed");
-  Require(DefaultJitteredMotion(L"C:/Games/DS2.exe") && !DefaultJitteredMotion(L"unknown.exe"),"observed jitter convention default");
   sl::Resource resource;
   Require(ResourceHeaderSupported(resource),"known resource header rejected");
   resource.structVersion=0;Require(ResourceHeaderSupported(resource),"known GUID with empty version rejected");

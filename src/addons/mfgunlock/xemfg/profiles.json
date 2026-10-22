@@ -15,6 +15,30 @@
       "evidence": "RC3: overlay resolved slDLSSGSetOptions and turned the game's FG off; R1.11: overlay held references to the replaced swapchain"
     },
     {
+      "id": "tlou2-conventional-depth",
+      "match": {"executable": "tlou-ii.exe"},
+      "depth_inverted": false,
+      "evidence": "R1.11 Streamline constant receipts: depthInverted false (moved from native_game_defaults.hpp)"
+    },
+    {
+      "id": "tlou2-launcher-conventional-depth",
+      "match": {"executable": "tlou-ii-l.exe"},
+      "depth_inverted": false,
+      "evidence": "R1.11 Streamline constant receipts: depthInverted false (moved from native_game_defaults.hpp)"
+    },
+    {
+      "id": "alan-wake-2-conventional-depth",
+      "match": {"executable": "AlanWake2.exe"},
+      "depth_inverted": false,
+      "evidence": "R1.11 Streamline constant receipts: depthInverted false (moved from native_game_defaults.hpp)"
+    },
+    {
+      "id": "death-stranding-2-jittered-motion",
+      "match": {"executable": "DS2.exe"},
+      "motion_jittered": true,
+      "evidence": "RC3 session PID 24404: valid Constants V2, inverted depth, motionVectorsJittered true (moved from native_game_defaults.hpp)"
+    },
+    {
       "id": "reframework-xefg-monitor",
       "match": {},
       "known_bad_reframework_sha256": ["70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac"],

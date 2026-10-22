@@ -7,7 +7,6 @@
 #include "native_overlay.hpp"
 #include "native_factory.hpp"
 #include "native_continuity.hpp"
-#include "native_game_defaults.hpp"
 #include "native_reflex_profile.hpp"
 #include "backend_api.hpp"
 #include "../backend_selection.hpp"
@@ -439,8 +438,9 @@ void Attach(HMODULE module) {
   ConfigureNativeContinuity(int(GetPrivateProfileIntW(L"Compatibility",L"RetainNativeOutput",UINT(-1),ini.c_str())));
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
   wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable)));
-  // Conventions (plan 3.3): explicit INI > learned for this exact executable >
-  // default. Identity is name and size; a game update relearns once.
+  // Conventions (plans 3.3/3.4): explicit INI > learned for this exact executable >
+  // profiles.json > SDK default (inverted depth, unjittered motion). Identity is
+  // name and size; a game update relearns once.
   WIN32_FILE_ATTRIBUTE_DATA attributes{};
   GetFileAttributesExW(executable,GetFileExInfoStandard,&attributes);
   s.executableIdentity=std::filesystem::path(executable).filename().wstring()+L"|"
@@ -455,8 +455,9 @@ void Attach(HMODULE module) {
     const int learned=learnedHere?int(GetPrivateProfileIntW(L"XeFG.Learned",key,-1,ini.c_str())):-1;
     return learned>=0?learned!=0:fallback;
   };
-  s.invert=convention(L"InvertedDepth",DefaultInvertedDepth(executable),s.explicitInvert);
-  s.jitter=convention(L"JitteredMotion",DefaultJitteredMotion(executable),s.explicitJitter);
+  const auto profile=CurrentPolicy();
+  s.invert=convention(L"InvertedDepth",profile.depthInverted.value_or(true),s.explicitInvert);
+  s.jitter=convention(L"JitteredMotion",profile.motionJittered.value_or(false),s.explicitJitter);
   LoadControls();
   reframework::SetKnownMonitorIssues(CurrentPolicy().knownBadReframework);
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);

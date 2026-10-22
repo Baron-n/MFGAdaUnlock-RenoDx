@@ -21,6 +21,11 @@ int main(int argc,char** argv) {
     game.modules={L"GameOverlayRenderer64.dll"};
     policy=Resolve(embedded,game);
     Require(policy.retainNativeOutput.value_or(false) && Contains(policy.observerModules,L"gameoverlayrenderer64.dll"),"overlay rule not matched case-insensitively");
+    // Observed conventions moved from code (plan 3.4); unknown games rely on learning.
+    Require(Resolve(embedded,Context{L"tlou-ii.exe",{}}).depthInverted==false && Resolve(embedded,Context{L"TLOU-II-L.EXE",{}}).depthInverted==false
+        && Resolve(embedded,Context{L"AlanWake2.exe",{}}).depthInverted==false,"observed conventional depth profiles");
+    Require(Resolve(embedded,Context{L"DS2.exe",{}}).motionJittered==true,"observed jitter profile");
+    Require(!Resolve(embedded,Context{L"re9.exe",{}}).depthInverted && !Resolve(embedded,Context{L"re9.exe",{}}).motionJittered,"unobserved game received a convention");
     // The game-folder file overrides scalar fields and extends lists.
     Rules local;
     Require(Parse(R"({"schema":1,"profiles":[{"id":"local","match":{"executable":"game.exe"},"evidence":"user",
