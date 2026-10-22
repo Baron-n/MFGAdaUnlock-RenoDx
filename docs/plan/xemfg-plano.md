@@ -44,7 +44,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Critério de saída | Teste | Status |
 |---|---|---|---|---|
-| 3.1 | Carregador de `profiles.json` (recurso embutido + `MFGAdaUnlock.profiles.json` na pasta do jogo) e log do perfil aplicado | Perfis só ajustam política; JSON inválido é ignorado com log | `xemfg_profiles` (unit) | pendente |
+| 3.1 | Carregador de `profiles.json` (recurso embutido + `MFGAdaUnlock.profiles.json` na pasta do jogo) e log do perfil aplicado | Perfis só ajustam política; JSON inválido é ignorado com log | `xemfg_profiles` (unit) | feito |
 | 3.2 | Mover para perfis: observador Steam, retenção da saída nativa, REFramework, conflitos de plugin | Comportamento idêntico ao RC5 com o perfil padrão; sem nomes de módulo no código | testes de observador/continuidade/REFramework existentes | pendente |
 | 3.3 | Convenção depth/jitter aprendida: divergência ⇒ recriação da saída com as flags corretas; persistência em `[XeFG.Learned]` por hash do executável | Primeira sessão converge após uma recriação; a seguinte já inicia certa; overrides manuais têm prioridade | novo cenário `learned-depth` | pendente |
 | 3.4 | Remover `native_game_defaults.hpp` | TLOU2/AW2/DS2 cobertos por aprendizado ou perfil com evidência | `xemfg_native_*` + replay | pendente |
@@ -137,3 +137,4 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - **Não validado em hardware RTX 20/30 real.** Também não validado: a rota CUDA/Tensor do port em Turing (7.5) e Ampere (8.6); o fatbin pode não conter essas arquiteturas e cair para os shaders. E o comportamento do plugin `sl.dlss_g` real nessas placas (se ele carrega e com quais retornos) só é conhecido em campo.
   - Gate: 156 aprovados; replay: 8.
   - **Fase 2 concluída.**
+- **3.1** `profiles.hpp` (parse/resolve puros), `profiles.json` embutido (RCDATA 9012) e `MFGAdaUnlock.profiles.json` opcional na pasta do jogo, aplicado depois. Uma regra casa por executável e/ou módulo carregado e precisa ter `id` e `evidence`; chave desconhecida, schema diferente ou JSON inválido recusam o arquivo inteiro. `native_profiles` registra regras, aplicadas e erro do arquivo local. Regras embutidas: plugins conflitantes, Steam overlay, REFramework com monitor defeituoso. Nesta etapa os perfis só são lidos e registrados; quem os consome é o 3.2. Gate: 157 aprovados; replay: 8.

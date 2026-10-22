@@ -280,6 +280,10 @@ diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock
     and not re.search(r'[A-Za-z]:[\\/]',json.dumps(exported_report)))
 if args.backbuffer_subrect:
     diagnostics_verified['backbuffer_region']=any(e.get('event')=='native_backbuffer_region' and e.get('width')==320 and e.get('height')==180 for e in events)
+# Shipped profiles load once per session, with no override error.
+loaded=[e for e in events if e.get('event')=='native_profiles']
+diagnostics_verified['profiles']=len(loaded)==1 and loaded[0].get('rules',0)>=3 and loaded[0].get('override_error')=='' \
+    and 'conflicting-frame-generation-plugins' in loaded[0].get('applied',[])
 if args.unsupported_dlssg:
     # RTX 20/30: the game must see DLSS-G as supported while XeMFG generates.
     diagnostics_verified['dlssg_support_presented']=any(e.get('event')=='native_feature_query' and e.get('feature')==1000

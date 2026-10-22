@@ -3,6 +3,7 @@
 #include "native_internal.hpp"
 #include "native_session.hpp"
 #include "log_budget.hpp"
+#include "native_profiles.hpp"
 #include "native_overlay.hpp"
 #include "native_factory.hpp"
 #include "native_continuity.hpp"
@@ -394,6 +395,7 @@ static void OutputPresent(reshade::api::command_queue*,reshade::api::swapchain*,
 }
 static DWORD WINAPI DiscoverWorker(void*) {
   LogSession();
+  LogProfiles();
   StartTraceWorker();
   for(unsigned i=0;i<80 && !StreamlineStopping();++i) { DiscoverStreamline(); Install(); Sleep(250); }
   return 0;

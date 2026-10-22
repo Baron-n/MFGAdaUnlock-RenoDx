@@ -43,7 +43,7 @@ set_target_properties(mfgunlock_dual_backend PROPERTIES PREFIX "" SUFFIX ".addon
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
-  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)
@@ -142,6 +142,10 @@ target_compile_definitions(xemfg_frame_store_tests PRIVATE NOMINMAX UNICODE _UNI
 target_include_directories(xemfg_frame_store_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${XEMFG_SDK_ROOT}/inc/xell"
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME xemfg_frame_store COMMAND xemfg_frame_store_tests)
+add_executable(xemfg_profiles_tests "${CMAKE_SOURCE_DIR}/xemfg_profiles_tests.cpp")
+target_compile_definitions(xemfg_profiles_tests PRIVATE NOMINMAX UNICODE _UNICODE)
+target_include_directories(xemfg_profiles_tests PRIVATE "${RENODX_SOURCE_DIR}/external/json/include")
+add_test(NAME xemfg_profiles COMMAND xemfg_profiles_tests "${CMAKE_CURRENT_SOURCE_DIR}/profiles.json")
 add_executable(xemfg_async_log_tests "${CMAKE_SOURCE_DIR}/xemfg_async_log_tests.cpp")
 add_test(NAME xemfg_async_log COMMAND xemfg_async_log_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)

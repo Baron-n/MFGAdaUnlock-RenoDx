@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": "conflicting-frame-generation-plugins",
+      "match": {},
+      "conflicting_modules": ["MFGUnlocker.asi", "MFGAdaUnlock.XeMFG.asi"],
+      "evidence": "Two bridges patching the same Intel runtime; backend.cpp startup refusal since X1.3/R1.9"
+    },
+    {
+      "id": "steam-overlay",
+      "match": {"module": "gameoverlayrenderer64.dll"},
+      "observer_modules": ["gameoverlayrenderer64.dll"],
+      "retain_native_output": true,
+      "evidence": "RC3: overlay resolved slDLSSGSetOptions and turned the game's FG off; R1.11: overlay held references to the replaced swapchain"
+    },
+    {
+      "id": "reframework-xefg-monitor",
+      "match": {},
+      "known_bad_reframework_sha256": ["70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac"],
+      "evidence": "R1.12: this REFramework build repeatedly reinstalled its XeFG hooks (Requiem/Onimusha stalls)"
+    }
+  ]
+}
