@@ -75,6 +75,16 @@
       "interpolated": true,
       "blocker": "ready",
       "cause": "interpolating"
+    },
+    "death-stranding-2-final-interpolating.jsonl": {
+      "game": "Death Stranding 2 (Steam)",
+      "addon_sha256": "d3d2b5694d70206e66f639320d01edbe61d04f143be91aade9f1a1d93bb440a3",
+      "route": "streamline",
+      "fg_requested": true,
+      "interpolated": true,
+      "blocker": "ready",
+      "cause": "interpolating",
+      "explicit_sleep_rejections": 0
     }
   }
 }
