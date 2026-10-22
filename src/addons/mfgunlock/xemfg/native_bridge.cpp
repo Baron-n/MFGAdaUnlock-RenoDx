@@ -146,16 +146,6 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     Report("XeMFG: unsupported swapchain format (FP16/scRGB requires a separate conversion path)");
     return E_NOINTERFACE;
   }
-#if !defined(XESS_INIT_PROBE)
-  if(State().jitter) {
-    // The exact portable program set has no d243=1 reconstruction variant.
-    // A real SDK probe reaches decoder key 35112441167526893749578 and fails.
-    // Never alias it to the d243=0 program or relabel jittered inputs: that
-    // would trade a visible compatibility failure for incorrect motion.
-    Report("XeMFG interpolation unavailable: jittered-motion reconstruction shader is not supported yet");
-    return E_NOINTERFACE;
-  }
-#endif
   // Capability/identity discovery is confined to output creation/retirement.
   // No REFramework is loaded and no per-frame probing or hashing is added.
   if(State().retirementFailed) {Report("XeMFG output retirement was not confirmed; restart required");return E_FAIL;}
@@ -203,6 +193,19 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   if(FAILED(queue->GetDevice(IID_PPV_ARGS(&device)))
       || !single_overlay::native::Unwrap(device.Get(),o->device)) return E_NOINTERFACE;
   o->invert=s.invert; o->jitter=s.jitter; o->width=desc->Width; o->height=desc->Height; o->format=desc->Format;
+#if !defined(XESS_INIT_PROBE)
+  if(o->jitter) {
+    // The portable program set has no d243=1 (jittered) reconstruction variant
+    // (decoder key 35112441167526893749578). Jittered vectors are converted by
+    // our own pass and XeFG runs its unjittered program (plan 4.2).
+    auto dejitter=std::make_unique<MotionDejitter>();
+    const bool initialized=dejitter->Initialize(o->device.Get());
+    xess_mod::WriteLog("native_dejitter_ready","\"output\":"+std::to_string(o->diagnosticOutput)
+        +",\"result\":"+std::to_string(initialized?0:int32_t(dejitter->LastError())));
+    if(!initialized) { Report("XeMFG: the motion-vector dejitter pass could not be created; inspect the XeMFG log"); return E_NOINTERFACE; }
+    o->dejitter=std::move(dejitter);
+  }
+#endif
   auto& a=s.api;
   if(a.xellD3D12CreateContext(o->device.Get(),&o->ll)!=XELL_RESULT_SUCCESS) {
     Report("XeLL D3D12 context creation failed"); return E_NOINTERFACE;
@@ -246,7 +249,7 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
   xefg_swapchain_d3d12_init_params_t init{};
   init.maxInterpolatedFrames=5;
   init.initFlags=(o->invert?XEFG_SWAPCHAIN_INIT_FLAG_INVERTED_DEPTH:0)
-      |(o->jitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
+      |(o->jitter && !o->dejitter?XEFG_SWAPCHAIN_INIT_FLAG_JITTERED_MV:0);
   init.uiMode=XEFG_SWAPCHAIN_UI_MODE_AUTO;
   o->factory=FinalOutputFactory(transportFactory.Get());
   const auto code=[&] {
@@ -258,6 +261,8 @@ HRESULT CreateOutput(IDXGIFactory2* factory,IUnknown* source,HWND hwnd,
     xess_mod::WriteLog("native_swapchain_init_failed","\"result\":"+std::to_string(code));
     Report("XeFG swapchain initialization failed; inspect the XeMFG log"); return E_NOINTERFACE;
   }
+  xess_mod::WriteLog("native_swapchain_init","\"output\":"+std::to_string(o->diagnosticOutput)+",\"init_flags\":"+std::to_string(init.initFlags)
+      +",\"motion_dejitter\":"+(o->dejitter?"true":"false"));
   ComPtr<IDXGISwapChain4> chain;
   if(a.xefgSwapChainD3D12GetSwapChainPtr(o->fg,IID_PPV_ARGS(&chain))!=0) return E_FAIL;
   DXGI_SWAP_CHAIN_DESC1 actual{};

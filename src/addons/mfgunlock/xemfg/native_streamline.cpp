@@ -231,6 +231,23 @@ std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) 
     default: return {};
   }
 }
+// Plan 4.2: jittered motion is held for conversion at Present instead of
+// being tagged; a volatile tag is copied now, on the producer's list.
+xefg_swapchain_result_t StageMotion(Output& o,Frame& frame,ID3D12CommandList* producer,ID3D12Resource* resource,
+    const xefg_swapchain_d3d12_resource_data_t& data,uint32_t id) {
+  const DejitterRegion region{uint32_t(data.resourceBase.x),uint32_t(data.resourceBase.y),data.resourceSize.x,data.resourceSize.y};
+  if(data.validity!=XEFG_SWAPCHAIN_RV_ONLY_NOW) {
+    frame.motionSource=resource; frame.motionState=data.incomingState; frame.motionRegion=region;
+    return XEFG_SWAPCHAIN_RESULT_SUCCESS;
+  }
+  ComPtr<ID3D12GraphicsCommandList> graphics; ComPtr<ID3D12Resource> staged;
+  if(!producer || FAILED(producer->QueryInterface(IID_PPV_ARGS(&graphics)))
+      || !o.dejitter->Capture(graphics.Get(),resource,data.incomingState,region,id,staged))
+    return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  frame.motionSource=std::move(staged); frame.motionState=D3D12_RESOURCE_STATE_COMMON;
+  frame.motionRegion={0,0,region.width,region.height};
+  return XEFG_SWAPCHAIN_RESULT_SUCCESS;
+}
 void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
   if(!id || !tags || count>64 || !SelectedViewport(viewport)) return;
   auto o=lease.output; if(!o) return;
@@ -337,6 +354,7 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
       data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
     } else { rejection="lifecycle"; reject(HudMetadata); continue; }
     const auto code=[&] {
+      if(*type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR && o->dejitter) return StageMotion(*o,*frame,list.Get(),resource.Get(),data,id);
       RuntimeCall trace("xefg_tag_resource",o->diagnosticOutput,id);
       const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);trace.Result(r);return r;
     }();
@@ -503,9 +521,7 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
     return sl::Result::eErrorUnsupportedInterface;
   }
   auto& s=State();
-  // A known unsupported jitter convention never creates a XeLL output.
-  // Preserve the game's native latency policy in that passthrough case.
-  const bool native=s.latencyOutput.load()==LatencyOutput::Reflex || s.jitter;
+  const bool native=s.latencyOutput.load()==LatencyOutput::Reflex;
   if(opts.structVersion>1 || opts.next) StructAdapted("slReflexSetOptions",opts,native?"forwarded_unchanged":"v1_prefix_forwarded");
   // The original setter stays on the game's calling thread. Native output
   // forwards the game's structure untouched, newer fields and chain included.
@@ -804,6 +820,39 @@ void DiscoverStreamline() {
       |(uint32_t(pclMarker || legacyMarker)<<2)|(uint32_t(evaluate!=nullptr)<<3)
       |(uint32_t(setConstants!=nullptr)<<4)|(uint32_t(setTag!=nullptr)<<5)|(uint32_t(setTagFrame!=nullptr)<<6);
 }
+// Plan 4.2: converts this frame's staged motion on the presentation queue and
+// tags the unjittered copy (ONLY_NOW: Intel copies it on the same list).
+bool SubmitDejitteredMotion(Output& o,const Frame& f,uint32_t id) {
+  const DejitterVector current{f.data.jitterOffsetX,f.data.jitterOffsetY};
+  // Without the previous frame's jitter the difference is unknown; XeFG
+  // resets history on that discontinuity, so a zero difference is safe.
+  const bool continuous=o.lastJitterId && id==o.lastJitterId+1;
+  DejitterVector delta{};
+  bool ok=f.motionSource && (!continuous || DejitterDelta(o.lastJitter,current,
+      {f.data.motionVectorScaleX,f.data.motionVectorScaleY},f.motionWidth,f.motionHeight,delta));
+  ID3D12Resource* output{};
+  auto* list=ok?o.dejitter->Convert(f.motionSource.Get(),f.motionState,f.motionRegion,delta,&output):nullptr;
+  int tag=XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  if(list) {
+    xefg_swapchain_d3d12_resource_data_t motion{};
+    motion.type=XEFG_SWAPCHAIN_RES_MOTION_VECTOR; motion.pResource=output; motion.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
+    motion.incomingState=D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+    motion.resourceSize={f.motionRegion.width,f.motionRegion.height};
+    {
+      RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
+      tag=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,list,id,&motion); trace.Result(tag);
+    }
+    ok=o.dejitter->Submit(o.queue.Get()) && tag>=0; // the open list is always submitted
+  } else ok=false;
+  if(o.dejitterLogBudget<4 || (!ok && o.dejitterLogBudget<12)) {
+    ++o.dejitterLogBudget;
+    xess_mod::WriteLog("native_dejitter","\"id\":"+std::to_string(id)+",\"ok\":"+(ok?"true":"false")
+        +",\"continuous\":"+(continuous?"true":"false")+",\"tag_result\":"+std::to_string(tag)
+        +",\"hr\":"+std::to_string(int32_t(o.dejitter->LastError()))
+        +",\"delta\":["+std::to_string(delta.x)+","+std::to_string(delta.y)+"]");
+  }
+  return ok;
+}
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
   if(o->retired || !o->fg) return;
@@ -847,8 +896,12 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       xefg_swapchain_d3d12_resource_data_t region{}; region.type=XEFG_SWAPCHAIN_RES_BACKBUFFER;
       region.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT; region.resourceSize={o->width,o->height};
       ready=a.xefgSwapChainD3D12TagFrameResource(o->fg,nullptr,id,&region)>=0
+          && (!o->dejitter || SubmitDejitteredMotion(*o,f,id))
           && a.xefgSwapChainTagFrameConstants(o->fg,id,&data)>=0;
     }
+  }
+  if(frame && frame->constants) {
+    o->lastJitter={frame->data.jitterOffsetX,frame->data.jitterOffsetY}; o->lastJitterId=id;
   }
   if(ready!=o->enabled) {
     if(a.xefgSwapChainSetEnabled(o->fg,ready?1:0)!=0) ready=false;

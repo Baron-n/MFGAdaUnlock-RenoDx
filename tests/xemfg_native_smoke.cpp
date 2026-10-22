@@ -577,34 +577,6 @@ int main(int argc,char** argv) {
     Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
-    if(flag("--jittered-motion")) {
-      Require(!bs.output && !bs.enabled && std::string(bs.detail).find("jittered-motion")!=std::string::npos,
-          "unsupported jitter convention not reported explicitly");
-      mfgunlock::xemfg::Status model;modelStatus(&model,sizeof(model));
-      Require(model.contexts==0 && model.tensor_launches==0,"unsupported shader consumed an Intel context");
-      const auto resolve=Import<PFun_slGetFeatureFunction*>(fixture,"slGetFeatureFunction");
-      void* setter{};void* wait{};
-      Require(resolve(sl::kFeatureReflex,"slReflexSetOptions",setter)==sl::Result::eOk
-          && resolve(sl::kFeatureReflex,"slReflexSleep",wait)==sl::Result::eOk,"passthrough Reflex functions");
-      sl::ReflexOptions latency;latency.mode=sl::ReflexMode::eLowLatency;latency.frameLimitUs=18500;
-      Require(reinterpret_cast<PFun_slReflexSetOptions*>(setter)(latency)==sl::Result::eOk,"passthrough Reflex mode");
-      Require((Import<uint32_t(*)()>(fixture,"FixtureModes")()>>8)==uint32_t(latency.mode)
-          && Import<uint32_t(*)()>(fixture,"FixtureReflexLimit")()==18500,"passthrough disabled native latency/limiter");
-      Token token;token.id=42;
-      Require(reinterpret_cast<PFun_slReflexSleep*>(wait)(token)==sl::Result::eOk
-          && Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==1,"passthrough native wait not preserved");
-      {RealInputs inputs(device.Get(),queue.Get(),desc.Width,desc.Height);
-        for(unsigned i=0;i<4;++i) {
-          ComPtr<ID3D12Resource> back;
-          Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"jitter passthrough buffer");
-          inputs.Render(back.Get());back.Reset();Check(chain->Present(0,0),"jitter passthrough Present");inputs.Wait();
-        }
-      }
-      chain.Reset();DestroyWindow(hwnd);
-      Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"jitter passthrough trace flush");
-      std::cout<<"PASS: unsupported jittered-motion shader reported; native rendering/presentation preserved without Intel context"<<std::endl;
-      return 0;
-    }
     Require(bs.output && bs.xell && bs.streamline,"native output/Streamline/XeLL not ready");
     if(retainNativeOutput) {
       Require(foreignNativeA && foreignNativeB,"observer did not retain native references");
@@ -866,6 +838,9 @@ int main(int argc,char** argv) {
       mark(sl::PCLMarker::eSimulationEnd,token);
       std::future<sl::Result> tailSleep;
       if(flag("--tail-sleep")) tailSleep=std::async(std::launch::async,[sleep,&token] {return sleep(token);});
+      // Jittered scenario: an alternating two-phase jitter, so consecutive
+      // frames carry a non-zero difference for the dejitter pass.
+      if(flag("--jittered-motion")) c.jitterOffset=token.id%2?sl::float2{.25f,-.25f}:sl::float2{-.25f,.25f};
       mark(sl::PCLMarker::eRenderSubmitStart,token); constants(c,token,viewport);
       allocator->Reset(); list->Reset(allocator.Get(),nullptr);
       ComPtr<ID3D12Resource> back; Check(chain->GetBuffer(chain->GetCurrentBackBufferIndex(),IID_PPV_ARGS(&back)),"backbuffer");
@@ -993,7 +968,7 @@ int main(int argc,char** argv) {
     if(flag("--simulation-sleep")) std::cout<<"Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
     if(flag("--midsim-sleep")) std::cout<<"Simulation boundary: refused mid-simulation waits recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
     if(flag("--zero-resource")) std::cout<<"Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted"<<std::endl;
-    if(flag("--jittered-motion")) std::cout<<"Jittered motion: observed executable default initialized the matching SDK convention"<<std::endl;
+    if(flag("--jittered-motion")) std::cout<<"Jittered motion: dejittered by the bridge pass and interpolated"<<std::endl;
     Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.

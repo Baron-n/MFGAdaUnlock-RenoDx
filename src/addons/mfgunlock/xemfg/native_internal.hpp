@@ -9,6 +9,7 @@
 #include "native_reframework.hpp"
 #include "compatibility_policy.hpp"
 #include "native_session.hpp"
+#include "native_dejitter.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -54,6 +55,11 @@ struct Frame {
   bool sourceSleepResolved{};
   bool constants{}, valid{}, sleeping{}, sleepInFlight{}, failed{};
   uint32_t motionWidth{}, motionHeight{};
+  // Jittered outputs (plan 4.2): the motion input converted before Present,
+  // either the game resource (until-present tag) or a producer-list copy.
+  ComPtr<ID3D12Resource> motionSource;
+  D3D12_RESOURCE_STATES motionState{};
+  DejitterRegion motionRegion{};
   uint32_t hudIssues{};
   HudTagIdentity hudTags[2]{};
   // Pin the allocation identity until frame retirement, never infer its
@@ -107,6 +113,10 @@ struct Output {
   int uiCompositionResult{};
   uint64_t uiCompositionUpdates{};
   bool invert{}, jitter{}, enabled{}, compatible{true},retired{};
+  // Present when the game's vectors are jittered; XeFG then runs unjittered.
+  std::unique_ptr<MotionDejitter> dejitter;
+  DejitterVector lastJitter{};
+  uint32_t lastJitterId{}, dejitterLogBudget{};
   bool deviceLost{};
   bool presentationSupported{true};
   HRESULT presentFailure{S_OK},removedReason{S_OK};

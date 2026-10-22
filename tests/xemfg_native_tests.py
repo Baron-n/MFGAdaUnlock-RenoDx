@@ -132,13 +132,6 @@ if args.sl1_interposer:
         sl1_untouched_verified=untouched),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and untouched else 1)
-if args.jittered_motion:
-    refused='PASS: unsupported jittered-motion shader reported; native rendering/presentation preserved without Intel context' in result.stdout
-    refused=refused and not any(e.get('event') in ('context_create','native_swapchain_init_failed','shader_decode_failure') for e in events)
-    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
-        jitter_unsupported_passthrough_verified=refused),indent=2))
-    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and refused else 1)
 if args.reframework:
     blocked=args.reframework in ('blocked','invalid','exception','ambiguous')
     decisions=[e for e in events if e.get('event')=='native_reframework_retire']
@@ -211,7 +204,13 @@ input_verified={}
 if args.zero_resource:
     input_verified['zero_resource']=('Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted' in result.stdout)
 if args.jittered_motion:
-    input_verified['jittered_motion']=('Jittered motion: observed executable default initialized the matching SDK convention' in result.stdout)
+    # Plan 4.2: jittered vectors are converted by our pass; XeFG runs unjittered.
+    inits=[e for e in events if e.get('event')=='native_swapchain_init']
+    converted=[e for e in events if e.get('event')=='native_dejitter']
+    input_verified['jittered_motion']=('Jittered motion: dejittered by the bridge pass and interpolated' in result.stdout
+        and any(e.get('event')=='native_dejitter_ready' and e.get('result')==0 for e in events)
+        and bool(inits) and all(e.get('motion_dejitter') is True and not (e.get('init_flags',0)&16) for e in inits)
+        and bool(converted) and all(e.get('ok') is True for e in converted) and any(e.get('continuous') for e in converted))
 if args.simulation_sleep:
     recovered=[e for e in events if e.get('event')=='native_simulation_boundary_sleep']
     input_verified['simulation_sleep']=('Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep' in result.stdout

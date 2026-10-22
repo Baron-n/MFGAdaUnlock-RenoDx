@@ -64,7 +64,7 @@ std::string CompatibilityReport(const char* exportReason) {
     if(!guard.owns_lock()) {report["snapshot"]="busy";return report.dump(2);}
     report["snapshot"]="available";
     report["output"]={{"generation",o->diagnosticOutput},{"epoch",o->epoch},{"width",o->width},
-        {"height",o->height},{"format",uint32_t(o->format)},{"depth_inverted",o->invert},{"jittered_motion",o->jitter},
+        {"height",o->height},{"format",uint32_t(o->format)},{"depth_inverted",o->invert},{"jittered_motion",o->jitter},{"motion_dejitter",o->dejitter!=nullptr},
         {"device_lost",o->deviceLost},{"present_hresult",uint32_t(o->presentFailure)},
         {"device_removed_reason",uint32_t(o->removedReason)},
         {"windowed_presentation_supported",o->presentationSupported},
