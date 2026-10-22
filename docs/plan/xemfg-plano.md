@@ -72,8 +72,8 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Status |
 |---|---|---|
-| F.1 | Instalar o addon final nos jogos (com backup do addon anterior) e testar o que for possível sem interação manual | pendente |
-| F.2 | Registro final: o que foi feito e o que não foi, com motivos, em `docs/plan/xemfg-registro.md` | pendente |
+| F.1 | Instalar o addon final nos jogos (com backup do addon anterior) e testar o que for possível sem interação manual | feito (ver `xemfg-registro.md`) |
+| F.2 | Registro final: o que foi feito e o que não foi, com motivos, em `docs/plan/xemfg-registro.md` | feito (`docs/plan/xemfg-registro.md`) |
 
 ## Registro de execução
 
