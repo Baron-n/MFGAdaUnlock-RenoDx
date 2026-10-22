@@ -121,6 +121,10 @@ add_executable(xemfg_constants_tests "${CMAKE_SOURCE_DIR}/xemfg_constants_tests.
 target_compile_definitions(xemfg_constants_tests PRIVATE NOMINMAX)
 target_include_directories(xemfg_constants_tests PRIVATE "${XEMFG_SDK_ROOT}/inc/xess_fg" "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME xemfg_constants_translation COMMAND xemfg_constants_tests)
+add_executable(xemfg_dejitter_numeric "${CMAKE_SOURCE_DIR}/xemfg_dejitter_numeric.cpp")
+add_test(NAME xemfg_dejitter_numeric COMMAND xemfg_dejitter_numeric)
+# Plan 4.1: fails until the dejitter pass (4.2) lands.
+set_tests_properties(xemfg_dejitter_numeric PROPERTIES LABELS backlog TIMEOUT 20)
 add_executable(xemfg_trace_tests "${CMAKE_SOURCE_DIR}/xemfg_trace_tests.cpp" native_trace.cpp)
 target_compile_definitions(xemfg_trace_tests PRIVATE NOMINMAX)
 target_link_libraries(xemfg_trace_tests PRIVATE d3d12 dxgi)

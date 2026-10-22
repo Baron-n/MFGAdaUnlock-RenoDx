@@ -53,7 +53,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Critério de saída | Teste | Status |
 |---|---|---|---|---|
-| 4.1 | Teste numérico de câmera parada com jitter Halton (backlog) | Teste falha: MV com jitter não vira ≈0 | `xemfg_dejitter_numeric` | pendente |
+| 4.1 | Teste numérico de câmera parada com jitter Halton (backlog) | Teste falha: MV com jitter não vira ≈0 | `xemfg_dejitter_numeric` | feito |
 | 4.2 | Compute pass de remoção de jitter do MV; XeFG inicializado sem `JITTERED_MV` | MV convertido com erro máximo < 1e-3 px no teste; DS2 deixa de ser recusado | `xemfg_dejitter_numeric`, `xemfg_native_jittered-motion` atualizado | pendente |
 | 4.3 | `kBufferTypeBackbuffer` com subretângulo | `resourceBase/Size` do backbuffer seguem o tag | `backbuffer-subrect` | pendente |
 | 4.4 | FP16/scRGB | Swapchain FP16 aceita, com conversão ou caminho do SDK | novo cenário `scrgb-output` | pendente |
@@ -141,6 +141,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 - **3.2** Plugins conflitantes (build nativo), observador de `slDLSSGSetOptions` (Steam overlay), retenção da saída nativa e hash do REFramework defeituoso passam a vir de `profiles.json`. O build legado de companion para OptiScaler mantém o literal `MFGUnlocker.asi`, porque não linka os perfis. A identificação do REFramework por nome (`reframework*`, `dinput8.dll`) continua no adaptador dele, por ser a forma de reconhecer a ferramenta e não uma exceção por jogo. Gate: 157 aprovados; replay: 8.
 - **3.3** Convenções aprendidas: quando as constantes do jogo contradizem `InvertedDepth`/`JitteredMotion` da saída, a ponte grava o valor real em `[XeFG.Learned]` com a identidade do executável (nome e tamanho) e o aplica na próxima saída (recriação da swapchain pelo jogo ou nova sessão). Registra `native_convention_learned`.
 - **3.4** `native_game_defaults.hpp` removido. As convenções observadas de TLOU2 (`tlou-ii.exe`, `tlou-ii-l.exe`), Alan Wake 2 (profundidade convencional) e DS2 (MVs com jitter) viraram regras do `profiles.json`, cada uma com sua evidência. A precedência agora é INI explícito > aprendido para o executável > perfil > padrão do SDK (profundidade invertida, MVs sem jitter). O `xemfg_profiles` cobre os perfis e verifica que um jogo não observado não recebe convenção.
+- **4.1** `xemfg_dejitter_numeric` (backlog): câmera parada com jitter Halton(2,3) de 8 fases, em três casos de unidade (escala por pixel, escala com sinal negativo, unidades UV). Um bloco com movimento real (3,25; −1,5 px) tem de ser preservado. A convenção vem do Streamline: `jitterOffset` em pixels, MV do atual para o anterior, ponto estático ⇒ `j_prev − j_cur`. Com o repasse atual (identidade), falha com resíduo de 0,333 px.
   - Precedência: INI explícito > aprendido para este executável > padrão. O explícito nunca é sobrescrito.
   - Limite: o contexto XeFG fixa essas flags na criação e a ponte não pode forçar o jogo a recriar a swapchain, então a sessão em que a divergência é vista continua em passthrough.
   - O caso `learned-depth` roda duas sessões: a primeira aprende `InvertedDepth=0`, a segunda interpola sem override.
