@@ -132,6 +132,18 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     }
     data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
   } else { rejection="lifecycle"; reject(HudMetadata); return; }
+  // A second tag of an accepted type in the same frame (games that tag for
+  // DLSS-SR and DLSS-G separately): XeFG keeps the first and refuses the
+  // rest, so the first is kept here too and the frame is not failed.
+  if(frame.resources&bit) {
+    receipt.accepted=true; receipt.rejection=nullptr;
+    if(o.duplicateTagLogBudget<4) {
+      ++o.duplicateTagLogBudget;
+      xess_mod::WriteLog("native_tag_duplicate","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)
+          +",\"lifecycle\":"+std::to_string(t.rawLifecycle));
+    }
+    return;
+  }
   const auto code=[&] {
     if(type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR && o.dejitter) return StageMotion(o,frame,list.Get(),resource.Get(),data,id);
     RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);

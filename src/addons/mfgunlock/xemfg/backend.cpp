@@ -40,6 +40,9 @@ std::recursive_mutex mutex;
 // swapchain through DXGI; the native bridge must not wrap that one.
 std::atomic<uint32_t> userGenerated{0};
 thread_local bool gameInitializing{};
+// Lock-free (read from DXGI hooks while an SDK init may hold `mutex` and
+// wait for its own worker thread): live game-owned contexts and game inits.
+std::atomic<int> gameContexts{0}, gameInits{0};
 std::once_flag initializeOnce;
 std::once_flag startupOnce;
 HMODULE bootstrapFg{};
@@ -262,7 +265,7 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   if (!hostCall && !gameCall) {
     if (s.model) return unsupported;
     const auto r=original_xefgSwapChainD3D12CreateContext(device,output);
-    if(r==success && output && *output) s.nativeContexts.insert(*output);
+    if(r==success && output && *output) { s.nativeContexts.insert(*output); ++gameContexts; }
     xess_mod::WriteLog("native_context_create","\"result\":"+std::to_string(r)+",\"caller\":\""+escape(CallerName(caller))+"\",\"handle\":"+std::to_string(output&&r==success?uintptr_t(*output):0));
     return r;
   }
@@ -283,9 +286,10 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   if (r==success && *output && s.model) {
     Context c{device,++s.generation}; c.hostOwner=hostCall;
     s.contexts.emplace(*output,std::move(c));
+    if(!hostCall) ++gameContexts;
     s.status.contexts=uint32_t(s.contexts.size());
   }
-  else if(r==success && *output) s.nativeContexts.insert(*output);
+  else if(r==success && *output) { s.nativeContexts.insert(*output); if(!hostCall) ++gameContexts; }
   xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false")+",\"owner\":\""+(hostCall?"host":"game")+"\",\"handle\":"+std::to_string(r==success?uintptr_t(*output):0));
   return r;
 }
@@ -325,8 +329,9 @@ const xefg_swapchain_d3d12_init_params_t* GameParams(Handle h,const xefg_swapcha
 }
 struct GameInitScope {
   bool previous{gameInitializing};
-  explicit GameInitScope(bool game) { if(game) gameInitializing=true; }
-  ~GameInitScope() { gameInitializing=previous; }
+  bool counted{};
+  explicit GameInitScope(bool game):counted(game) { if(game) { gameInitializing=true; ++gameInits; } }
+  ~GameInitScope() { gameInitializing=previous; if(counted) --gameInits; }
 };
 __declspec(noinline) Result InitChain(Handle h, ID3D12CommandQueue* q,const xefg_swapchain_d3d12_init_params_t* p) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainD3D12InitFromSwapChain(h,q,p);
@@ -417,6 +422,8 @@ __declspec(noinline) Result Destroy(Handle h) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainDestroy(h);
   std::lock_guard lock(mutex); auto& s=Get(); const auto it=s.contexts.find(h);
   const auto r=original_xefgSwapChainDestroy(h); // SDK joins its workers first.
+  const bool gameContext=(it!=s.contexts.end() && !it->second.hostOwner) || s.nativeContexts.contains(h);
+  if(r==success && gameContext) --gameContexts;
   if(r==success && s.nativeContexts.erase(h)) {
     xess_mod::WriteLog("native_context_destroy","\"handle\":"+std::to_string(uintptr_t(h))+",\"remaining\":"+std::to_string(s.nativeContexts.size()));
   }
@@ -636,7 +643,8 @@ bool NativeRuntimeModules(NativeRuntimePair& out) {
 }
 bool ModelStartupFailed() noexcept { return startupFailed.load(); }
 void SetGameMultiplier(uint32_t multiplier) noexcept { userGenerated=multiplier>=2 && multiplier<=6?multiplier-1:0; }
-bool GameContextInitializing() noexcept { return gameInitializing; }
+bool GameContextInitializing() noexcept { return gameInitializing || gameInits.load()>0; }
+bool GameOwnsFrameGeneration() noexcept { return GameContextInitializing() || gameContexts.load()>0; }
 void AttachModel(HMODULE module) {
   self=module;
   InitializeASI();

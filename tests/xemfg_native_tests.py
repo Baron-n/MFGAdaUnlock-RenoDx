@@ -54,6 +54,7 @@ ap.add_argument('--ffx-fixture',type=Path)
 ap.add_argument('--dlss-sr-adapter',action='store_true')
 ap.add_argument('--ngx-fixture',type=Path)
 ap.add_argument('--dlss-sr-default-off',action='store_true')
+ap.add_argument('--duplicate-tags',action='store_true')
 ap.add_argument('--menu-viewport-first',action='store_true')
 ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
@@ -127,7 +128,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -358,6 +359,9 @@ except json.JSONDecodeError:
 diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock.compatibility'
     and exported_report.get('export_reason') in ('steady','retired','shutdown')
     and not re.search(r'[A-Za-z]:[\\/]',json.dumps(exported_report)))
+if args.duplicate_tags:
+    diagnostics_verified['duplicate_tags']=any(e.get('event')=='native_tag_duplicate' for e in events) and not any(
+        e.get('event')=='native_sdk_log' and 'already tagged' in e.get('message','') for e in events)
 if args.backbuffer_subrect:
     diagnostics_verified['backbuffer_region']=any(e.get('event')=='native_backbuffer_region' and e.get('width')==320 and e.get('height')==180 for e in events)
 # Shipped profiles load once per session, with no override error.

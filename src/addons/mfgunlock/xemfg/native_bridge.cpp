@@ -318,7 +318,7 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
     const DXGI_SWAP_CHAIN_DESC1* desc,const DXGI_SWAP_CHAIN_FULLSCREEN_DESC* full,
     IDXGIOutput* restrictOutput,IDXGISwapChain1** out) {
   // Plan 5.2: the game's own XeFG creating its swapchain; never stack a second Intel output.
-  if(GameContextInitializing()) return originalFactory(f,d,w,desc,full,restrictOutput,out);
+  if(GameOwnsFrameGeneration()) return originalFactory(f,d,w,desc,full,restrictOutput,out);
   if(internalCreate) {
     const auto hr=originalFactory(f,d,w,desc,full,restrictOutput,out);
     if(SUCCEEDED(hr) && creatingWindow==w) WrapFinalOutput(d,w,out);
@@ -336,7 +336,7 @@ static HRESULT STDMETHODCALLTYPE FactoryHook(IDXGIFactory2* f,IUnknown* d,HWND w
 }
 static HRESULT STDMETHODCALLTYPE LegacyFactoryHook(IDXGIFactory* factory,IUnknown* source,
     DXGI_SWAP_CHAIN_DESC* desc,IDXGISwapChain** out) {
-  if(GameContextInitializing()) return originalLegacyFactory(factory,source,desc,out);
+  if(GameOwnsFrameGeneration()) return originalLegacyFactory(factory,source,desc,out);
   if(internalCreate) {
     const auto hr=originalLegacyFactory(factory,source,desc,out);
     // Intel normally creates its native output through ForHwnd. Keep final

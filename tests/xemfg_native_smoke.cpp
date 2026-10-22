@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <dbghelp.h>
 #include <future>
+#include <thread>
 #include <array>
 #include <algorithm>
 using Microsoft::WRL::ComPtr;
@@ -632,6 +633,20 @@ int main(int argc,char** argv) {
       std::cout<<"Game XeFG generated="<<ms.generated<<" contexts="<<ms.contexts<<std::endl;
       Require(ms.generated==multiplier-1,"game-owned XeFG kept the game's multiplier");
       Require(ms.contexts==1,"a second Intel output was stacked under the game's XeFG");
+      // DS2 field session (2026-10-22): the SDK created the game's swapchain on
+      // another thread, past a thread-local guard. While a game context lives,
+      // a swapchain from any thread stays native.
+      {
+        const auto otherWindow=CreateWindowW(wc.lpszClassName,L"Game XeFG worker swapchain",WS_OVERLAPPEDWINDOW,0,0,640,360,nullptr,nullptr,wc.hInstance,nullptr);
+        Require(otherWindow,"worker window");
+        HRESULT created=E_FAIL; ComPtr<IDXGISwapChain1> workerChain;
+        std::thread worker([&] { created=CreateTestSwapchain(false,factory.Get(),queue.Get(),otherWindow,desc,nullptr,&workerChain); });
+        worker.join();
+        Check(created,"worker-thread swapchain");
+        mfgunlock::xemfg::native::Status bridge{}; bridgeStatus(&bridge,sizeof(bridge)); modelStatus(&ms,sizeof(ms));
+        Require(!bridge.output && ms.contexts==1,"a worker-thread swapchain became an Intel output under the game's XeFG");
+        workerChain.Reset(); DestroyWindow(otherWindow);
+      }
       destroy(handle); destroyLatency(latency); DestroyWindow(hwnd);
       Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"game XeFG flush");
       std::cout<<"PASS: game-owned XeFG uses the user multiplier ("<<multiplier<<"x)"<<std::endl;
@@ -983,6 +998,9 @@ int main(int argc,char** argv) {
         Require(tags(token,viewport,&region,1,producerCommand)==sl::Result::eOk,"original backbuffer tag result");
       }
       if(frame%2) tags(token,viewport,tagged,tagCount,producerCommand);
+      // Conformance: depth and motion tagged again in the same frame, as games
+      // do for DLSS-SR and DLSS-G separately (DS2 field session).
+      if(flag("--duplicate-tags") && frame%2 && tagCount>=2) Require(tags(token,viewport,tagged,2,producerCommand)==sl::Result::eOk,"duplicate tags");
       else legacyTags(viewport,tagged,tagCount,producerCommand);
       if(frame==37 || frame==38) {
         sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
