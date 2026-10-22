@@ -25,6 +25,10 @@ int main(int argc,char** argv) {
     Require(Resolve(embedded,Context{L"tlou-ii.exe",{}}).depthInverted==false && Resolve(embedded,Context{L"TLOU-II-L.EXE",{}}).depthInverted==false
         && Resolve(embedded,Context{L"AlanWake2.exe",{}}).depthInverted==false,"observed conventional depth profiles");
     Require(Resolve(embedded,Context{L"DS2.exe",{}}).motionJittered==true,"observed jitter profile");
+    // AC Black Flag Resynced loses the device on the first Present of a reused
+    // retained output; the executable rule wins over the overlay rule.
+    Require(!Resolve(embedded,Context{L"ACBlackFlag.exe",{L"gameoverlayrenderer64.dll"}}).retainNativeOutput.value_or(true),
+        "AC Black Flag kept native output retention under the Steam overlay");
     Require(!Resolve(embedded,Context{L"re9.exe",{}}).depthInverted && !Resolve(embedded,Context{L"re9.exe",{}}).motionJittered,"unobserved game received a convention");
     // The game-folder file overrides scalar fields and extends lists.
     Rules local;

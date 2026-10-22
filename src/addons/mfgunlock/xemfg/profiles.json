@@ -15,6 +15,12 @@
       "evidence": "RC3: overlay resolved slDLSSGSetOptions and turned the game's FG off; R1.11: overlay held references to the replaced swapchain"
     },
     {
+      "id": "ac-black-flag-no-output-retention",
+      "match": {"executable": "ACBlackFlag.exe"},
+      "retain_native_output": false,
+      "evidence": "2026-10-22: with the Steam overlay, the reused retained output lost the device (DXGI_ERROR_DEVICE_REMOVED, reason 0x887A002B) on its first Present in all 6 reuse sessions; with retention off the game ran and interpolated at 6x"
+    },
+    {
       "id": "tlou2-conventional-depth",
       "match": {"executable": "tlou-ii.exe"},
       "depth_inverted": false,
