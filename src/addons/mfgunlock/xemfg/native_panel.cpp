@@ -64,7 +64,7 @@ void Draw() {
   }
   DrawControls(page);
   if(page==PanelPage::Diagnostics || (page==PanelPage::General && unavailable)) dependencies::Draw();
-  ui::Footer("MFG Unlock | 1.5.0-rc.5 (local test build)");
+  ui::Footer("MFG Unlock | 1.5.0");
 }
 }
 extern "C" __declspec(dllexport) uint64_t MFGAXePanelDraws() {

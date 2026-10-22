@@ -7536,7 +7536,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
 
   }
 
-  mfgunlock::ui::Footer("MFG Unlock | 1.5.0-rc.5 (local test build)");
+  mfgunlock::ui::Footer("MFG Unlock | 1.5.0");
   ImGui::TextDisabled(
       "Changes marked for restart keep the current session unchanged.");
 }
@@ -7962,7 +7962,7 @@ void LoadConfig() {
 extern "C" __declspec(dllexport) constexpr const char* NAME = "MFG Unlock";
 extern "C" __declspec(dllexport) constexpr const char* DESCRIPTION =
 #if defined(MFGUNLOCK_NATIVE_XEMFG)
-    "MFG Unlock 1.5.0-rc.5 - local DLSS-G and XeMFG engineering candidate; gameplay validation pending";
+    "MFG Unlock 1.5.0 - DLSS-G and XeMFG backends";
 #elif defined(MFGUNLOCK_DUAL_BACKEND)
     "Dual Backend Preview X1 - official 1.4.5 base; DLSS-G and XeMFG via OptiScaler; gameplay validation pending";
 #elif defined(MFGUNLOCK_RELEASE_1_4_5)

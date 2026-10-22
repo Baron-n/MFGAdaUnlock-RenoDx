@@ -7,7 +7,8 @@
 > already produces for DLSS-G, by its own XeSS-FG, or by FSR 3.1 frame
 > generation. No OptiScaler or ASI loader is needed; Intel's runtime files are
 > installed from the addon panel. See [XeMFG backend](#xemfg-backend) for the
-> tutorial and the [XeMFG tested games](#xemfg-backend-tested-games).
+> tutorial, the [XeMFG tested games](#xemfg-backend-tested-games) and the
+> [1.5.0 release notes](docs/releases/1.5.0.md).
 
 > Release **1.4.5** strengthens kernel and binary-patch identity, rollback,
 > allocation lifetime, hook error handling and latency-trial measurements.
@@ -293,6 +294,14 @@ These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
 provides frame-generation inputs (see [Supported inputs](#supported-xemfg-inputs)).
 
+> [!IMPORTANT]
+> **Capcom / RE Engine games (Resident Evil Requiem, Monster Hunter Wilds,
+> Dragon's Dogma 2, Onimusha: Way of the Sword, PRAGMATA):** if you use
+> REFramework, use a build that includes the **XeFG fixes**, such as
+> [onehoon's REFramework](https://github.com/onehoon/REFramework). Builds without
+> them keep reinstalling their XeFG hooks, and GPU utilization drops sharply
+> while XeMFG is active.
+
 ### Monster Hunter Wilds first-launch note
 
 After installing or updating the addon, or whenever the game rebuilds
@@ -395,6 +404,10 @@ turn frame generation on or off.
   panel installs the supported versions for you (step 4 below).
 - A game that provides frame-generation inputs; see
   [Supported inputs](#supported-xemfg-inputs).
+- **Capcom / RE Engine games with REFramework:** a REFramework build with the
+  XeFG fixes, such as [onehoon's REFramework](https://github.com/onehoon/REFramework).
+  Without them, GPU utilization drops while XeMFG is active. The panel warns
+  when it detects a REFramework build known to have this problem.
 
 ### Installing XeMFG
 
@@ -514,6 +527,13 @@ Resynced, which now has a built-in rule.
 
 Enable **Quality → UI Composition** if the game provides a HUD-less image.
 Otherwise the HUD is interpolated together with the scene.
+
+#### GPU utilization drops in a Capcom / RE Engine game
+
+This happens with REFramework builds without the XeFG fixes: they reinstall
+their XeFG hooks repeatedly. Replace REFramework with a build that includes
+the fixes, such as [onehoon's REFramework](https://github.com/onehoon/REFramework),
+or remove REFramework to confirm.
 
 ### Reporting an XeMFG problem
 
@@ -1428,6 +1448,8 @@ execution plan and record are in [`docs/plan/`](docs/plan/).
   [`vendor/PROVENANCE.md`](src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md)).
 - [REFramework](https://github.com/praydog/REFramework) by praydog. The XeMFG
   bridge interoperates with REFramework's XeFG monitor in RE Engine games.
+  [onehoon's REFramework](https://github.com/onehoon/REFramework) includes the
+  XeFG fixes recommended for XeMFG in Capcom games.
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 
