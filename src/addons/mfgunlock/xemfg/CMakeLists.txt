@@ -70,7 +70,7 @@ set(XEMFG_GPU_PASS_SOURCES native_dejitter.cpp "${XEMFG_SHADER_HEADERS}/native_d
 
 add_library(mfgunlock_native_xemfg SHARED ../addon.cpp ${XEMFG_MODEL_SOURCES}
   ${XEMFG_GPU_PASS_SOURCES}
-  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
+  native_bridge.cpp native_factory.cpp native_continuity.cpp native_reframework.cpp native_streamline.cpp native_frame_packet.cpp native_swapchain.cpp native_latency.cpp native_ui.cpp native_diagnostics.cpp native_session.cpp native_profiles.cpp native_compatibility.cpp native_trace.cpp native_overlay.cpp native_panel.cpp native_controls.cpp native_window.cpp dependency_manager.cpp "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc")
 target_compile_definitions(mfgunlock_native_xemfg PRIVATE
   $<TARGET_PROPERTY:mfgunlock_release_1_4_5,COMPILE_DEFINITIONS>
   MFGUNLOCK_DUAL_BACKEND MFGUNLOCK_NATIVE_XEMFG UNICODE _UNICODE)

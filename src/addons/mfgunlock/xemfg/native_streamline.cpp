@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "native_internal.hpp"
+#include "native_frame_packet.hpp"
 #include "native_constants.hpp"
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
@@ -231,22 +232,12 @@ std::optional<xefg_swapchain_resource_type_t> ResourceType(sl::BufferType type) 
     default: return {};
   }
 }
-// Plan 4.2: jittered motion is held for conversion at Present instead of
-// being tagged; a volatile tag is copied now, on the producer's list.
-xefg_swapchain_result_t StageMotion(Output& o,Frame& frame,ID3D12CommandList* producer,ID3D12Resource* resource,
-    const xefg_swapchain_d3d12_resource_data_t& data,uint32_t id) {
-  const DejitterRegion region{uint32_t(data.resourceBase.x),uint32_t(data.resourceBase.y),data.resourceSize.x,data.resourceSize.y};
-  if(data.validity!=XEFG_SWAPCHAIN_RV_ONLY_NOW) {
-    frame.motionSource=resource; frame.motionState=data.incomingState; frame.motionRegion=region;
-    return XEFG_SWAPCHAIN_RESULT_SUCCESS;
-  }
-  ComPtr<ID3D12GraphicsCommandList> graphics; ComPtr<ID3D12Resource> staged;
-  if(!producer || FAILED(producer->QueryInterface(IID_PPV_ARGS(&graphics)))
-      || !o.dejitter->Capture(graphics.Get(),resource,data.incomingState,region,id,staged))
-    return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
-  frame.motionSource=std::move(staged); frame.motionState=D3D12_RESOURCE_STATE_COMMON;
-  frame.motionRegion={0,0,region.width,region.height};
-  return XEFG_SWAPCHAIN_RESULT_SUCCESS;
+// Streamline DLSS-G input adapter (plan 5.1): translates slSetTag into
+// adapter-neutral packet inputs; validation and tagging live in native_frame_packet.
+packet::Lifecycle PacketLifecycle(sl::ResourceLifecycle lifecycle) {
+  if(lifecycle==sl::eValidUntilPresent) return packet::Lifecycle::UntilPresent;
+  if(lifecycle==sl::eOnlyValidNow || lifecycle==sl::eValidUntilEvaluate) return packet::Lifecycle::OnlyNow;
+  return packet::Lifecycle::Invalid;
 }
 void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::ResourceTag* tags,uint32_t count,sl::CommandBuffer* command) {
   if(!id || !tags || count>64 || !SelectedViewport(viewport)) return;
@@ -257,145 +248,25 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
   frame->viewport=viewport;
   for(uint32_t i=0;i<count;++i) {
     const auto& t=tags[i];
-    if(t.type==sl::kBufferTypeBackbuffer) {
-      // Plan 4.3: only the extent is used; XeFG reads its own swapchain buffer.
-      const auto& e=t.extent;
-      const bool empty=!e.width || !e.height;
-      const bool inside=!empty && uint64_t(e.left)+e.width<=o->width && uint64_t(e.top)+e.height<=o->height;
-      frame->backbufferRegion=inside?DejitterRegion{e.left,e.top,e.width,e.height}:DejitterRegion{};
-      o->backbufferRegion=frame->backbufferRegion;
-      if(!empty && o->backbufferLogBudget<4) {
-        ++o->backbufferLogBudget;
-        xess_mod::WriteLog("native_backbuffer_region","\"id\":"+std::to_string(id)+",\"accepted\":"+(inside?"true":"false")
-            +",\"x\":"+std::to_string(e.left)+",\"y\":"+std::to_string(e.top)+",\"width\":"+std::to_string(e.width)
-            +",\"height\":"+std::to_string(e.height)+",\"output_width\":"+std::to_string(o->width)+",\"output_height\":"+std::to_string(o->height));
-      }
-      continue;
-    }
+    const DejitterRegion extent{t.extent.left,t.extent.top,t.extent.width,t.extent.height};
+    if(t.type==sl::kBufferTypeBackbuffer) { packet::SubmitBackbufferRegion(*o,*frame,id,extent); continue; }
     auto type=ResourceType(t.type); if(!type) continue;
-    const auto bit=1u<<*type;
-    auto& receipt=frame->resourceReceipts[uint32_t(*type)];
-    receipt.observed=true;receipt.lifecycle=uint32_t(t.lifecycle);
-    const bool optional=*type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR || *type==XEFG_SWAPCHAIN_RES_UI;
-    const char* rejection="metadata";
-    D3D12_RESOURCE_DESC observed{};
-    int sdkResult{};
-    const auto reject=[&](uint32_t issues) {
-      receipt.rejection=rejection;receipt.accepted=false;receipt.sdkResult=sdkResult;
-      if(!optional || (frame->resources&bit)) {
-        frame->failed=true;
-        if(frame->firstFailure==compatibility::Failure::None)frame->firstFailure=compatibility::Failure::InputRejected;
+    packet::Resource input;
+    input.type=*type; input.extent=extent; input.rawLifecycle=uint32_t(t.lifecycle);
+    input.lifecycle=PacketLifecycle(t.lifecycle); input.producer=reinterpret_cast<IUnknown*>(command);
+    input.tagVersion=t.structVersion;
+    if(t.resource && t.resource->native) {
+      input.native=reinterpret_cast<IUnknown*>(t.resource->native);
+      input.state=t.resource->state; input.resourceVersion=t.resource->structVersion;
+      // A newer ResourceTag is read through its V1 prefix (append-only ABI).
+      input.headerValid=t.structType==sl::ResourceTag::s_structType && t.structVersion>=1 && ResourceHeaderSupported(*t.resource)
+          && t.resource->type==sl::ResourceType::eTex2d;
+      if(input.headerValid && input.state!=UINT_MAX) {
+        if(t.structVersion>1) StructAdapted("slSetTag",t,"v1_prefix_read");
+        if(t.resource->structVersion>1) StructAdapted("sl::Resource",*t.resource,"v1_prefix_read");
       }
-      // Cannot retract an earlier successful tag for this same frame: bypass
-      // that batch instead. Otherwise omit only the incompatible optional tag.
-      if(optional) {
-        frame->hudIssues|=issues; ++State().hudRejected;
-        if(o->hudLogBudget<8) { ++o->hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(*type)+",\"issues\":"+std::to_string(issues)); }
-      }
-      if(o->rejectedTagLogBudget<12) {
-        ++o->rejectedTagLogBudget;
-        xess_mod::WriteLog("native_tag_rejected","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(*type)
-            +",\"reason\":\""+rejection+"\",\"lifecycle\":"+std::to_string(t.lifecycle)
-            +",\"tag_version\":"+std::to_string(t.structVersion)+",\"resource_version\":"+std::to_string(t.resource?t.resource->structVersion:0)
-            +",\"state\":"+std::to_string(t.resource?t.resource->state:UINT_MAX)
-            +",\"format\":"+std::to_string(observed.Format)+",\"width\":"+std::to_string(observed.Width)
-            +",\"height\":"+std::to_string(observed.Height)+",\"array_size\":"+std::to_string(observed.DepthOrArraySize)
-            +",\"extent_x\":"+std::to_string(t.extent.left)+",\"extent_y\":"+std::to_string(t.extent.top)
-            +",\"extent_width\":"+std::to_string(t.extent.width)+",\"extent_height\":"+std::to_string(t.extent.height)
-            +",\"command\":"+std::string(command?"true":"false")+",\"sdk_result\":"+std::to_string(sdkResult));
-      }
-    };
-    if(!t.resource || !t.resource->native) {
-      if(frame->resources&bit) { rejection="tag_removed_after_admission"; reject(HudConflict); }
-      receipt.accepted=false;receipt.rejection="removed";
-      frame->resources&=~bit; continue;
-    }
-    // A newer ResourceTag is read through its V1 prefix (append-only ABI).
-    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion<1 || !ResourceHeaderSupported(*t.resource)
-        || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
-    if(t.structVersion>1) StructAdapted("slSetTag",t,"v1_prefix_read");
-    if(t.resource->structVersion>1) StructAdapted("sl::Resource",*t.resource,"v1_prefix_read");
-    ComPtr<ID3D12Resource> resource;
-    if(!single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(t.resource->native),resource)) {
-      rejection="resource_unwrap";
-      reject(HudMetadata); continue;
-    }
-    const auto desc=resource->GetDesc();
-    observed=desc;
-    receipt.width=uint32_t(desc.Width);receipt.height=desc.Height;receipt.format=uint32_t(desc.Format);
-    receipt.incomingState=t.resource->state;
-    ComPtr<ID3D12Device> device, nativeDevice; resource->GetDevice(IID_PPV_ARGS(&device));
-    single_overlay::native::Unwrap(device.Get(),nativeDevice);
-    ComPtr<IUnknown> identity, expectedIdentity;
-    if(nativeDevice) nativeDevice.As(&identity); o->device.As(&expectedIdentity);
-    if(identity.Get()!=expectedIdentity.Get() || desc.Dimension!=D3D12_RESOURCE_DIMENSION_TEXTURE2D
-        || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { rejection="device_or_shape"; reject(HudMetadata); continue; }
-    xefg_swapchain_d3d12_resource_data_t data{};
-    data.type=*type; data.pResource=resource.Get();
-    data.incomingState=static_cast<D3D12_RESOURCE_STATES>(t.resource->state);
-    data.resourceBase={t.extent.left,t.extent.top};
-    data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
-    if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
-        || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { rejection="extent"; reject(HudExtent); continue; }
-    if(optional) {
-      // XeFG requires HUD-less and backbuffer resolutions to match (plan 4.3).
-      const auto& area=o->backbufferRegion;
-      const auto issues=CheckHudInput(desc,o->format,area.width?area.width:o->width,area.width?area.height:o->height,
-          data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
-      if(issues) { rejection="optional_hud"; reject(issues); continue; }
-    }
-    const unsigned hudSlot=*type==XEFG_SWAPCHAIN_RES_UI?1:0;
-    ComPtr<IUnknown> allocation;
-    HudTagIdentity hudIdentity{};
-    if(optional) {
-      if(FAILED(resource.As(&allocation))) { rejection="allocation_identity"; reject(HudMetadata); continue; }
-      hudIdentity={reinterpret_cast<uintptr_t>(allocation.Get()),uint32_t(data.incomingState),uint32_t(t.lifecycle),
-          data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y};
-      if(ConflictingHudTag(frame->hudTags[hudSlot],hudIdentity)) {
-        rejection="conflicting_hud_tag"; reject(HudConflict); continue;
-      }
-    }
-    ComPtr<ID3D12CommandList> list;
-    if(t.lifecycle==sl::eValidUntilPresent) data.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT;
-    else if(t.lifecycle==sl::eOnlyValidNow || t.lifecycle==sl::eValidUntilEvaluate) {
-      // Intel's documented ONLY_NOW contract records the copy at the tag,
-      // using the producer's list and restoring its resource state. A COM
-      // AddRef alone would not preserve the contents of a volatile resource.
-      if(!command || !single_overlay::native::UnwrapProducerCommand(reinterpret_cast<IUnknown*>(command),list)
-          || list->GetType()==D3D12_COMMAND_LIST_TYPE_COPY) { rejection="volatile_command"; reject(HudMetadata); continue; }
-      ComPtr<ID3D12Device> producerDevice,nativeProducerDevice;
-      ComPtr<IUnknown> producerIdentity;
-      if(FAILED(list->GetDevice(IID_PPV_ARGS(&producerDevice)))
-          || !single_overlay::native::Unwrap(producerDevice.Get(),nativeProducerDevice)
-          || FAILED(nativeProducerDevice.As(&producerIdentity)) || producerIdentity!=expectedIdentity) {
-        rejection="producer_device"; reject(HudMetadata); continue;
-      }
-      data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
-    } else { rejection="lifecycle"; reject(HudMetadata); continue; }
-    const auto code=[&] {
-      if(*type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR && o->dejitter) return StageMotion(*o,*frame,list.Get(),resource.Get(),data,id);
-      RuntimeCall trace("xefg_tag_resource",o->diagnosticOutput,id);
-      const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o->fg,list.Get(),id,&data);trace.Result(r);return r;
-    }();
-    if(id<6) xess_mod::WriteLog("native_tag","\"type\":"+std::to_string(*type)+",\"result\":"+std::to_string(code)
-        +",\"format\":"+std::to_string(desc.Format)+",\"width\":"+std::to_string(data.resourceSize.x)
-        +",\"height\":"+std::to_string(data.resourceSize.y)+",\"lifecycle\":"+std::to_string(t.lifecycle));
-    if(code<0) { sdkResult=code; rejection="sdk_tag"; frame->failed=true; reject(HudMetadata); }
-    else {
-      receipt.accepted=true;receipt.rejection=nullptr;receipt.sdkResult=code;
-      receipt.width=data.resourceSize.x;receipt.height=data.resourceSize.y;
-      frame->resources|=bit;
-      if(optional) { frame->hudTags[hudSlot]=hudIdentity; frame->hudAllocations[hudSlot]=std::move(allocation); }
-      if(optional && !(o->hudKindsSeen&bit)) {
-        o->hudKindsSeen|=bit;
-        xess_mod::WriteLog("native_hud_input","\"type\":"+std::to_string(*type)+",\"format\":"+std::to_string(desc.Format)
-            +",\"output_format\":"+std::to_string(o->format)+",\"width\":"+std::to_string(data.resourceSize.x)
-            +",\"height\":"+std::to_string(data.resourceSize.y)+",\"encoding_verified\":false");
-      }
-      if(*type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR) {
-        frame->motionWidth=data.resourceSize.x; frame->motionHeight=data.resourceSize.y;
-      }
-    }
+    } else if(t.resource) input.resourceVersion=t.resource->structVersion;
+    packet::SubmitResource(*o,*frame,id,input);
   }
 }
 void RejectUpstreamInput(const InputLease& lease,uint32_t id,uint32_t viewport,sl::Result result,const char* api) {
@@ -442,23 +313,19 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
     std::lock_guard lock(o->io);
     if(!lease.Current()) {++State().staleInputs;return r;}
     if(auto* frame=FindFrame(*o,id)) {
-      frame->constants=true;
-      frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
-      // Plan 3.3: the game's own constants state its conventions. A mismatch
-      // with this output's init flags is learned for the next output; this one
-      // stays in passthrough (the flags are fixed at Intel context creation).
-      auto& s=State();
-      if((frame->constantIssues&ConstantDepth) && c.depthInverted!=sl::eInvalid && !s.explicitInvert
-          && s.invert!=(c.depthInverted==sl::eTrue)) learnInvert=c.depthInverted==sl::eTrue;
-      if((frame->constantIssues&ConstantJitterMode) && c.motionVectorsJittered!=sl::eInvalid && !s.explicitJitter
-          && s.jitter!=(c.motionVectorsJittered==sl::eTrue)) learnJitter=c.motionVectorsJittered==sl::eTrue;
+      xefg_swapchain_frame_constant_data_t data{};
+      const auto issues=TranslateConstants(c,o->invert,o->jitter,data);
+      packet::Conventions stated;
+      if(c.depthInverted!=sl::eInvalid) stated.depthInverted=c.depthInverted==sl::eTrue;
+      if(c.motionVectorsJittered!=sl::eInvalid) stated.motionJittered=c.motionVectorsJittered==sl::eTrue;
+      const auto learn=packet::SubmitConstants(*frame,issues,data,stated);
+      learnInvert=learn.depthInverted; learnJitter=learn.motionJittered;
       if(frame->constantIssues&ConstantMetadata)
         StructRejected("slSetConstants",c,c.structType!=sl::Constants::s_structType?"type":"version");
       else {
         if(c.structVersion>2) StructAdapted("slSetConstants",c,"v2_prefix_read");
         SampleConstants(*o,c,id,frame->constantIssues);
       }
-      frame->valid=frame->constantIssues==0;
       if(frame->constantIssues!=o->lastConstantIssues && o->constantLogBudget<12) {
         o->lastConstantIssues=frame->constantIssues; ++o->constantLogBudget;
         std::string flags;
