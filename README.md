@@ -1413,6 +1413,21 @@ execution plan and record are in [`docs/plan/`](docs/plan/).
   AMD's public [FidelityFX API](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
   headers (MIT) for the FSR 3.1 input. No Intel or AMD runtime binary is
   redistributed here.
+- NVIDIA's [Streamline SDK](https://github.com/NVIDIA-RTX/Streamline) (MIT)
+  provides the headers for the Streamline bridge. Its official Streamline_Sample
+  builds are part of the XeMFG test matrix. The NGX SDK headers that ship with
+  Streamline define the experimental DLSS-SR input.
+- [MinHook](https://github.com/TsudaKageyu/minhook) by Tsuda Kageyu (BSD
+  2-Clause) performs the XeMFG function hooks. Its notice is embedded in the
+  addon.
+- [nlohmann/json](https://github.com/nlohmann/json) by Niels Lohmann (MIT)
+  writes the XeMFG compatibility report.
+- [OptiScaler](https://github.com/optiscaler/OptiScaler) was studied as an
+  API, ownership and architecture reference for the XeFG bridge. No GPL
+  OptiScaler code is included (see
+  [`vendor/PROVENANCE.md`](src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md)).
+- [REFramework](https://github.com/praydog/REFramework) by praydog. The XeMFG
+  bridge interoperates with REFramework's XeFG monitor in RE Engine games.
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 

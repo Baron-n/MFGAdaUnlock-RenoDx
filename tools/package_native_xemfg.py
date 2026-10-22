@@ -41,6 +41,7 @@ def main():
         'notices/MFG-Unlocker-MIT.txt':root/'src/addons/mfgunlock/xemfg/vendor/LICENSE.dashdogy.txt',
         'notices/MinHook-LICENSE.txt':root/'src/addons/mfgunlock/xemfg/vendor/third_party/minhook/LICENSE.txt',
         'notices/Intel-program-data.txt':root/'src/addons/mfgunlock/xemfg/vendor/XEFG-PROGRAMS-NOTICE.txt',
+        'notices/AMD-FidelityFX-API-MIT.txt':root/'src/addons/mfgunlock/xemfg/vendor/ffx_api/LICENSE.txt',
         'notices/Intel-headers-MIT.txt':args.intel_sdk/'inc/MIT.txt',
         'notices/Intel-SDK-LICENSE.txt':args.intel_sdk/'LICENSE.txt',
         'notices/PROVENANCE.md':root/'src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md',
