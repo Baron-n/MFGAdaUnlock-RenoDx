@@ -1,28 +1,13 @@
 # MFG Unlock
 
-**Native ReShade XeMFG R1.3 candidate:** this branch adds an independent MIT
-Streamline/D3D12 bridge, combining DLSS-G and XeMFG in one `.addon64` without
-OptiScaler or an ASI loader. Intel runtime DLLs remain required. Model/Tensor
-execution, XeLL and lifecycle checks passed isolated tests at 2x/3x/4x/6x;
-R1.1 also admits overlapping RenderSubmit/Present phases instead of blocking
-generation on a late END marker. Initial Cyberpunk runtime verification now
-confirms 2x/3x/4x/6x, Tensor execution and accepted driver metering. The user
-also reports good image quality and responsiveness versus X1.3. Controlled
-performance, blind image comparisons and physical latency remain unmeasured.
-R1.2 adds model/CUDA and driver-metering status, live metering control, optional
-Force Borderless with window-state reporting, and Auto/Reflex input -> Auto/XeLL
-latency preferences. XeMFG requires XeLL; these controls do not introduce an
-unsupported Reflex-output route. See the
-[implementation and limits](docs/research/native-reshade-xemfg-2026-10-19.md)
-and [installation/rollback](docs/native-xemfg-readme.txt).
-
-R1.3 reorganizes both panels into General, Quality, Latency and Diagnostics,
-with player-facing cards, scoped styling and compact navigation for narrow
-panels. XeMFG no longer holds its marker-bookkeeping lock across sleep or
-Present, and unchanged sleep settings are not sent again every frame. A new
-concurrency test covers late markers during sleep; the effect on physical
-mouse latency is still to be verified. See the [comparison with the previous
-transport](docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md).
+> **New in 1.5.0: the XeMFG backend.** One `.addon64` now contains two
+> frame-generation backends. **DLSS-G** (unchanged) unlocks NVIDIA multi-frame
+> generation on RTX 40-series. **XeMFG** runs Intel XeSS frame generation with
+> a multi-frame model on **RTX 20/30/40/50**. It is fed by the inputs the game
+> already produces for DLSS-G, by its own XeSS-FG, or by FSR 3.1 frame
+> generation. No OptiScaler or ASI loader is needed; Intel's runtime files are
+> installed from the addon panel. See [XeMFG backend](#xemfg-backend) for the
+> tutorial and the [XeMFG tested games](#xemfg-backend-tested-games).
 
 > Release **1.4.5** strengthens kernel and binary-patch identity, rollback,
 > allocation lifetime, hook error handling and latency-trial measurements.
@@ -37,7 +22,8 @@ transport](docs/research/xemfg-r1.3-interface-and-latency-2026-10-19.md).
 A [ReShade](https://reshade.me/) addon that enables **DLSS multi-frame generation
 (3x / 4x and above) on GeForce RTX 40-series** cards, which NVIDIA ships gated to
 RTX 50-series only — and corrects the frame interpolation so the extra frames
-carry new motion instead of repeats.
+carry new motion instead of repeats. With the **XeMFG** backend, it also
+provides 2x–6x frame generation through Intel XeSS-FG on RTX 20/30/40/50.
 
 **Release 1.4.4 hotfix:** adds DLSS-G **310.9.16** and Streamline **2.14.16**
 compatibility while retaining the previous .1 versions. The new blend-kernel
@@ -149,6 +135,45 @@ compatibility. The repository history and current code attribute these additions
 - Compatibility testing and documentation across the games and runtime
   combinations listed below.
 
+The **XeMFG backend** (release 1.5.0) is a further contribution by
+[mavismmg](https://github.com/mavismmg). It builds on the multi-frame XeFG
+model port, runtime layout and pacing work from
+[dashdogy's MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) (MIT,
+provenance in [`vendor/PROVENANCE.md`](src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md)).
+The following parts are new in this fork:
+
+- A native ReShade **Streamline → Intel XeFG bridge** (MIT, independent code)
+  that replaces the game's DLSS-G with XeFG in the same `.addon64`, without
+  OptiScaler or an ASI loader. XeLL provides latency reduction.
+- **Universal operation without per-game code:**
+  - declarative profiles (`profiles.json`), each rule with its evidence;
+  - depth/jitter conventions learned automatically per executable;
+  - Streamline structures from newer SDKs read through their known prefix;
+  - late-loaded Streamline interposers;
+  - a refusal to hook Streamline 1.x;
+  - frame-generation viewport selection by complete inputs.
+- **Data corrections:**
+  - a GPU pass that removes jitter from motion vectors (this is what made
+    Death Stranding 2 work);
+  - support for backbuffer subrectangles;
+  - FP16/scRGB HDR swapchains converted to HDR10 for XeFG.
+- **Input adapters:**
+  - games that run their **own XeSS-FG** use the user's 2x–6x multiplier;
+  - **FidelityFX FSR 3.1** frame generation can feed XeMFG;
+  - an experimental, opt-in **DLSS-SR** input.
+- **XeLL frame sequencing** that keeps Intel's latency library in step with
+  games that send constant Reflex tokens (the Resonance: A Plague Tale Legacy
+  fix).
+- A guided **Intel runtime installer** in the panel. It verifies exact file
+  hashes, downloads the supported pair from a pinned official Intel commit,
+  updates every copy in the game folder and provides rollback.
+- **Diagnostics for bug reports:**
+  - session and module inventory;
+  - XeLL and SDK messages;
+  - a compatibility report written beside the game;
+  - a field-session replay corpus with a triage tool;
+  - a conformance test matrix that covers official Streamline sample versions.
+
 These additions extend Dreamt's addon and dashdogy's research; they do not
 replace or claim authorship of either original contribution.
 
@@ -158,8 +183,18 @@ through [my Ko-fi](https://ko-fi.com/mavismmg).
 ## Contents
 
 - [Tested Games](#tested-games)
+  - [DLSS-G backend](#dlss-g-backend-tested-games)
+  - [XeMFG backend](#xemfg-backend-tested-games)
+- [Choosing a backend](#choosing-a-backend)
 - [Requirements](#requirements)
 - [Usage](#usage)
+- [XeMFG backend](#xemfg-backend)
+  - [Installing XeMFG](#installing-xemfg)
+  - [XeMFG settings](#xemfg-settings)
+  - [Supported inputs](#supported-xemfg-inputs)
+  - [Game profiles](#game-profiles)
+  - [XeMFG troubleshooting](#xemfg-troubleshooting)
+  - [Reporting an XeMFG problem](#reporting-an-xemfg-problem)
 - [Using with RenoDX DLSS5](#using-with-renodx-dlss5)
 - [Selecting the Streamline Runtime](#selecting-the-streamline-runtime)
 - [Verifying Operation](#verifying-operation)
@@ -176,6 +211,11 @@ through [my Ko-fi](https://ko-fi.com/mavismmg).
 - [Credits](#credits)
 
 ## Tested Games
+
+The two backends are tested separately. A game listed for one backend has not
+necessarily been tested with the other.
+
+### DLSS-G backend tested games
 
 | Game | Status |
 |---|---|
@@ -230,6 +270,29 @@ Streamline versions, GPU, drivers, and configuration.
 (HDR compatibility)** if the HDR issue occurs. If that mode introduces an
 artifact on a HUD/UI element, switch back to **Native**.
 
+### XeMFG backend tested games
+
+| Game | Status |
+|---|---|
+| Resident Evil Requiem | Working |
+| Monster Hunter Wilds | Working |
+| Dragon's Dogma 2 | Working |
+| Onimusha: Way of the Sword | Working |
+| PRAGMATA | Working |
+| Control Resonant | Working |
+| Assassin's Creed IV: Black Flag Resynced | Working — a built-in profile turns off native-output retention for this game |
+| Cyberpunk 2077 | Working — after a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
+| The Witcher 3: Wild Hunt (next-gen) | Working |
+| Alan Wake 2 | Working |
+| The Last of Us Part II Remastered | Working |
+| Mafia: The Old Country | Working |
+| Resonance: A Plague Tale Legacy | Working |
+| Death Stranding 2: On the Beach | Working — its jittered motion vectors are corrected automatically |
+
+These games were tested with the XeMFG backend of this fork. This is not a
+claim of universal compatibility. The XeMFG backend needs a game that
+provides frame-generation inputs (see [Supported inputs](#supported-xemfg-inputs)).
+
 ### Monster Hunter Wilds first-launch note
 
 After installing or updating the addon, or whenever the game rebuilds
@@ -256,10 +319,30 @@ reproducing the frame-pacing behavior, and testing the restart workaround.
 Other titles may work, but compatibility should be evaluated per game and
 runtime version.
 
+## Choosing a backend
+
+| | DLSS-G backend | XeMFG backend |
+|---|---|---|
+| GPU | GeForce RTX 40-series | GeForce RTX 20/30/40/50 |
+| Frame generation | NVIDIA DLSS-G, unlocked to 3x–6x on Ada | Intel XeSS-FG with a multi-frame model, 2x–6x |
+| Game requirement | DLSS frame generation through Streamline | DLSS-G inputs through Streamline, the game's own XeSS-FG, or FSR 3.1 frame generation |
+| Latency | NVIDIA Reflex | Intel XeLL |
+| Extra files | A modern `nvngx_dlssg.dll` | Intel `libxess_fg.dll` + `libxell.dll`, installed from the panel |
+| Graphics API | D3D12 (Vulkan experimental) | D3D12 |
+
+Both backends are in the same `renodx-mfgunlock.addon64`. A new installation
+uses **DLSS-G**. Select the backend in the panel under **General → Frame
+generation method**, then restart the game. Only one backend is active per
+launch.
+
 ## Requirements
 
+These requirements are for the **DLSS-G backend**. For XeMFG, see
+[XeMFG requirements](#xemfg-requirements).
+
 - **GeForce RTX 40-series.** For the separate RTX 30-series solution, see
-  [RTX 30-series support](#rtx-30-series-support) below.
+  [RTX 30-series support](#rtx-30-series-support) below, or use the
+  [XeMFG backend](#xemfg-backend).
 - ReShade with addon support (this is an `.addon64`, not an effect).
 - A game shipping DLSS frame generation via Streamline, with a reasonably modern
   `nvngx_dlssg.dll` (310.x). Games still on the DLSS 3 snippet (3.5.x) contain no
@@ -291,6 +374,160 @@ different packages.
 For NVIDIA Dynamic MFG, replacing only `nvngx_dlssg.dll` is not sufficient.
 The game must load a complete Streamline runtime that implements Dynamic MFG;
 VSync and frame-limiter support for Dynamic MFG was added in Streamline 2.14.1.
+
+## XeMFG backend
+
+XeMFG replaces the game's frame generation with Intel XeSS frame generation
+(XeFG), using a multi-frame model, at 2x–6x. It reads the game's existing
+frame-generation inputs, so the game must offer DLSS frame generation, its own
+XeSS-FG, or FSR 3.1 frame generation. The game's own frame generation is
+turned off while XeMFG is active; you keep using the game's menu toggle to
+turn frame generation on or off.
+
+### XeMFG requirements
+
+- GeForce **RTX 20, 30, 40 or 50-series**, D3D12.
+- ReShade with addon support (or a RenoDX mod for the game).
+- Windowed or borderless display. Exclusive fullscreen is not supported with
+  XeMFG; the game's display mode is kept unchanged and frame generation stays
+  off in that mode.
+- Intel's `libxess_fg.dll` and `libxell.dll` beside the game executable. The
+  panel installs the supported versions for you (step 4 below).
+- A game that provides frame-generation inputs; see
+  [Supported inputs](#supported-xemfg-inputs).
+
+### Installing XeMFG
+
+1. Install [ReShade](https://reshade.me/) with addon support, or the game's
+   [RenoDX](https://github.com/clshortfuse/renodx) mod.
+2. Put `renodx-mfgunlock.addon64` from the
+   [latest release](../../releases/latest) in the ReShade addon location for the
+   game (usually the folder with the game executable).
+3. Launch the game, open the ReShade overlay (**Home**), open the **MFG Unlock**
+   panel and set **General → Frame generation method** to **Intel XeMFG**.
+   Close the game completely and launch it again.
+4. If the panel says the Intel files are missing or a different version, open
+   **Diagnostics → Intel runtime files** and select **Install / update files**.
+   A helper lists every file it will change. Nothing changes until you confirm.
+   The helper then waits for the game to close, backs up the existing files and
+   installs the supported pair, downloaded from a pinned commit of Intel's
+   official [XeSS repository](https://github.com/intel/xess). It also updates
+   other Intel copies in the game folder, so the game cannot load a mismatched
+   pair, and provides rollback. Launch the game again afterwards.
+5. In the game's graphics settings, turn **Frame Generation** on (DLSS Frame
+   Generation, XeSS Frame Generation, or FSR Frame Generation, depending on
+   what the game offers).
+6. Choose the multiplier in the panel (**General → Frame multiplier**, 2x–6x). For
+   games that run their own XeSS-FG, the panel multiplier replaces the game's.
+
+**Verifying:** **General** shows whether frame generation is active, the
+effective multiplier and whether the model and Tensor acceleration are in use.
+A first launch after installing or updating may compile shaders and stutter;
+restart once before judging smoothness or image quality.
+
+**Removing or switching back:** select **NVIDIA DLSS-G** in the panel and
+restart. To remove the Intel files, use the rollback offered by the installer
+helper.
+
+### XeMFG settings
+
+The panel saves XeMFG settings to `MFGAdaUnlock.ini` beside the game. Most
+users never need to edit it.
+
+| Section / key | Default | Meaning |
+|---|---|---|
+| `[Backend] Selected` | `DLSSG` | `XeMFG` selects the XeMFG backend; restart required |
+| `[XeFG] Multiplier` | `4` | Output multiplier, `2`–`6` |
+| `[XeFG] UIComposition` | `0` | `1` composes the HUD from the game's HUD-less image, which avoids HUD interpolation artifacts (the HUD then updates at the real frame rate). Needs the game to provide a HUD-less image |
+| `[XeFG] XeFGFlipMetering` | `auto` | NVIDIA driver flip metering for generated frames; can also be toggled live in the panel |
+| `[Latency] Input` / `Output` | `Auto` | Latency route. XeMFG always uses XeLL for output; Reflex input from the game is translated to XeLL |
+| `[XeFG] InvertedDepth` / `JitteredMotion` | not set | Manual convention overrides for unusual games. Normally learned automatically (see below) |
+| `[Adapters] FidelityFX` | `1` | `0` stops XeMFG from taking over FSR 3.1 frame generation |
+| `[Adapters] DlssSr` | `0` | `1` enables the experimental DLSS-SR input (see below) |
+| `[Compatibility] RetainNativeOutput` | profile | `0`/`1` overrides whether the native swapchain is retained across output recreation |
+
+`[XeFG.Learned]` is written by the addon itself and records the depth and
+motion-vector conventions observed for that exact game executable. Delete the
+section to make the addon learn them again after a game update.
+
+### Supported XeMFG inputs
+
+XeMFG chooses its input from what the game actually calls.
+
+| Game provides | How XeMFG uses it | Status |
+|---|---|---|
+| DLSS frame generation through Streamline | Streamline's depth, motion vectors, HUD-less image, camera constants and Reflex markers feed XeFG; NVIDIA DLSS-G is turned off | Main route; all games in the XeMFG table |
+| The game's own XeSS frame generation | The game's XeFG context is kept and uses the panel multiplier | Supported |
+| FidelityFX FSR 3.1 frame generation | The FSR swapchain becomes the XeMFG output and FSR's prepare data feeds XeFG. The addon synthesizes latency markers, because FSR provides none | Supported; disable with `[Adapters] FidelityFX=0` |
+| DLSS Super Resolution only (no frame generation) | DLSS-SR evaluations provide depth and motion vectors | Experimental, off by default (`[Adapters] DlssSr=1`). NGX has no camera data, so a default projection is assumed and the HUD is interpolated |
+
+**Motion vectors and HDR:** games whose motion vectors include camera jitter
+(such as Death Stranding 2) are corrected on the GPU before XeFG. HDR10
+output is supported directly. scRGB (FP16) HDR output is converted to HDR10
+for XeFG; in scRGB games, HUD composition from a HUD-less image is not
+available yet.
+
+### Game profiles
+
+XeMFG contains no game-specific code. The few behaviors observed to differ
+per game are data in a built-in `profiles.json`, compiled into the addon. Each
+rule records its evidence, and the rules apply automatically; nothing needs to
+be created or downloaded. Current built-in rules:
+
+- the Steam overlay retains the native swapchain;
+- the native swapchain is not retained in AC Black Flag Resynced;
+- the observed depth conventions of TLOU2, Alan Wake 2 and Death Stranding 2;
+- conflicting frame-generation plugins;
+- a REFramework build with a known XeFG hook issue.
+
+An optional `MFGAdaUnlock.profiles.json` in the game folder can add or
+override rules for local testing. An invalid file is rejected as a whole and
+the addon keeps the built-in rules.
+
+### XeMFG troubleshooting
+
+#### The panel says Intel files are missing or a different version
+
+Use **Diagnostics → Intel runtime files → Install / update files**. Game
+updates and Steam's **Verify integrity of game files** can restore the game's
+original Intel DLLs. When the installed pair is not a supported one, XeMFG
+does not start and the game runs normally without it. Run the installer again
+after every game update.
+
+#### Frame generation stays off
+
+- Turn frame generation on in the game's menu. XeMFG follows the game's
+  toggle, and many games only enable it during gameplay, not in menus.
+- Use windowed or borderless mode.
+- Check **General**: it states the current reason, such as waiting for the
+  game to enable frame generation, missing inputs, or unsupported format.
+- If you changed the backend, restart the game completely.
+
+#### The game shows a DirectX error or crashes at start
+
+Restore the previous addon from its backup and report the problem with the
+files listed below. As a temporary test, add `[Compatibility]
+RetainNativeOutput=0` to `MFGAdaUnlock.ini`. This setting fixed AC Black Flag
+Resynced, which now has a built-in rule.
+
+#### HUD elements smear or ghost
+
+Enable **Quality → UI Composition** if the game provides a HUD-less image.
+Otherwise the HUD is interpolated together with the scene.
+
+### Reporting an XeMFG problem
+
+Attach these files from the game folder:
+
+- `MFGAdaUnlock-XeMFG.log` contains the session header, the input route and
+  the reason frame generation was or was not admitted;
+- `MFGAdaUnlock-XeMFG-compatibility.json` is written automatically when the
+  output closes;
+- the text from **Diagnostics → Copy compatibility report**;
+- the game's `ReShade.log`.
+
+Also mention the game version, GPU and driver, and whether the problem
+appears with the **NVIDIA DLSS-G** backend too.
 
 ## Using with RenoDX DLSS5
 
@@ -1035,8 +1272,10 @@ Cyberpunk 2077. Follow that repository's installation, compatibility, and
 runtime-version instructions for RTX 30-series use.
 
 `dlssg_for_sm86` is an independent implementation and is not bundled with or
-maintained by this fork. MFG Unlock itself remains targeted at RTX 40-series
-GPUs.
+maintained by this fork. The DLSS-G backend of MFG Unlock remains targeted at
+RTX 40-series GPUs. On RTX 20 and 30-series cards, the
+[XeMFG backend](#xemfg-backend) provides multi-frame generation through Intel
+XeSS-FG instead.
 
 ## Building
 
@@ -1090,6 +1329,33 @@ published download retains the standard name `renodx-mfgunlock.addon64`.
 Without explicit local provider inputs, provider-dependent tests are skipped;
 that does not reproduce the complete local release validation.
 
+### Building the XeMFG backend
+
+The XeMFG backend is part of the same addon. The test project builds it as the
+`mfgunlock_native_xemfg` target (`renodx-mfgunlock-native.addon64`, published
+as `renodx-mfgunlock.addon64`). Configure `tests/CMakeLists.txt` with:
+
+- `RENODX_SOURCE_DIR`, the RenoDX dependency checkout;
+- `XEMFG_SDK_ROOT`, the Intel XeSS SDK headers;
+- the verified local inputs prepared by `prepare_xemfg_inputs.py` and
+  `vendor/generate_xess_programs.py`.
+
+The motion-vector dejitter and scRGB passes are compiled with `fxc` from the
+Windows SDK during the build.
+
+The gate is `ctest -C Release`. It runs:
+
+- the unit and numeric tests (dejitter and scRGB on a WARP device);
+- the `xemfg_native_*` smoke scenarios and the `xemfg_conformance_*` matrix, on
+  the real Intel runtime with Streamline, FidelityFX and NGX fixtures;
+- the field-session replay (`tests/xemfg_replay_tests.py`).
+
+Set `XEMFG_OFFLINE_FG`, `XEMFG_OFFLINE_LL` and `XEMFG_OFFLINE_RESHADE` to
+verified copies of the Intel pair and ReShade outside a game folder, because
+game updates can remove them. The optional Streamline sample tests run when
+`XEMFG_SL_SAMPLES_ROOT` points at builds made with `tools/sl_sample.py`. The
+execution plan and record are in [`docs/plan/`](docs/plan/).
+
 ## Credits
 
 - [dashdogy/RTX40MFG-Unlock](https://github.com/dashdogy/RTX40MFG-Unlock)
@@ -1137,12 +1403,22 @@ that does not reproduce the complete local release validation.
   ReShade + MFG Unlock installation workflow for Xbox Game Pass / UWP-style game packages,
   including Vulkan titles such as Indiana Jones and DOOM: The Dark Ages.
   See the [community installation guide](https://www.reddit.com/r/ReShade/comments/1wd6dyr/guide_to_installing_reshade_on_uwpxbox_game_pass/).
+- [dashdogy/MFG-Unlocker](https://github.com/dashdogy/MFG-Unlocker) (MIT)
+  provided the multi-frame XeFG model port, runtime layout, extra-output pacing
+  and optional NVIDIA Tensor route that the XeMFG backend builds on. Exact
+  provenance is in
+  [`vendor/PROVENANCE.md`](src/addons/mfgunlock/xemfg/vendor/PROVENANCE.md).
+- XeMFG uses Intel's [XeSS frame generation and XeLL](https://github.com/intel/xess)
+  runtime, installed from Intel's official repository under Intel's terms, and
+  AMD's public [FidelityFX API](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK)
+  headers (MIT) for the FSR 3.1 input. No Intel or AMD runtime binary is
+  redistributed here.
 - Built on [RenoDX](https://github.com/clshortfuse/renodx) by clshortfuse, and
   [ReShade](https://github.com/crosire/reshade) by crosire.
 
 ## Disclaimer
 
-Not affiliated with or endorsed by NVIDIA. This modifies process memory of a
+Not affiliated with or endorsed by NVIDIA, Intel or AMD. This modifies process memory of a
 running game; use it on your own hardware at your own risk, and expect anti-cheat
 in multiplayer titles to object. Results on hardware NVIDIA did not ship this
 feature for are to be judged by eye.
