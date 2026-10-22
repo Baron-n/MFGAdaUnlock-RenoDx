@@ -192,7 +192,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token)
-  set(XEMFG_BACKLOG reflex-v2 reflex-next constants-v3 backbuffer-subrect
+  set(XEMFG_BACKLOG backbuffer-subrect
     menu-viewport-first sl1-interposer)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)

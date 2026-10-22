@@ -13,7 +13,9 @@ enum ConstantIssue : uint32_t {
 inline bool ConstantFinite(float value) noexcept { return std::isfinite(value) && std::abs(value)<1.e30f; }
 inline uint32_t TranslateConstants(const sl::Constants& c,bool inverted,bool jittered,
     xefg_swapchain_frame_constant_data_t& data) noexcept {
-  if(c.structType!=sl::Constants::s_structType || c.structVersion<1 || c.structVersion>2) return ConstantMetadata;
+  // Streamline structures are append-only: a newer Constants starts with the
+  // V1/V2 fields read here. A foreign type or version zero is still refused.
+  if(c.structType!=sl::Constants::s_structType || c.structVersion<1) return ConstantMetadata;
   uint32_t issues{};
   if(c.cameraMotionIncluded!=sl::eTrue) issues|=ConstantCameraMotion;
   if(c.motionVectors3D!=sl::eFalse) issues|=ConstantMotion3D;

@@ -279,7 +279,8 @@ diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock
 if args.backbuffer_subrect:
     diagnostics_verified['backbuffer_region']=any(e.get('event')=='native_backbuffer_region' and e.get('width')==320 and e.get('height')==180 for e in events)
 if args.struct_probe:
-    refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event')=='native_struct_rejected'}
+    # Each newer or chained structure is named, whether refused or adapted by prefix.
+    refused={(e.get('api'),e.get('version'),e.get('next')) for e in events if e.get('event') in ('native_struct_rejected','native_struct_adapted')}
     diagnostics_verified['struct_rejections']=all(k in refused for k in (('slReflexSetOptions',2,False),('slReflexSetOptions',1,True),
         ('slDLSSGSetOptions',6,False),('slSetConstants',3,False)))
 # The child checks each real API call, SDK status and output lifetime directly;

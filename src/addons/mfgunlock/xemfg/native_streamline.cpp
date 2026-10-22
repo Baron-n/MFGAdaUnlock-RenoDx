@@ -103,14 +103,17 @@ sl::Result GetLoadedHook(sl::Feature feature,bool& enabled) {
 }
 // A structure refused for its type, version or extension chain. Grouped per
 // API/version so a game repeating the call every frame logs once.
-void StructRejected(const char* api,const sl::BaseStructure& value,const char* reason) {
-  static PatternBudget budget(32);
+void StructEvent(const char* event,const char* api,const sl::BaseStructure& value,const char* reason) {
+  static PatternBudget budget(48);
   const bool chained=value.next!=nullptr;
-  const auto key=std::string(api)+'/'+std::to_string(value.structVersion)+'/'+(chained?"1":"0")+'/'+reason;
+  const auto key=std::string(event)+'/'+api+'/'+std::to_string(value.structVersion)+'/'+(chained?"1":"0")+'/'+reason;
   if(const auto count=budget.Admit(key))
-    xess_mod::WriteLog("native_struct_rejected","\"api\":\""+std::string(api)+"\",\"version\":"+std::to_string(value.structVersion)
+    xess_mod::WriteLog(event,"\"api\":\""+std::string(api)+"\",\"version\":"+std::to_string(value.structVersion)
         +",\"next\":"+(chained?"true":"false")+",\"reason\":\""+reason+"\",\"occurrence\":"+std::to_string(count));
 }
+void StructRejected(const char* api,const sl::BaseStructure& value,const char* reason) { StructEvent("native_struct_rejected",api,value,reason); }
+// A newer or chained structure accepted through its known prefix.
+void StructAdapted(const char* api,const sl::BaseStructure& value,const char* reason) { StructEvent("native_struct_adapted",api,value,reason); }
 
 // Observation only: separates "the game hid FG" from "FG inputs were refused".
 void FeatureQuery(const char* api,sl::Feature feature,sl::Result result) {
@@ -237,8 +240,11 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
       receipt.accepted=false;receipt.rejection="removed";
       frame->resources&=~bit; continue;
     }
-    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion!=1 || !ResourceHeaderSupported(*t.resource)
+    // A newer ResourceTag is read through its V1 prefix (append-only ABI).
+    if(t.structType!=sl::ResourceTag::s_structType || t.structVersion<1 || !ResourceHeaderSupported(*t.resource)
         || t.resource->type!=sl::ResourceType::eTex2d || t.resource->state==UINT_MAX) { reject(HudMetadata); continue; }
+    if(t.structVersion>1) StructAdapted("slSetTag",t,"v1_prefix_read");
+    if(t.resource->structVersion>1) StructAdapted("sl::Resource",*t.resource,"v1_prefix_read");
     ComPtr<ID3D12Resource> resource;
     if(!single_overlay::native::Unwrap(reinterpret_cast<IUnknown*>(t.resource->native),resource)) {
       rejection="resource_unwrap";
@@ -365,7 +371,10 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
       frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
       if(frame->constantIssues&ConstantMetadata)
         StructRejected("slSetConstants",c,c.structType!=sl::Constants::s_structType?"type":"version");
-      else SampleConstants(*o,c,id,frame->constantIssues);
+      else {
+        if(c.structVersion>2) StructAdapted("slSetConstants",c,"v2_prefix_read");
+        SampleConstants(*o,c,id,frame->constantIssues);
+      }
       frame->valid=frame->constantIssues==0;
       if(frame->constantIssues!=o->lastConstantIssues && o->constantLogBudget<12) {
         o->lastConstantIssues=frame->constantIssues; ++o->constantLogBudget;
@@ -381,10 +390,12 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   return r;
 }
 sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts) {
-  if(opts.structType!=sl::DLSSGOptions::s_structType || opts.structVersion<1 || opts.structVersion>5) {
+  // Only V1's mode is read; the native call receives the bridge's own V1.
+  if(opts.structType!=sl::DLSSGOptions::s_structType || opts.structVersion<1) {
     StructRejected("slDLSSGSetOptions",opts,opts.structType!=sl::DLSSGOptions::s_structType?"type":"version");
     return sl::Result::eErrorUnsupportedInterface;
   }
+  if(opts.structVersion>5) StructAdapted("slDLSSGSetOptions",opts,"v1_prefix_read");
   auto& s=State();
   // OFF from a menu/secondary viewport cannot claim the selected FG output.
   static std::atomic<uint32_t> optionBudget{};
@@ -407,10 +418,13 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
 }
 sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl::DLSSGOptions*) {
   const auto r=getState(v,state,nullptr); if(r!=sl::Result::eOk) return r;
-  if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1 || state.structVersion>4) {
+  // Fields are written only up to the known V4 layout; newer ones stay as
+  // Streamline filled them.
+  if(state.structType!=sl::DLSSGState::s_structType || state.structVersion<1) {
     StructRejected("slDLSSGGetState",state,state.structType!=sl::DLSSGState::s_structType?"type":"version");
     return r;
   }
+  if(state.structVersion>4) StructAdapted("slDLSSGGetState",state,"v4_prefix_written");
   const auto status=Snapshot();
   const auto originalStatus=uint32_t(state.status);
   // The NVIDIA engine is deliberately disabled. Its Reflex/backbuffer hooks
@@ -431,19 +445,26 @@ sl::Result StateHook(const sl::ViewportHandle& v,sl::DLSSGState& state,const sl:
   return r;
 }
 sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
-  if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion!=1 || opts.next) {
-    StructRejected("slReflexSetOptions",opts,opts.structType!=sl::ReflexOptions::s_structType?"type":opts.next?"next":"version");
+  // Only a foreign structure is refused. Streamline structures are append-only,
+  // so a newer version starts with the known V1 fields.
+  if(opts.structType!=sl::ReflexOptions::s_structType || opts.structVersion<1) {
+    StructRejected("slReflexSetOptions",opts,opts.structType!=sl::ReflexOptions::s_structType?"type":"version");
     return sl::Result::eErrorUnsupportedInterface;
   }
   auto& s=State();
   // A known unsupported jitter convention never creates a XeLL output.
   // Preserve the game's native latency policy in that passthrough case.
   const bool native=s.latencyOutput.load()==LatencyOutput::Reflex || s.jitter;
+  if(opts.structVersion>1 || opts.next) StructAdapted("slReflexSetOptions",opts,native?"forwarded_unchanged":"v1_prefix_forwarded");
   // The original setter stays on the game's calling thread. Native output
-  // preserves every V1 field; XeLL output suppresses the native limiter too.
-  sl::ReflexOptions forwarded=opts;
+  // forwards the game's structure untouched, newer fields and chain included.
+  // XeLL output sends the known V1 prefix with the game's extension chain and
+  // suppresses the native limiter; a V1 structure is valid for every 2.x SDK.
+  sl::ReflexOptions forwarded;
+  memcpy(static_cast<void*>(&forwarded),&opts,sizeof(forwarded));
+  forwarded.structVersion=1; forwarded.next=opts.next;
   if(!native) { forwarded.mode=sl::ReflexMode::eOff; forwarded.frameLimitUs=0; }
-  const auto result=reflexOptions(forwarded);
+  const auto result=native?reflexOptions(opts):reflexOptions(forwarded);
   s.reflexOptionsReady=result==sl::Result::eOk;
   s.reflexOff=result==sl::Result::eOk && forwarded.mode==sl::ReflexMode::eOff;
   s.gameReflexMode=uint32_t(opts.mode);

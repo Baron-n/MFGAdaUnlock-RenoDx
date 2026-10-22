@@ -34,8 +34,8 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | # | Tarefa | Critério de saída | Teste | Status |
 |---|---|---|---|---|
 | 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `constant-sleep-token` sai do backlog; nova sessão de campo do Plague Tale no corpus | feito |
-| 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | pendente |
-| 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | pendente |
+| 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | feito |
+| 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | feito |
 | 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | pendente |
 | 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer` | pendente |
 | 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | pendente |
@@ -117,3 +117,9 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - O teste unitário `xemfg_latency_translation` reutilizava IDs mais antigos para simular uma corrida com resize; foi renumerado e ganhou o caso de ID monotônico.
   - Gate: 150 aprovados com essa renumeração; replay: 8.
   - Hardware-alvo da fase 2 respondido: RTX 20/30/40/50 (item 2.5 confirmado).
+- **2.1 + 2.2** (um commit só: as duas mudanças ficaram no mesmo arquivo durante o gate).
+  - `ReflexOptions` v2+ ou com `next` não devolve mais erro ao jogo. A rota Reflex nativa encaminha a struct original; a rota XeLL encaminha o prefixo v1 com a cadeia `next` do jogo e zera só `mode`/`frameLimitUs`.
+  - `Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` v2+ e `sl::Resource` v2+ são lidos pelo prefixo conhecido (o ABI do Streamline só acrescenta campos). Tipo estrangeiro ou versão 0 continuam recusados. Cada adaptação gera `native_struct_adapted`.
+  - Testes unitários de constantes atualizados para a nova política.
+  - Saíram do backlog: `reflex-v2`, `reflex-next`, `constants-v3`.
+  - Gate: 153 aprovados; replay: 8.
