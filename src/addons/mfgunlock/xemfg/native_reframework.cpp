@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Own adapter for REFramework_XeFG_PreRetireSwapchainV1, not REF internals.
 #include "native_reframework.hpp"
+#include <algorithm>
+#include <mutex>
+#include <vector>
 #include "vendor/sha256_util.h"
 #include <psapi.h>
 #include <filesystem>
@@ -48,8 +51,13 @@ bool Invoke(PreRetireV1 fn,IUnknown* proxy,void* context,HWND hwnd,uint32_t* val
 }
 }
 Peer::~Peer() {for(auto module:modules)FreeLibrary(module);}
+// Builds with the defective XeFG hook monitor come from profiles.json
+// (known_bad_reframework_sha256), never from a literal in code.
+namespace { std::mutex knownLock; std::vector<std::string> knownMonitorIssues; }
+void SetKnownMonitorIssues(std::vector<std::string> sha256) { std::lock_guard lock(knownLock); knownMonitorIssues=std::move(sha256); }
 bool KnownMonitorIssue(const std::string& sha) noexcept {
-  return sha=="70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac";
+  std::lock_guard lock(knownLock);
+  return !sha.empty() && std::find(knownMonitorIssues.begin(),knownMonitorIssues.end(),sha)!=knownMonitorIssues.end();
 }
 bool Safe(Result r) noexcept {return r==Result::Legacy || r==Result::SafeNotTracked || r==Result::SafeDetached;}
 Info Snapshot() {std::lock_guard lock(infoLock);return latest;}

@@ -3,6 +3,7 @@
 #include "native_constants.hpp"
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
+#include "native_profiles.hpp"
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
 #include <cmath>
@@ -666,13 +667,12 @@ sl::Result ResolveHook(sl::Feature feature,const char* name,void*& fn) {
   if(!stopping && r==sl::Result::eOk && name && fn) {
     const bool generation=!strcmp(name,"slDLSSGSetOptions") || !strcmp(name,"slDLSSGGetState");
     if(generation) {
+      // Observer modules from profiles.json keep the original functions.
       HMODULE caller{};
-      const auto observer=GetModuleHandleW(L"gameoverlayrenderer64.dll");
-      if(observer && GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-          reinterpret_cast<LPCWSTR>(_ReturnAddress()),&caller) && caller==observer) {
-        ++State().externalResolutions;
-        return r;
-      }
+      if(GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+          reinterpret_cast<LPCWSTR>(_ReturnAddress()),&caller) && caller)
+        for(const auto& name:CurrentPolicy().observerModules)
+          if(GetModuleHandleW(name.c_str())==caller) { ++State().externalResolutions; return r; }
     }
     const bool captured=Feature(name,fn);
     if(generation) {

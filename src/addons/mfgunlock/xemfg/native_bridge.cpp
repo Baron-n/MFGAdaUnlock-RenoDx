@@ -442,6 +442,7 @@ void Attach(HMODULE module) {
   s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",DefaultInvertedDepth(executable)?1:0,ini.c_str())!=0;
   s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",DefaultJitteredMotion(executable)?1:0,ini.c_str())!=0;
   LoadControls();
+  reframework::SetKnownMonitorIssues(CurrentPolicy().knownBadReframework);
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);
   ConfigureTrace(GetPrivateProfileIntW(L"Diagnostics",L"StallTrace",0,ini.c_str())!=0,
       GetPrivateProfileIntW(L"Diagnostics",L"GpuTiming",0,ini.c_str())!=0);

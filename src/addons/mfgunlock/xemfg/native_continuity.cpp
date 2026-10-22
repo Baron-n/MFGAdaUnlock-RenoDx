@@ -2,6 +2,7 @@
 // Rebind a retained native output to the NEW Intel presentation queue. No
 // third-party reference is released. Fail rather than guess ownership/layout.
 #include "native_continuity.hpp"
+#include "native_profiles.hpp"
 #include "vendor/overlay_native.h"
 #include "vendor/port/port_support.h"
 #include <atomic>
@@ -35,7 +36,9 @@ void Put(std::shared_ptr<Entry> entry) {
 }
 void ConfigureNativeContinuity(int value) noexcept {mode=value;}
 bool NativeContinuityEnabled() noexcept {
-  return mode==1 || (mode<0 && GetModuleHandleW(L"gameoverlayrenderer64.dll")!=nullptr);
+  // Default: profiles.json (retain_native_output, e.g. while the Steam overlay
+  // holds references); the INI value 0/1 overrides it.
+  return mode==1 || (mode<0 && CurrentPolicy().retainNativeOutput.value_or(false));
 }
 void RetainNativeOutput(ComPtr<IDXGISwapChain4> chain,ID3D12CommandQueue* queue) {
   HWND window{};DWORD pid{};

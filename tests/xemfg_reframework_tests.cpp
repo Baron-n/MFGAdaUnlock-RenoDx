@@ -45,6 +45,7 @@ int wmain(int argc,wchar_t** argv) {
     failed.reset();
     FreeLibrary(module);Check(GetModuleHandleW(argv[1])!=nullptr,"V1 lease lost before retirement");peer.reset();
     Check(GetModuleHandleW(argv[1])==nullptr,"V1 lease leak");
+    SetKnownMonitorIssues({"70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac"}); // from profiles.json
     Check(KnownMonitorIssue("70a2a3c24030d8bc3695554e7f929fd1b0b4b757fb5ba2c9d34f42d7155005ac") && !KnownMonitorIssue("unknown"),"warning identity overgeneralized");
     std::cout<<"PASS: absent/legacy/V1 discovery, exact ABI results, exceptions, ambiguity, discovery failure, proxy ownership, module unload and bounded warning identity\n";
     return 0;

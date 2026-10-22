@@ -18,6 +18,9 @@
 #include <xefg_swapchain_d3d12.h>
 #include <xell_d3d12.h>
 #include <psapi.h>
+#ifdef MFGUNLOCK_NATIVE_XEMFG
+#include "native_profiles.hpp"
+#endif
 #include <intrin.h>
 #include <map>
 #include <memory>
@@ -379,16 +382,22 @@ __declspec(noinline) Result Destroy(Handle h) {
 void Start() {
   std::lock_guard lock(mutex);
   if (mfgunlock::backend::Read()!=mfgunlock::backend::Kind::XeMfg) { Detail("DLSS-G selected; XeMFG companion inactive"); return; }
-  if (GetModuleHandleW(L"MFGUnlocker.asi")) throw std::runtime_error("other_mfg_plugin_present");
 #ifdef MFGUNLOCK_NATIVE_XEMFG
   host=self; // Explicitly admitted in-process transport, never an OptiScaler impersonation.
-  if(GetModuleHandleW(L"MFGAdaUnlock.XeMFG.asi")) throw std::runtime_error("remove_companion_before_native_bridge");
+  // Bridges that patch the same Intel runtime come from profiles.json.
+  for(const auto& name:mfgunlock::xemfg::native::CurrentPolicy().conflictingModules)
+    if(GetModuleHandleW(name.c_str())) {
+      std::string ascii; for(const auto c:name) ascii+=static_cast<char>(c); // profile names are ASCII
+      throw std::runtime_error("other_mfg_plugin_present:"+ascii);
+    }
   std::array<HMODULE,2048> modules{}; DWORD bytes{};
   if(!EnumProcessModules(GetCurrentProcess(),modules.data(),DWORD(sizeof(modules)),&bytes)
       || bytes>sizeof(modules)) throw std::runtime_error("module_inventory");
   for(size_t i=0;i<bytes/sizeof(HMODULE);++i)
     if(IsOptiScaler10(modules[i])) throw std::runtime_error("remove_OptiScaler_loader_before_native_bridge");
 #else
+  // Legacy OptiScaler companion build: no profiles are linked here.
+  if (GetModuleHandleW(L"MFGUnlocker.asi")) throw std::runtime_error("other_mfg_plugin_present");
   std::array<HMODULE,2048> modules{}; DWORD bytes{};
   if (!EnumProcessModules(GetCurrentProcess(),modules.data(),DWORD(sizeof(modules)),&bytes) || bytes>sizeof(modules)) throw std::runtime_error("module_inventory");
   for (size_t i=0;i<bytes/sizeof(HMODULE);++i) if (IsOptiScaler10(modules[i])) {

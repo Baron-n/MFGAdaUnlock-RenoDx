@@ -29,6 +29,7 @@ std::shared_ptr<Peer> Resolve(const std::shared_ptr<Peer>& previous={},Enumerate
 Result Prepare(const std::shared_ptr<Peer>&,IUnknown* publicProxy,void* context,HWND) noexcept;
 bool Safe(Result) noexcept;
 bool KnownMonitorIssue(const std::string& sha256) noexcept;
+void SetKnownMonitorIssues(std::vector<std::string> sha256);
 Info Snapshot(); // cached; no enumeration, file I/O, or foreign calls in the UI
 const char* Description(const Info&) noexcept;
 }
