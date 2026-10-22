@@ -90,8 +90,8 @@ O usuário isolou o problema: com as DLLs do XeFG trocadas pelo par revisado, o 
    - não testado com o `_nvngx.dll` real do driver.
 6. **4.2 dejitter:** a convenção de sinal (a mesma do FSR2) foi validada pelo teste numérico e pelo DS2 interpolando. Uma comparação visual (PSNR entre frame gerado e real) não foi feita.
 7. **Seleção de viewport:** o ramo "selecionado 30 frames sem entradas" não tem cenário próprio.
-9. **Causa-raiz no AC Black Flag:** a reutilização da swapchain nativa retida (`native_output_reused`) perde o device no 1º Present nesse jogo, mas funciona em CONTROL, DD2, Onimusha, PRAGMATA e RE Requiem. Por que só no AC ainda não foi entendido; a regra de perfil contorna o problema.
-8. **RTX 20/30:** a cobertura sem DLSS-G nativo foi validada só por fixture (a máquina tem RTX 4070 SUPER).
+8. **Causa-raiz no AC Black Flag:** a reutilização da swapchain nativa retida (`native_output_reused`) perde o device no 1º Present nesse jogo, mas funciona em CONTROL, DD2, Onimusha, PRAGMATA e RE Requiem. Por que só no AC ainda não foi entendido; a regra de perfil contorna o problema.
+9. **RTX 20/30:** a cobertura sem DLSS-G nativo foi validada só por fixture (a máquina tem RTX 4070 SUPER).
 
 ## Notas para as próximas etapas
 - O gate depende de `XEMFG_OFFLINE_FG/LL/RESHADE` no cache do CMake. Eles agora apontam para `build/xemfg-offline-reference/`, cópias com hash verificado do par 2.x e do ReShade, e não mais para a pasta do Cyberpunk (a atualização do Steam apagou os DLLs no meio da execução).
