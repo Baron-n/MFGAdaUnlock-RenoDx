@@ -66,29 +66,32 @@ Addon instalado, com backup do anterior em `MFGAdaUnlock-profiles/backup-1.5.0-f
 | Resident Evil Requiem | **Interpolando** |
 | The Last of Us Part II | **Interpolando** |
 | Mafia: The Old Country | **Interpolando** depois da correção da sonda (o 1º teste de campo revelou a regressão) |
-| AC Black Flag Resynced | `device_lost` no Present da 2ª saída, com o FG pausado; **o mesmo acontecia com o addon anterior** (sessão de 21/10). Não é regressão; está pendente |
+| AC Black Flag Resynced | **Interpolando (6x)** depois da regra de perfil `ac-black-flag-no-output-retention`; ver abaixo |
 | Cyberpunk 2077 | **Recusado na partida**: uma atualização do Steam (22/10, 13:46) trocou os runtimes do jogo por `libxess_fg` 1.1.0.19 / `libxell` 1.1.0.6, um par não revisado |
 | Monster Hunter Wilds | Não testado: o jogo não está mais instalado (sobrou só o addon) |
 
 Não alterados: Expedition 33, Silent Hill 2 e The Great Circle usam builds antigas e menores do addon (de antes do XeMFG nativo), e The Great Circle é Vulkan. Substituí-las mudaria o produto nesses jogos.
 
+### AC Black Flag (isolado pelo usuário em 2026-10-22)
+O usuário isolou o problema: com as DLLs do XeFG trocadas pelo par revisado, o jogo dá erro de DX12 ao iniciar. É o par que permite ao XeMFG rodar; o erro vem do que acontece depois. Com o overlay do Steam, a ponte retém a swapchain nativa e a reutiliza quando o jogo a recria, e nesse jogo o 1º Present da saída reutilizada perde o device (`DXGI_ERROR_DEVICE_REMOVED`, motivo `0x887A002B`). Isso aconteceu nas 6 sessões que reutilizaram, e a única que interpolou (21/10) não reutilizou. Com `RetainNativeOutput=0` o jogo rodou e interpolou a 6x. Correção: regra de perfil `ac-black-flag-no-output-retention` (só o executável `ACBlackFlag.exe`), com teste unitário; revalidada no jogo (6 frames por Present, nenhuma perda de device).
+
 ## O que não foi feito ou ficou pendente
 1. **4.5, projeto de teste UE5:** bloqueado, porque o Unreal Engine 5 não está instalado. Pulado por decisão do usuário.
 2. **Cyberpunk 2077:** precisa do par de runtimes revisado de volta. O botão de instalação do XeSS no painel faz isso; também dá para copiar as cópias verificadas de `build/xemfg-offline-reference/` (com backup dos arquivos do Steam). A cópia automática foi bloqueada pelo sistema de permissões e ficou para o usuário decidir.
-3. **AC Black Flag:** investigar o `device_lost` (`DXGI_ERROR_DEVICE_REMOVED`, motivo `0x887A002B`) no caminho de reutilização de saída (`native_output_reused`), que é anterior a esta branch.
-4. **4.4:** HUD-less FP16 ainda é filtrado em jogos scRGB, e o XeFG roda sem ele. Falta converter também o HUD-less, inclusive a cópia volátil.
-5. **5.3 FidelityFX:**
+3. **4.4:** HUD-less FP16 ainda é filtrado em jogos scRGB, e o XeFG roda sem ele. Falta converter também o HUD-less, inclusive a cópia volátil.
+4. **5.3 FidelityFX:**
    - não testado em jogo FSR real;
    - a UI registrada via `REGISTERUIRESOURCE` é ignorada;
    - interpolação manual (lista/textura do jogo) é recusada;
    - o texto de status ainda diz "Streamline inputs".
-6. **5.4 DLSS-SR:**
+5. **5.4 DLSS-SR:**
    - projeção assumida (o NGX não tem câmera);
    - não cobre jogos que usam DLSS-SR pelo Streamline;
    - não testado com o `_nvngx.dll` real do driver.
-7. **4.2 dejitter:** a convenção de sinal (a mesma do FSR2) foi validada pelo teste numérico e pelo DS2 interpolando. Uma comparação visual (PSNR entre frame gerado e real) não foi feita.
-8. **Seleção de viewport:** o ramo "selecionado 30 frames sem entradas" não tem cenário próprio.
-9. **RTX 20/30:** a cobertura sem DLSS-G nativo foi validada só por fixture (a máquina tem RTX 4070 SUPER).
+6. **4.2 dejitter:** a convenção de sinal (a mesma do FSR2) foi validada pelo teste numérico e pelo DS2 interpolando. Uma comparação visual (PSNR entre frame gerado e real) não foi feita.
+7. **Seleção de viewport:** o ramo "selecionado 30 frames sem entradas" não tem cenário próprio.
+9. **Causa-raiz no AC Black Flag:** a reutilização da swapchain nativa retida (`native_output_reused`) perde o device no 1º Present nesse jogo, mas funciona em CONTROL, DD2, Onimusha, PRAGMATA e RE Requiem. Por que só no AC ainda não foi entendido; a regra de perfil contorna o problema.
+8. **RTX 20/30:** a cobertura sem DLSS-G nativo foi validada só por fixture (a máquina tem RTX 4070 SUPER).
 
 ## Notas para as próximas etapas
 - O gate depende de `XEMFG_OFFLINE_FG/LL/RESHADE` no cache do CMake. Eles agora apontam para `build/xemfg-offline-reference/`, cópias com hash verificado do par 2.x e do ReShade, e não mais para a pasta do Cyberpunk (a atualização do Steam apagou os DLLs no meio da execução).
