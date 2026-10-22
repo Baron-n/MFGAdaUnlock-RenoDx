@@ -46,7 +46,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 |---|---|---|---|---|
 | 3.1 | Carregador de `profiles.json` (recurso embutido + `MFGAdaUnlock.profiles.json` na pasta do jogo) e log do perfil aplicado | Perfis só ajustam política; JSON inválido é ignorado com log | `xemfg_profiles` (unit) | feito |
 | 3.2 | Mover para perfis: observador Steam, retenção da saída nativa, REFramework, conflitos de plugin | Comportamento idêntico ao RC5 com o perfil padrão; sem nomes de módulo no código | testes de observador/continuidade/REFramework existentes | feito |
-| 3.3 | Convenção depth/jitter aprendida: divergência ⇒ recriação da saída com as flags corretas; persistência em `[XeFG.Learned]` por hash do executável | Primeira sessão converge após uma recriação; a seguinte já inicia certa; overrides manuais têm prioridade | novo cenário `learned-depth` | pendente |
+| 3.3 | Convenção depth/jitter aprendida: divergência ⇒ recriação da saída com as flags corretas; persistência em `[XeFG.Learned]` por hash do executável | Primeira sessão converge após uma recriação; a seguinte já inicia certa; overrides manuais têm prioridade | novo cenário `learned-depth` | feito |
 | 3.4 | Remover `native_game_defaults.hpp` | TLOU2/AW2/DS2 cobertos por aprendizado ou perfil com evidência | `xemfg_native_*` + replay | pendente |
 
 ## Fase 4 — Correções de dados (Etapa 4)
@@ -139,3 +139,9 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - **Fase 2 concluída.**
 - **3.1** `profiles.hpp` (parse/resolve puros), `profiles.json` embutido (RCDATA 9012) e `MFGAdaUnlock.profiles.json` opcional na pasta do jogo, aplicado depois. Uma regra casa por executável e/ou módulo carregado e precisa ter `id` e `evidence`; chave desconhecida, schema diferente ou JSON inválido recusam o arquivo inteiro. `native_profiles` registra regras, aplicadas e erro do arquivo local. Regras embutidas: plugins conflitantes, Steam overlay, REFramework com monitor defeituoso. Nesta etapa os perfis só são lidos e registrados; quem os consome é o 3.2. Gate: 157 aprovados; replay: 8.
 - **3.2** Plugins conflitantes (build nativo), observador de `slDLSSGSetOptions` (Steam overlay), retenção da saída nativa e hash do REFramework defeituoso passam a vir de `profiles.json`. O build legado de companion para OptiScaler mantém o literal `MFGUnlocker.asi`, porque não linka os perfis. A identificação do REFramework por nome (`reframework*`, `dinput8.dll`) continua no adaptador dele, por ser a forma de reconhecer a ferramenta e não uma exceção por jogo. Gate: 157 aprovados; replay: 8.
+- **3.3** Convenções aprendidas: quando as constantes do jogo contradizem `InvertedDepth`/`JitteredMotion` da saída, a ponte grava o valor real em `[XeFG.Learned]` com a identidade do executável (nome e tamanho) e o aplica na próxima saída (recriação da swapchain pelo jogo ou nova sessão). Registra `native_convention_learned`.
+  - Precedência: INI explícito > aprendido para este executável > padrão. O explícito nunca é sobrescrito.
+  - Limite: o contexto XeFG fixa essas flags na criação e a ponte não pode forçar o jogo a recriar a swapchain, então a sessão em que a divergência é vista continua em passthrough.
+  - O caso `learned-depth` roda duas sessões: a primeira aprende `InvertedDepth=0`, a segunda interpola sem override.
+  - Durante o trabalho, uma regressão minha (o `-1` de `GetPrivateProfileIntW` virando `UINT`) foi pega pelo `xemfg_native_normal-depth` e corrigida antes do commit.
+  - Gate: 158 aprovados; replay: 8.

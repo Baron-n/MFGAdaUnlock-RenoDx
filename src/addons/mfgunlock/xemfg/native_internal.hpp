@@ -141,6 +141,9 @@ struct Bridge {
   std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
   std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
+  // Plan 3.3: conventions set explicitly in the INI are never relearned.
+  bool explicitInvert{}, explicitJitter{};
+  std::wstring executableIdentity; // name|version|size, keys [XeFG.Learned]
   std::atomic<uint32_t> hookCapabilities{0};
   std::atomic<uint64_t> staleInputs{0},externalResolutions{0};
 };

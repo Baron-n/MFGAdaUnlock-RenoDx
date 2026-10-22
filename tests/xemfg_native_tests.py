@@ -54,6 +54,7 @@ ap.add_argument('--sleep-gap',action='store_true')
 ap.add_argument('--constant-sleep-token',action='store_true')
 ap.add_argument('--late-interposer-hooked',action='store_true')
 ap.add_argument('--unsupported-dlssg',action='store_true')
+ap.add_argument('--learned-depth',action='store_true')
 ap.add_argument('--d3d-debug',action='store_true')
 ap.add_argument('--reframework',choices=('detached','not-tracked','blocked','invalid','exception','late','legacy','ambiguous'))
 ap.add_argument('--ref-v1',type=Path)
@@ -112,6 +113,16 @@ for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','que
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
+learned_verified=None
+if args.learned_depth:
+    # Plan 3.3: a first session with normal-depth constants and no override
+    # learns the convention; the next session must interpolate unaided.
+    probe=subprocess.run([str(d/executable_name),str(args.multiplier),'--normal-depth','--convention-probe'],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
+    learned=configparser.ConfigParser(); learned.read(d/'MFGAdaUnlock.ini',encoding='ascii')
+    learned_verified=(probe.returncode==0 and 'PASS: convention probe' in probe.stdout
+        and learned.get('XeFG.Learned','InvertedDepth',fallback='')=='0' and learned.get('XeFG.Learned','Executable',fallback='')!='')
+    (d/'MFGAdaUnlock-XeMFG.log').replace(d/'MFGAdaUnlock-XeMFG.probe.log')
+    flags+=['--normal-depth']
 result=subprocess.run([str(d/executable_name),str(args.multiplier),*flags],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 prefs=configparser.ConfigParser(); prefs.read(d/'MFGAdaUnlock.ini',encoding='ascii')
 events=[json.loads(line) for line in (d/'MFGAdaUnlock-XeMFG.log').read_text(encoding='utf-8').splitlines()] if (d/'MFGAdaUnlock-XeMFG.log').exists() else []
@@ -309,9 +320,9 @@ if args.struct_probe:
     'stale_input_verified':stale_verified,
     'input_compatibility_verified':input_verified,
     'compatibility_export_verified':compatibility_verified,
-    'active_support_verified':active_support_verified,'diagnostics_verified':diagnostics_verified,
+    'active_support_verified':active_support_verified,'learned_depth_verified':learned_verified,'diagnostics_verified':diagnostics_verified,
     'native_queue_identity_verified':('Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) if args.queue_proxy else None,
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and all(diagnostics_verified.values()) and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and learned_verified is not False and all(diagnostics_verified.values()) and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)

@@ -439,8 +439,24 @@ void Attach(HMODULE module) {
   ConfigureNativeContinuity(int(GetPrivateProfileIntW(L"Compatibility",L"RetainNativeOutput",UINT(-1),ini.c_str())));
   s.multiplier=std::clamp(GetPrivateProfileIntW(L"XeFG",L"Multiplier",4,ini.c_str()),2u,6u);
   wchar_t executable[32768]{};GetModuleFileNameW(nullptr,executable,DWORD(std::size(executable)));
-  s.invert=GetPrivateProfileIntW(L"XeFG",L"InvertedDepth",DefaultInvertedDepth(executable)?1:0,ini.c_str())!=0;
-  s.jitter=GetPrivateProfileIntW(L"XeFG",L"JitteredMotion",DefaultJitteredMotion(executable)?1:0,ini.c_str())!=0;
+  // Conventions (plan 3.3): explicit INI > learned for this exact executable >
+  // default. Identity is name and size; a game update relearns once.
+  WIN32_FILE_ATTRIBUTE_DATA attributes{};
+  GetFileAttributesExW(executable,GetFileExInfoStandard,&attributes);
+  s.executableIdentity=std::filesystem::path(executable).filename().wstring()+L"|"
+      +std::to_wstring((uint64_t(attributes.nFileSizeHigh)<<32)|attributes.nFileSizeLow);
+  wchar_t learnedFor[1024]{};
+  GetPrivateProfileStringW(L"XeFG.Learned",L"Executable",L"",learnedFor,DWORD(std::size(learnedFor)),ini.c_str());
+  const bool learnedHere=s.executableIdentity==learnedFor;
+  const auto convention=[&](const wchar_t* key,bool fallback,bool& explicitValue) {
+    const int value=int(GetPrivateProfileIntW(L"XeFG",key,-1,ini.c_str())); // UINT: -1 means absent
+    explicitValue=value>=0;
+    if(explicitValue) return value!=0;
+    const int learned=learnedHere?int(GetPrivateProfileIntW(L"XeFG.Learned",key,-1,ini.c_str())):-1;
+    return learned>=0?learned!=0:fallback;
+  };
+  s.invert=convention(L"InvertedDepth",DefaultInvertedDepth(executable),s.explicitInvert);
+  s.jitter=convention(L"JitteredMotion",DefaultJitteredMotion(executable),s.explicitJitter);
   LoadControls();
   reframework::SetKnownMonitorIssues(CurrentPolicy().knownBadReframework);
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);

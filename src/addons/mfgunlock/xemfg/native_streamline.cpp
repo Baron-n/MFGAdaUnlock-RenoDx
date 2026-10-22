@@ -4,6 +4,7 @@
 #include "native_input_policy.hpp"
 #include "log_budget.hpp"
 #include "native_profiles.hpp"
+#include "../backend_selection.hpp"
 #include "native_continuity.hpp"
 #include "../latency_marker_policy.hpp"
 #include <cmath>
@@ -167,6 +168,25 @@ void SampleConstants(Output& o,const sl::Constants& c,uint32_t id,uint32_t issue
       +",\"camera_motion_included\":"+b(c.cameraMotionIncluded)+",\"motion_3d\":"+b(c.motionVectors3D)
       +",\"motion_jittered\":"+b(c.motionVectorsJittered)+",\"motion_dilated\":"+b(c.motionVectorsDilated)
       +",\"orthographic\":"+b(c.orthographicProjection)+",\"reset\":"+b(c.reset));
+}
+// Persist a convention the game's constants contradicted (plan 3.3). The
+// next Intel output (swapchain recreation or the next launch of this exact
+// executable) initializes with it. Explicit INI values are never touched.
+void LearnConventions(std::optional<bool> invert,std::optional<bool> jitter) {
+  auto& s=State();
+  {
+    std::lock_guard guard(s.lock);
+    if(invert) s.invert=*invert;
+    if(jitter) s.jitter=*jitter;
+  }
+  const auto ini=backend::Directory()/L"MFGAdaUnlock.ini";
+  bool saved=config::Save(ini,{{L"XeFG.Learned",L"Executable",s.executableIdentity.c_str()}});
+  if(invert) saved=saved && config::Save(ini,{{L"XeFG.Learned",L"InvertedDepth",*invert?L"1":L"0"}});
+  if(jitter) saved=saved && config::Save(ini,{{L"XeFG.Learned",L"JitteredMotion",*jitter?L"1":L"0"}});
+  xess_mod::WriteLog("native_convention_learned",std::string(invert?"\"inverted_depth\":"+std::string(*invert?"true":"false")+",":"")
+      +(jitter?"\"jittered_motion\":"+std::string(*jitter?"true":"false")+",":"")+"\"saved\":"+(saved?"true":"false")
+      +",\"applies\":\"next_output\"");
+  Report("Camera conventions learned from the game; they apply when the game recreates its display output or on the next launch");
 }
 sl::Result SupportedHook(sl::Feature feature,const sl::AdapterInfo& adapter) {
   const auto native=isSupported(feature,adapter);
@@ -380,12 +400,21 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
   TraceInput("slSetConstants",FrameId(uint32_t(f)),uint32_t(v));
   const auto r=setConstants(c,f,v); const auto id=FrameId(uint32_t(f));
   if(r!=sl::Result::eOk) { RejectUpstreamInput(lease,id,uint32_t(v),r,"slSetConstants");return r; }
+  std::optional<bool> learnInvert,learnJitter;
   if(SelectedViewport(uint32_t(v))) if(auto o=lease.output) {
     std::lock_guard lock(o->io);
     if(!lease.Current()) {++State().staleInputs;return r;}
     if(auto* frame=FindFrame(*o,id)) {
       frame->constants=true;
       frame->constantIssues=TranslateConstants(c,o->invert,o->jitter,frame->data);
+      // Plan 3.3: the game's own constants state its conventions. A mismatch
+      // with this output's init flags is learned for the next output; this one
+      // stays in passthrough (the flags are fixed at Intel context creation).
+      auto& s=State();
+      if((frame->constantIssues&ConstantDepth) && c.depthInverted!=sl::eInvalid && !s.explicitInvert
+          && s.invert!=(c.depthInverted==sl::eTrue)) learnInvert=c.depthInverted==sl::eTrue;
+      if((frame->constantIssues&ConstantJitterMode) && c.motionVectorsJittered!=sl::eInvalid && !s.explicitJitter
+          && s.jitter!=(c.motionVectorsJittered==sl::eTrue)) learnJitter=c.motionVectorsJittered==sl::eTrue;
       if(frame->constantIssues&ConstantMetadata)
         StructRejected("slSetConstants",c,c.structType!=sl::Constants::s_structType?"type":"version");
       else {
@@ -404,6 +433,7 @@ sl::Result ConstantsHook(const sl::Constants& c,const sl::FrameToken& f,const sl
       }
     }
   }
+  if(learnInvert || learnJitter) LearnConventions(learnInvert,learnJitter);
   return r;
 }
 sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts) {

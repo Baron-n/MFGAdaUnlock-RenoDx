@@ -196,7 +196,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
-    unsupported-dlssg)
+    unsupported-dlssg learned-depth)
   set(XEMFG_BACKLOG backbuffer-subrect
     menu-viewport-first)
   foreach(case IN LISTS XEMFG_CONFORMANCE)

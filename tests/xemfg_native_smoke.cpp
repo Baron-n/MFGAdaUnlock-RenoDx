@@ -950,6 +950,13 @@ int main(int argc,char** argv) {
         controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+      if(flag("--convention-probe") && frame==8) {
+        // First session of the learned-convention case (plan 3.3): the game's
+        // constants disagree with the initialized output; nothing is overridden.
+        Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"convention probe flush");
+        std::cout<<"PASS: convention probe presented 8 frames"<<std::endl;
+        return 0;
+      }
     }
     if(flag("--producer-shadow")) std::cout<<"Heap producer commands: accepted; non-code implementation: rejected; generation resumed"<<std::endl;
     if(flag("--hud-conflict")) std::cout<<"HUD tag removal: admitted allocation pinned; conflicting batch bypassed; generation resumed"<<std::endl;
