@@ -43,6 +43,9 @@ thread_local bool gameInitializing{};
 // Lock-free (read from DXGI hooks while an SDK init may hold `mutex` and
 // wait for its own worker thread): live game-owned contexts and game inits.
 std::atomic<int> gameContexts{0}, gameInits{0};
+// Game-owned contexts whose initialization succeeded: they present. A probe
+// context that is created and never initialized (Mafia) owns nothing.
+std::set<Handle> initializedGame;
 std::once_flag initializeOnce;
 std::once_flag startupOnce;
 HMODULE bootstrapFg{};
@@ -265,7 +268,7 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   if (!hostCall && !gameCall) {
     if (s.model) return unsupported;
     const auto r=original_xefgSwapChainD3D12CreateContext(device,output);
-    if(r==success && output && *output) { s.nativeContexts.insert(*output); ++gameContexts; }
+    if(r==success && output && *output) s.nativeContexts.insert(*output);
     xess_mod::WriteLog("native_context_create","\"result\":"+std::to_string(r)+",\"caller\":\""+escape(CallerName(caller))+"\",\"handle\":"+std::to_string(output&&r==success?uintptr_t(*output):0));
     return r;
   }
@@ -286,16 +289,21 @@ __declspec(noinline) Result Create(ID3D12Device* device, Handle* output) {
   if (r==success && *output && s.model) {
     Context c{device,++s.generation}; c.hostOwner=hostCall;
     s.contexts.emplace(*output,std::move(c));
-    if(!hostCall) ++gameContexts;
     s.status.contexts=uint32_t(s.contexts.size());
   }
-  else if(r==success && *output) { s.nativeContexts.insert(*output); if(!hostCall) ++gameContexts; }
+  else if(r==success && *output) s.nativeContexts.insert(*output);
   xess_mod::WriteLog("context_create","\"result\":"+std::to_string(r)+",\"mfg_model\":"+(s.model?"true":"false")+",\"owner\":\""+(hostCall?"host":"game")+"\",\"handle\":"+std::to_string(r==success?uintptr_t(*output):0));
   return r;
+}
+// A context created by any caller but our host (the game or another layer).
+bool GameOwned(Handle h) {
+  std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
+  return (it!=s.contexts.end() && !it->second.hostOwner) || s.nativeContexts.contains(h);
 }
 template<class Init> Result Initialize(Handle handle, Init call) {
   std::lock_guard lock(mutex); auto& s=Get();
   const auto r=call(); s.status.result=r;
+  if(r==success && GameOwned(handle) && initializedGame.insert(handle).second) ++gameContexts;
   auto it=s.contexts.find(handle);
   if (r!=success || it==s.contexts.end()) return r;
   auto& c=it->second;
@@ -316,13 +324,13 @@ template<class Init> Result Initialize(Handle handle, Init call) {
   return r;
 }
 // A game-owned context is initialized with room for the user's multiplier.
-bool GameOwned(Handle h) {
-  std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
-  return it!=s.contexts.end() && !it->second.hostOwner;
-}
 const xefg_swapchain_d3d12_init_params_t* GameParams(Handle h,const xefg_swapchain_d3d12_init_params_t* p,
     xefg_swapchain_d3d12_init_params_t& raised) {
-  if(!p || !userGenerated.load() || !GameOwned(h) || p->maxInterpolatedFrames>=5) return p;
+  if(!p || !userGenerated.load() || p->maxInterpolatedFrames>=5) return p;
+  {
+    std::lock_guard lock(mutex); auto& s=Get(); auto it=s.contexts.find(h);
+    if(it==s.contexts.end() || it->second.hostOwner) return p; // only the game's model contexts
+  }
   raised=*p; raised.maxInterpolatedFrames=5;
   xess_mod::WriteLog("game_init_raised","\"handle\":"+std::to_string(uintptr_t(h))+",\"requested_max\":"+std::to_string(p->maxInterpolatedFrames)+",\"max\":5");
   return &raised;
@@ -422,8 +430,7 @@ __declspec(noinline) Result Destroy(Handle h) {
   if(SdkAddress(_ReturnAddress())) return original_xefgSwapChainDestroy(h);
   std::lock_guard lock(mutex); auto& s=Get(); const auto it=s.contexts.find(h);
   const auto r=original_xefgSwapChainDestroy(h); // SDK joins its workers first.
-  const bool gameContext=(it!=s.contexts.end() && !it->second.hostOwner) || s.nativeContexts.contains(h);
-  if(r==success && gameContext) --gameContexts;
+  if(r==success && initializedGame.erase(h)) --gameContexts;
   if(r==success && s.nativeContexts.erase(h)) {
     xess_mod::WriteLog("native_context_destroy","\"handle\":"+std::to_string(uintptr_t(h))+",\"remaining\":"+std::to_string(s.nativeContexts.size()));
   }

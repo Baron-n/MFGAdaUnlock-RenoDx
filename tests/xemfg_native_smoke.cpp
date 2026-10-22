@@ -684,7 +684,24 @@ int main(int argc,char** argv) {
     ComPtr<ID3D12CommandQueue> proxyQueue;
     NativeQueueProxy* queueProxy{};
     if(flag("--queue-proxy")) {queueProxy=new NativeQueueProxy(queue.Get());proxyQueue.Attach(queueProxy);}
+    // Conformance (Mafia field session): the game creates its own XeFG context
+    // as a probe and never initializes it; the Streamline output must still
+    // become the Intel output while that probe is alive.
+    xefg_swapchain_handle_t probe{};
+    decltype(&xefgSwapChainDestroy) destroyProbe{};
+    if(flag("--game-xefg-probe")) {
+      HMODULE runtime=LoadLibraryW(L"libxess_fg.dll"); Require(runtime,"probe XeFG runtime");
+      const auto create=reinterpret_cast<decltype(&xefgSwapChainD3D12CreateContext)>(GetProcAddress(runtime,"xefgSwapChainD3D12CreateContext"));
+      destroyProbe=reinterpret_cast<decltype(&xefgSwapChainDestroy)>(GetProcAddress(runtime,"xefgSwapChainDestroy"));
+      Require(create && destroyProbe && create(device.Get(),&probe)==XEFG_SWAPCHAIN_RESULT_SUCCESS && probe,"game probe context");
+    }
     Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
+    if(probe) {
+      mfgunlock::xemfg::native::Status probed{}; bridgeStatus(&probed,sizeof(probed));
+      Require(probed.output,"an uninitialized game probe context blocked the Intel output");
+      Require(destroyProbe(probe)==XEFG_SWAPCHAIN_RESULT_SUCCESS,"probe destroy"); probe={};
+      std::cout<<"Game XeFG probe: uninitialized context did not block the Intel output"<<std::endl;
+    }
     ComPtr<IDXGISwapChain4> chain; Check(base.As(&chain),"chain4"); base.Reset();
     mfgunlock::xemfg::native::Status bs; bridgeStatus(&bs,sizeof(bs));
     if(legacyFactory && !retainNativeOutput) {
