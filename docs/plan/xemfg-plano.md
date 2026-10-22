@@ -25,7 +25,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | 1.7 | Diag: amostra de constantes na primeira admissão e histograma de tipos de tag/viewports | `native_constants_sample`, `native_tag_histogram` | todos os testes nativos | feito |
 | 1.8 | Diag: exportar o relatório de compatibilidade em disco ao aposentar a saída e no shutdown | `MFGAdaUnlock-XeMFG-compatibility.json` escrito fora do hot path | todos os testes nativos (`report_export`) | feito |
 | 1.9 | Matriz de conformidade no fixture sintético, label `backlog` | Casos registrados; os que falham ficam no `backlog`, pela razão esperada | `ctest -L backlog`: `reflex-v2`, `reflex-next`, `constants-v3`, `backbuffer-subrect`, `menu-viewport-first`, `sl1-interposer`, `constant-sleep-token` | feito |
-| 1.10 | Streamline_Sample em 3-4 versões 2.x, incluindo 2.11.1 | Build reproduzível por script; smoke com o addon reporta `ready` | `xemfg_sl_sample_<versão>` (opcional, pulado sem SDK) | pendente |
+| 1.10 | Streamline_Sample em 3-4 versões 2.x, incluindo 2.11.1 | Build reproduzível por script; smoke com o addon reporta `ready` | `xemfg_sl_sample_<versão>` (opcional, pulado sem SDK) | feito |
 
 ## Fase 2 — Falhas duras (Etapa 2 da auditoria)
 
@@ -103,3 +103,11 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - **Correção do 2.0, agora definida:** uma espera explícita com token anterior à simulação mais recente é velha e nunca vai ao XeLL. A espera de fronteira cobre o frame real.
   - O log assíncrono perdia registros sob contenção de trava (duas intermitências na matriz); corrigido em commit próprio, com teste.
   - Gate: 145 aprovados; backlog: 7; replay: 6.
+- **1.10** `tools/sl_sample.py` compila o Streamline_Sample oficial (tags v2.7.32, v2.9.0, v2.11.1 e v2.14.16, cada uma com o SDK da mesma versão baixado do GitHub).
+  - Build só DX12, com o `dxc`/`fxc` do Windows SDK; não exige Vulkan SDK.
+  - Um patch local (não versionado) faz `MFG_SAMPLE_DLSSG=1` iniciar com DLSS-G e Reflex ligados.
+  - `tests/xemfg_sl_sample_tests.py` instala ReShade, addon e par Intel ao lado do sample, roda 30 s e aplica a triagem de campo.
+  - **As quatro versões interpolam com runtime NVIDIA real**, inclusive a 2.11.1 do Plague Tale. Isso confirma que o problema do jogo é o token constante, não a versão do SL.
+  - Testes `xemfg_sl_sample_*` (label `sl_sample`) só existem com `-DXEMFG_SL_SAMPLES_ROOT=<build/sl-samples>`.
+  - Gate: 149 aprovados; replay: 7.
+  - **Fase 1 concluída.** Próximo: fase 2, que começa com a pergunta do hardware-alvo.
