@@ -58,27 +58,30 @@ int main() {
     Require(ForwardSourceMarker(output,8,XELL_RENDERSUBMIT_START),"render start rejected");
     Require(ForwardSourceMarker(output,8,XELL_PRESENT_START),"overlapping present start rejected");
     Require(ForwardSourceMarker(output,8,XELL_RENDERSUBMIT_END),"legal overlapping END rejected");
-    Arm(); auto stale=std::async(std::launch::async,[&]{return SleepSourceFrame(output,6);}); Entered();
+    Arm(); auto stale=std::async(std::launch::async,[&]{return SleepSourceFrame(output,9);}); Entered();
     { std::lock_guard lock(output->io); ++output->epoch; output->frames.clear(); }
     Release(); Require(stale.get()==sl::Result::eErrorInvalidState && output->frames.empty(),"sleep republished an old resource epoch");
     Require(!output->sleepActive,"sleep lease leaked");
     const auto beforeStale=sleeps.load();
-    Require(SleepSourceFrame(output,9,nullptr,nullptr,output->epoch-1)==sl::Result::eErrorInvalidState
-        && sleeps==beforeStale && !output->frames.Find(9),"boundary wait crossed a resize epoch");
+    Require(SleepSourceFrame(output,10,nullptr,nullptr,output->epoch-1)==sl::Result::eErrorInvalidState
+        && sleeps==beforeStale && !output->frames.Find(10),"boundary wait crossed a resize epoch");
     block=false; state.latencyOutput=LatencyOutput::Reflex; state.gameReflexMode=1; state.limitUs=25000;
     Token token;
-    Require(SleepSourceFrame(output,10)==sl::Result::eErrorInvalidState,"Reflex accepted without native function/token");
+    Require(SleepSourceFrame(output,11)==sl::Result::eErrorInvalidState,"Reflex accepted without native function/token");
     const auto before=sleeps.load();
-    Require(SleepSourceFrame(output,10,&NativeSleep,&token)==sl::Result::eOk,"Reflex sleep route failed");
+    Require(SleepSourceFrame(output,11,&NativeSleep,&token)==sl::Result::eOk,"Reflex sleep route failed");
     Require(nativeSleeps==1 && sleeps==before+1,"Reflex must call native once and retain Intel frame bookkeeping");
     Require(!lastMode.bLowLatencyMode && lastMode.minimumIntervalUs==0,"XeLL limiter competes with Reflex");
-    Require(output->frames.Find(10)->latencyOutput==LatencyOutput::Reflex && state.reflexSleeps==1 && state.reflexOutputTick>0,"Reflex route not observed");
-    Require(SleepSourceFrame(output,10,&NativeSleep,&token)==sl::Result::eOk && nativeSleeps==1 && sleeps==before+1,"duplicate Reflex sleep");
-    Require(ForwardSourceMarker(output,10,XELL_SIMULATION_START),"Intel bookkeeping markers missing with Reflex");
+    Require(output->frames.Find(11)->latencyOutput==LatencyOutput::Reflex && state.reflexSleeps==1 && state.reflexOutputTick>0,"Reflex route not observed");
+    Require(SleepSourceFrame(output,11,&NativeSleep,&token)==sl::Result::eOk && nativeSleeps==1 && sleeps==before+1,"duplicate Reflex sleep");
+    Require(ForwardSourceMarker(output,11,XELL_SIMULATION_START),"Intel bookkeeping markers missing with Reflex");
     nativeResult=sl::Result::eErrorReflexAPI;
-    Require(SleepSourceFrame(output,11,&NativeSleep,&token)==nativeResult && sleeps==before+1,"native failure swallowed or Intel sleep called after failure");
-    Require(output->frames.Find(11)->failed && !output->sleepActive,"failed native wait retained admission/lease");
-    std::cout<<"PASS: late marker during sleep, deduplication, mode cache/retry, same-frame ordering and reset epoch\n";
+    Require(SleepSourceFrame(output,12,&NativeSleep,&token)==nativeResult && sleeps==before+1,"native failure swallowed or Intel sleep called after failure");
+    Require(output->frames.Find(12)->failed && !output->sleepActive,"failed native wait retained admission/lease");
+    const auto beforeOld=sleeps.load(); nativeResult=sl::Result::eOk;
+    Require(SleepSourceFrame(output,3,&NativeSleep,&token)==sl::Result::eErrorInvalidState && sleeps==beforeOld,"wait older than the last dispatched id reached XeLL");
+    Require(SleepSourceFrame(output,13,&NativeSleep,&token)==sl::Result::eOk && sleeps==beforeOld+1,"newer wait after a refused old one failed");
+    std::cout<<"PASS: late marker during sleep, deduplication, mode cache/retry, same-frame ordering, reset epoch and monotonic XeLL ids\n";
     return 0;
   } catch(const std::exception& e) { Release(); std::cerr<<e.what()<<'\n'; return 1; }
 }

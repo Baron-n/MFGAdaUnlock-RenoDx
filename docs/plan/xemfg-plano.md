@@ -33,12 +33,12 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 
 | # | Tarefa | Critério de saída | Teste | Status |
 |---|---|---|---|---|
-| 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `constant-sleep-token` sai do backlog; nova sessão de campo do Plague Tale no corpus | pendente |
+| 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `constant-sleep-token` sai do backlog; nova sessão de campo do Plague Tale no corpus | feito |
 | 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | pendente |
 | 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | pendente |
 | 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | pendente |
 | 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer` | pendente |
-| 2.5 | (Só se RTX 20/30 for alvo) contorno de `slIsFeatureSupported`/requisitos DLSS-G | A definir com o usuário | a definir | condicional |
+| 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | pendente |
 
 ## Fase 3 — Convenções aprendidas e perfis (Etapas 1 e 5)
 
@@ -111,3 +111,9 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - Testes `xemfg_sl_sample_*` (label `sl_sample`) só existem com `-DXEMFG_SL_SAMPLES_ROOT=<build/sl-samples>`.
   - Gate: 149 aprovados; replay: 7.
   - **Fase 1 concluída.** Próximo: fase 2, que começa com a pergunta do hardware-alvo.
+- **2.0** A ponte só despacha `xellSleep` para um ID maior que o último despachado (`Output::lastXellSleep`). Uma espera com token velho ou repetido é recusada (`native_sleep_rejected`, `not_newer_than_dispatched`) e a espera de fronteira cobre o frame real.
+  - `constant-sleep-token` saiu do backlog.
+  - **Em campo, Resonance: A Plague Tale Legacy passou a interpolar** (`blocker: ready`, `enabled: 1`, lançamentos Tensor crescendo de 77k para 224k em 40 s); sessão `plague-tale-2.0-interpolating.jsonl` no corpus.
+  - O teste unitário `xemfg_latency_translation` reutilizava IDs mais antigos para simular uma corrida com resize; foi renumerado e ganhou o caso de ID monotônico.
+  - Gate: 150 aprovados com essa renumeração; replay: 8.
+  - Hardware-alvo da fase 2 respondido: RTX 20/30/40/50 (item 2.5 confirmado).

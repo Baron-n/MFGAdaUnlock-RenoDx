@@ -90,6 +90,7 @@ struct Output {
   struct ViewportCount { uint32_t viewport; uint64_t count; } tagViewports[8]{};
   bool constantsSampled{}, histogramLogged{};
   uint64_t rejectedExplicitSleeps{};
+  uint32_t lastXellSleep{}; // newest id dispatched to xellSleep for this context
   bool explicitSleepObserved{};
   uint32_t markerRejectLogBudget[3]{};
   uint32_t presentFailureLogBudget{};

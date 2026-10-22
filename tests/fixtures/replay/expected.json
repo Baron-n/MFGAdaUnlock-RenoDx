@@ -66,6 +66,15 @@
       "fg_requested": true,
       "interpolated": false,
       "cause": "xell_frame_sequence_gap"
+    },
+    "plague-tale-2.0-interpolating.jsonl": {
+      "game": "Resonance: A Plague Tale Legacy (Xbox)",
+      "addon_sha256": "plan item 2.0 build (local)",
+      "route": "streamline",
+      "fg_requested": true,
+      "interpolated": true,
+      "blocker": "ready",
+      "cause": "interpolating"
     }
   }
 }

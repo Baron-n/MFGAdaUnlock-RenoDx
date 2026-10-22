@@ -33,6 +33,19 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
     auto* frame=FindFrame(*o,id); if(!frame) return sl::Result::eErrorInvalidState;
     if(frame->sleeping) return sl::Result::eOk;
     if(o->sleepActive || frame->sleepInFlight) return sl::Result::eErrorInvalidState;
+    // XeLL bound to XeFG enters a strict mode after 16 accepted waits and then
+    // requires last+1 (libxell 1.3.0.5/1.3.2.10). A wait for an id that is not
+    // newer than the last dispatched one, such as a game passing a constant
+    // token every frame, would alternate with the real boundary waits and be
+    // refused forever. It is never dispatched; the boundary wait covers the frame.
+    if(id<=o->lastXellSleep) {
+      static PatternBudget budget(8);
+      if(const auto count=budget.Admit("stale"))
+        xess_mod::WriteLog("native_sleep_rejected","\"source\":"+std::to_string(id)+",\"reason\":\"not_newer_than_dispatched\",\"last\":"
+            +std::to_string(o->lastXellSleep)+",\"occurrence\":"+std::to_string(count));
+      ++o->rejectedExplicitSleeps;
+      return sl::Result::eErrorInvalidState;
+    }
     const auto interval=reflex?0:s.limitUs.load();
     const bool lowLatency=!reflex;
     if(!o->sleepConfigured || o->sleepInterval!=interval || o->sleepLowLatency!=lowLatency) {
@@ -44,7 +57,7 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
       o->sleepConfigured=true; o->sleepInterval=interval; o->sleepLowLatency=lowLatency; ++s.latencyModeUpdates;
       xess_mod::WriteLog("native_sleep_mode","\"interval_us\":"+std::to_string(interval)+",\"low_latency\":"+(lowLatency?"true":"false"));
     }
-    epoch=o->epoch; frame->sleepInFlight=true; o->sleepActive=true;
+    epoch=o->epoch; frame->sleepInFlight=true; o->sleepActive=true; o->lastXellSleep=id;
   }
   const auto start=std::chrono::steady_clock::now();
   // Native Reflex is the only latency wait in this route. XeLL sleep with

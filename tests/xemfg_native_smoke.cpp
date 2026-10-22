@@ -957,10 +957,11 @@ int main(int argc,char** argv) {
     }
     controlStatus(&cs,sizeof(cs));
     Require(cs.cudaState==1 && cs.cudaLaunches==ms.tensor_launches && cs.cudaLayers>0,"CUDA status not tied to real inference");
-    // Constant-token waits never reach XeLL; boundary waits cover frames 8-48.
-    const auto expectedSleeps=flag("--simulation-sleep") || flag("--midsim-sleep") || flag("--sleep-gap")
-        || flag("--constant-sleep-token")?41u:48u;
-    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:expectedSleeps)*6,
+    // Constant-token waits reach XeLL once (the first, still newer than any
+    // dispatched id); boundary waits then cover frames 8-48.
+    const auto expectedSleeps=flag("--constant-sleep-token")?42u:
+        flag("--simulation-sleep") || flag("--midsim-sleep") || flag("--sleep-gap")?41u:48u;
+    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:flag("--constant-sleep-token")?41u:expectedSleeps)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
     if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==48,"native Reflex token was shifted");
