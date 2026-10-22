@@ -862,14 +862,15 @@ int main(int argc,char** argv) {
       // Conformance: tags carrying an extension chain.
       sl::ResourceTag tagExtension;
       if(flag("--tag-next")) for(auto& tag:tagged) tag.next=&tagExtension;
-      if(frame%2) tags(token,viewport,tagged,tagCount,producerCommand);
-      else legacyTags(viewport,tagged,tagCount,producerCommand);
       if(flag("--backbuffer-subrect")) {
-        // Conformance: the game renders into a 320x180 region of its backbuffer.
+        // Conformance: the game renders into a 320x180 region of its backbuffer;
+        // its HUD-less color covers the same region, as XeFG requires.
         sl::ResourceTag region{&rc,sl::kBufferTypeBackbuffer,sl::eValidUntilPresent,nullptr};
-        region.extent={0,0,320,180};
+        region.extent={0,0,320,180}; tagged[2].extent=region.extent;
         Require(tags(token,viewport,&region,1,producerCommand)==sl::Result::eOk,"original backbuffer tag result");
       }
+      if(frame%2) tags(token,viewport,tagged,tagCount,producerCommand);
+      else legacyTags(viewport,tagged,tagCount,producerCommand);
       if(frame==37 || frame==38) {
         sl::ResourceTag invalidOptional{&rm,frame==37?sl::kBufferTypeUIColorAndAlpha:sl::kBufferTypeHUDLessColor,sl::eValidUntilPresent};
         tags(token,viewport,&invalidOptional,1,reinterpret_cast<sl::CommandBuffer*>(list.Get()));

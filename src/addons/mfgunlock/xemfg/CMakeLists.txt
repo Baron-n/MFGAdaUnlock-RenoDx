@@ -216,8 +216,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
     unsupported-dlssg learned-depth)
-  set(XEMFG_BACKLOG backbuffer-subrect
-    menu-viewport-first)
+  set(XEMFG_BACKLOG menu-viewport-first)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
     if(case STREQUAL "sl1-interposer")

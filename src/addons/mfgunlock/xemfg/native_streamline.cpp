@@ -256,7 +256,23 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
   auto* frame=FindFrame(*o,id); if(!frame) return;
   frame->viewport=viewport;
   for(uint32_t i=0;i<count;++i) {
-    const auto& t=tags[i]; auto type=ResourceType(t.type); if(!type) continue;
+    const auto& t=tags[i];
+    if(t.type==sl::kBufferTypeBackbuffer) {
+      // Plan 4.3: only the extent is used; XeFG reads its own swapchain buffer.
+      const auto& e=t.extent;
+      const bool empty=!e.width || !e.height;
+      const bool inside=!empty && uint64_t(e.left)+e.width<=o->width && uint64_t(e.top)+e.height<=o->height;
+      frame->backbufferRegion=inside?DejitterRegion{e.left,e.top,e.width,e.height}:DejitterRegion{};
+      o->backbufferRegion=frame->backbufferRegion;
+      if(!empty && o->backbufferLogBudget<4) {
+        ++o->backbufferLogBudget;
+        xess_mod::WriteLog("native_backbuffer_region","\"id\":"+std::to_string(id)+",\"accepted\":"+(inside?"true":"false")
+            +",\"x\":"+std::to_string(e.left)+",\"y\":"+std::to_string(e.top)+",\"width\":"+std::to_string(e.width)
+            +",\"height\":"+std::to_string(e.height)+",\"output_width\":"+std::to_string(o->width)+",\"output_height\":"+std::to_string(o->height));
+      }
+      continue;
+    }
+    auto type=ResourceType(t.type); if(!type) continue;
     const auto bit=1u<<*type;
     auto& receipt=frame->resourceReceipts[uint32_t(*type)];
     receipt.observed=true;receipt.lifecycle=uint32_t(t.lifecycle);
@@ -322,7 +338,10 @@ void Tags(const InputLease& lease,uint32_t id,uint32_t viewport,const sl::Resour
     if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
         || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { rejection="extent"; reject(HudExtent); continue; }
     if(optional) {
-      const auto issues=CheckHudInput(desc,o->format,o->width,o->height,data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
+      // XeFG requires HUD-less and backbuffer resolutions to match (plan 4.3).
+      const auto& area=o->backbufferRegion;
+      const auto issues=CheckHudInput(desc,o->format,area.width?area.width:o->width,area.width?area.height:o->height,
+          data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
       if(issues) { rejection="optional_hud"; reject(issues); continue; }
     }
     const unsigned hudSlot=*type==XEFG_SWAPCHAIN_RES_UI?1:0;
@@ -895,6 +914,10 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       data.resetHistory|=o->last==0 || id!=o->last+1;
       xefg_swapchain_d3d12_resource_data_t region{}; region.type=XEFG_SWAPCHAIN_RES_BACKBUFFER;
       region.validity=XEFG_SWAPCHAIN_RV_UNTIL_NEXT_PRESENT; region.resourceSize={o->width,o->height};
+      if(f.backbufferRegion.width) {
+        region.resourceBase={f.backbufferRegion.x,f.backbufferRegion.y};
+        region.resourceSize={f.backbufferRegion.width,f.backbufferRegion.height};
+      }
       ready=a.xefgSwapChainD3D12TagFrameResource(o->fg,nullptr,id,&region)>=0
           && (!o->dejitter || SubmitDejitteredMotion(*o,f,id))
           && a.xefgSwapChainTagFrameConstants(o->fg,id,&data)>=0;

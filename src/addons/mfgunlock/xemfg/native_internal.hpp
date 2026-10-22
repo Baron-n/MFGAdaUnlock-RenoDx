@@ -60,6 +60,8 @@ struct Frame {
   ComPtr<ID3D12Resource> motionSource;
   D3D12_RESOURCE_STATES motionState{};
   DejitterRegion motionRegion{};
+  // Plan 4.3: the game's kBufferTypeBackbuffer extent; empty means the whole buffer.
+  DejitterRegion backbufferRegion{};
   uint32_t hudIssues{};
   HudTagIdentity hudTags[2]{};
   // Pin the allocation identity until frame retirement, never infer its
@@ -117,6 +119,8 @@ struct Output {
   std::unique_ptr<MotionDejitter> dejitter;
   DejitterVector lastJitter{};
   uint32_t lastJitterId{}, dejitterLogBudget{};
+  uint32_t backbufferLogBudget{};
+  DejitterRegion backbufferRegion{}; // last region the game declared; HUD inputs match it
   bool deviceLost{};
   bool presentationSupported{true};
   HRESULT presentFailure{S_OK},removedReason{S_OK};
