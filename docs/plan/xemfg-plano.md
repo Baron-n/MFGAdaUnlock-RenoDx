@@ -36,7 +36,7 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
 | 2.0 | **Sequência contígua de frames para o SDK Intel** (achado de campo do Plague Tale, item 1.4): o XeLL ligado ao XeFG exige IDs de sleep consecutivos; o jogo dorme no frame 1 no carregamento e volta no 562. A ponte atribui um ID próprio e contíguo a cada frame que dorme e o usa em `xellSleep`, nos markers, nos tags, nas constantes e no `SetPresentId` | Plague Tale passa a interpolar; nenhum `but expected frame` no log | `constant-sleep-token` sai do backlog; nova sessão de campo do Plague Tale no corpus | feito |
 | 2.1 | `ReflexOptions` v2+ ou com `next`: encaminhar sem devolver erro ao jogo, zerando só o nó base | O jogo recebe o resultado original; `reflexOptionsReady` verdadeiro | `reflex-v2`, `reflex-next` saem do backlog | feito |
 | 2.2 | Leitura por prefixo de structs com versão maior (`Constants` v3+, `DLSSGOptions` >5, `DLSSGState` >4, `ResourceTag` com `next`) | Prefixo conhecido usado e fato registrado; versão menor que a mínima continua recusada | `constants-v3`, `tag-next` | feito |
-| 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | pendente |
+| 2.3 | Não instalar hooks de entrada fora do SL 2.x | Interposer sem `slGetFeatureFunction` ou com `sdkVersion` < 2 não recebe detours de entrada | `sl1-interposer` | feito |
 | 2.4 | `LdrRegisterDllNotification` para `sl.interposer.dll`, com instalação fora do callback | Interposer carregado após a janela de 20 s ainda é isolado antes do `slInit` | `late-interposer` | pendente |
 | 2.5 | Alvo confirmado pelo usuário: **RTX 20/30/40/50**. Em placas sem DLSS-G nativo, o jogo precisa ver o DLSS-G como suportado para mostrar a opção, e o XeMFG gera os frames | Jogo com Streamline mostra e ativa o FG numa GPU sem DLSS-G; nenhuma mudança em RTX 40/50 | caso `unsupported-dlssg` no fixture (retorno de suporte negado) | pendente |
 
@@ -123,3 +123,4 @@ Fonte: `docs/research/xemfg-universalidade-2026-10-21.md` (auditoria). Branch: `
   - Testes unitários de constantes atualizados para a nova política.
   - Saíram do backlog: `reflex-v2`, `reflex-next`, `constants-v3`.
   - Gate: 153 aprovados; replay: 8.
+- **2.3** `StreamlineAbi2`: um interposer sem `slGetFeatureFunction` ou com versão de arquivo 0.x/1.x não recebe nenhum detour (nem de ciclo de vida nem de entrada) e gera `native_streamline_unsupported_abi` uma vez. O caso `sl1-interposer`, que derrubava o processo com 0xC0000005, saiu do backlog. Gate: 154 aprovados; replay: 8.

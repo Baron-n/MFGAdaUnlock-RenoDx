@@ -668,10 +668,25 @@ void LogTagHistogram(Output& o,const char* phase) {
 }
 bool OwnsPresentationHooks() noexcept { return lifecycleApi && presentationIsolated && !stopping; }
 bool StreamlineStopping() noexcept { return stopping; }
+// The detours below use the Streamline 2.x ABI. A 1.x interposer exports
+// slSetTag/slSetConstants/slEvaluateFeature with other signatures (the
+// conformance fixture crashed the process before this gate), and has no
+// slGetFeatureFunction. Such a module never receives a detour.
+bool StreamlineAbi2(HMODULE module) noexcept {
+  const auto version=FileVersion(module);
+  const bool resolver=GetProcAddress(module,"slGetFeatureFunction")!=nullptr;
+  const bool legacy=version.rfind("1.",0)==0 || version.rfind("0.",0)==0;
+  if(resolver && !legacy) return true;
+  static std::atomic<bool> logged{};
+  if(!logged.exchange(true))
+    xess_mod::WriteLog("native_streamline_unsupported_abi","\"interposer\":\""+version+"\",\"resolver\":"+(resolver?"true":"false")
+        +",\"detours\":0");
+  return false;
+}
 void CaptureStreamlineStartup() {
   // No SDK entry calls here. These exports can be captured before slInit even
   // when the host's interposer is only mapped during the loader's attach phase.
-  auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module) return;
+  auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module || !StreamlineAbi2(module)) return;
   HMODULE pin{};
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
       reinterpret_cast<LPCWSTR>(module),&pin) || pin!=module) return;
@@ -694,7 +709,7 @@ void DiscoverStreamline() {
   std::lock_guard guard(discovery);
   if(stopping) return;
   CaptureStreamlineStartup();
-  auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module) return;
+  auto module=GetModuleHandleW(L"sl.interposer.dll"); if(!module || !StreamlineAbi2(module)) return;
   HMODULE pinned{};
   if(!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_PIN,
       reinterpret_cast<LPCWSTR>(module),&pinned) || pinned!=module) return;
