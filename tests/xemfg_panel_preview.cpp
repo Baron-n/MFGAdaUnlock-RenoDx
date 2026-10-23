@@ -28,6 +28,7 @@ namespace ngx { bool Configured() noexcept { return false; } bool Suggested() no
 bool Save(bool) { return true; } int Saved() noexcept { return -1; } }
 bool OwnsPresentationHooks() noexcept {return true;}
 bool StreamlineStopping() noexcept {return false;}
+bool D3D12DiagnosticsForced() {return false;}
 Output::~Output()=default;
 std::shared_ptr<Output> Active() {
   static auto output=std::make_shared<Output>();
