@@ -160,9 +160,12 @@ struct Bridge {
   std::atomic<uint32_t> multiplier{4}, limitUs{0};
   std::atomic<uint64_t> outputPresents{0};
   std::atomic<uint64_t> latencySleeps{0}, latencyMarkers{0}, inputTick{0}, outputTick{0};
-  // Last Streamline latency marker (GetTickCount64): the Streamline route is
-  // delivering frames, so synthesized frames must stay passive (1.5.1).
+  // Last Streamline latency marker (GetTickCount64) and whether the game's
+  // selected viewport requests DLSS-G. Both together mean the Streamline route
+  // owns the frames, so synthesized frames stay passive (1.5.1). Markers alone
+  // are only Reflex: FSR frame generation stays available.
   std::atomic<uint64_t> streamlineMarkerTick{0};
+  std::atomic<bool> streamlineGeneration{false};
   std::atomic<uint64_t> latencyModeUpdates{0}, lastSleepUs{0};
   std::atomic<uint32_t> gameReflexMode{0};
   std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};

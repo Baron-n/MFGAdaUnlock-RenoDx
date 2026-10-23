@@ -14,8 +14,9 @@ uint32_t building{}, pendingPresent{};
 bool started{}, deferredLogged{};
 uint32_t sleepLogBudget{};
 // A game can create an FSR swapchain it never uses for frame generation while
-// running DLSS-G through Streamline (Darktide). Recent Streamline markers mean
-// that route owns the frames.
+// running DLSS-G through Streamline (Darktide). A DLSS-G request with recent
+// Streamline markers means that route owns the frames; markers without one are
+// only Reflex, so FSR frame generation may still take over.
 constexpr uint64_t kStreamlineQuietMs=1000;
 void StartFrame(const std::shared_ptr<Output>& o,uint32_t id) {
   const auto result=SleepSourceFrame(o,id);
@@ -50,7 +51,7 @@ uint32_t SubmitFrame(const std::shared_ptr<Output>& o,const char* adapter) {
   if(!active) {
     auto& s=State();
     const auto streamline=s.streamlineMarkerTick.load();
-    if(streamline && GetTickCount64()-streamline<kStreamlineQuietMs) {
+    if(s.streamlineGeneration && streamline && GetTickCount64()-streamline<kStreamlineQuietMs) {
       if(!deferredLogged) { deferredLogged=true; xess_mod::WriteLog("native_synthetic_deferred","\"adapter\":\""+std::string(adapter)+"\",\"reason\":\"streamline_active\"");}
       return 0;
     }

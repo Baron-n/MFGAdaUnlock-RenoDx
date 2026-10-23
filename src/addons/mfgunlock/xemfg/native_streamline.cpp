@@ -97,7 +97,7 @@ sl::Result SetLoadedHook(sl::Feature feature,bool enabled) {
     bool physical=true;
     const auto verified=getLoaded(feature,physical);
     logicalLoaded=enabled; presentationIsolated=verified==sl::Result::eOk && !physical;
-    if(!enabled) State().requested=false;
+    if(!enabled) { State().requested=false; State().streamlineGeneration=false; }
   }
   return result;
 }
@@ -399,6 +399,7 @@ sl::Result OptionsHook(const sl::ViewportHandle& v,const sl::DLSSGOptions& opts)
   if(!SelectedViewport(uint32_t(v))) return r;
   s.nativeOff=r==sl::Result::eOk;
   s.requested=logicalLoaded && opts.mode!=sl::DLSSGMode::eOff;
+  s.streamlineGeneration=s.requested.load();
   static std::atomic<uint64_t> previous{UINT64_MAX};
   const uint64_t signature=uint64_t(uint32_t(opts.mode))|(uint64_t(uint32_t(r))<<32);
   if(previous.exchange(signature)!=signature)
@@ -801,6 +802,7 @@ void ReselectViewport(Output& o,uint32_t id) {
   if(!never && !quiet) return;
   s.viewport=candidate->viewport;
   s.requested=logicalLoaded && candidate->mode!=uint32_t(sl::DLSSGMode::eOff);
+  s.streamlineGeneration=s.requested.load();
   o.viewportReset=true;
   xess_mod::WriteLog("native_viewport_switch","\"from\":"+std::to_string(selected)+",\"to\":"+std::to_string(candidate->viewport)
       +",\"id\":"+std::to_string(id)+",\"reason\":\""+(never?"selected_without_inputs":"selected_quiet")+"\"");
