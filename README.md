@@ -289,6 +289,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Mafia: The Old Country | Working |
 | Resonance: A Plague Tale Legacy | Working |
 | Death Stranding 2: On the Beach | Working — its jittered motion vectors are corrected automatically |
+| Ghostrunner 2 | Working |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
