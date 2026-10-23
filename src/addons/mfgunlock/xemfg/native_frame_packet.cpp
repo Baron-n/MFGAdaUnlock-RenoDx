@@ -80,10 +80,30 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     rejection="resource_unwrap";
     reject(HudMetadata); return;
   }
+  // The state reaches XeFG's barriers unchanged, and a barrier with reserved
+  // bits fails Close(); executing that list removes the device. Witcher 3
+  // tags depth as 0x80000000 (RESERVED_INTERNAL_8000) for whole FG periods
+  // after some graphics-menu changes while the resource is still COPY_DEST,
+  // the state it declares for it otherwise. Reuse the last valid state this
+  // output accepted for the same resource; without one, reject the tag.
+  constexpr uint32_t publicStates=0x3FFFu|0xF0000u|0x200000u|0x400000u|0x800000u|0x1000000u;
+  auto state=t.state;
+  const bool reserved=state&~publicStates;
+  if(reserved) {
+    const auto known=o.taggedStates.find(resource.Get());
+    const bool substituted=known!=o.taggedStates.end();
+    if(substituted) state=known->second;
+    if(o.reservedStateLogBudget<8) {
+      ++o.reservedStateLogBudget;
+      xess_mod::WriteLog("native_tag_reserved_state","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)
+          +",\"state\":"+std::to_string(t.state)+",\"substituted\":"+(substituted?std::to_string(state):std::string("null")));
+    }
+    if(!substituted) { rejection="resource_state"; reject(HudMetadata); return; }
+  }
   const auto desc=resource->GetDesc();
   observed=desc;
   receipt.width=uint32_t(desc.Width);receipt.height=desc.Height;receipt.format=uint32_t(desc.Format);
-  receipt.incomingState=t.state;
+  receipt.incomingState=state;
   ComPtr<ID3D12Device> device, nativeDevice; resource->GetDevice(IID_PPV_ARGS(&device));
   single_overlay::native::Unwrap(device.Get(),nativeDevice);
   ComPtr<IUnknown> identity, expectedIdentity;
@@ -92,7 +112,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
       || desc.SampleDesc.Count!=1 || desc.DepthOrArraySize!=1) { rejection="device_or_shape"; reject(HudMetadata); return; }
   xefg_swapchain_d3d12_resource_data_t data{};
   data.type=type; data.pResource=resource.Get();
-  data.incomingState=static_cast<D3D12_RESOURCE_STATES>(t.state);
+  data.incomingState=static_cast<D3D12_RESOURCE_STATES>(state);
   data.resourceBase={t.extent.x,t.extent.y};
   data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
   if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
@@ -157,6 +177,12 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     receipt.accepted=true;receipt.rejection=nullptr;receipt.sdkResult=code;
     receipt.width=data.resourceSize.x;receipt.height=data.resourceSize.y;
     frame.resources|=bit;
+    // Only the first tag of a type is used; a later duplicate may declare
+    // another state for the same resource and must not replace this one.
+    if(!reserved) {
+      if(o.taggedStates.size()>=64) o.taggedStates.clear();
+      o.taggedStates[resource.Get()]=state;
+    }
     if(optional) { frame.hudTags[hudSlot]=hudIdentity; frame.hudAllocations[hudSlot]=std::move(allocation); }
     if(optional && !(o.hudKindsSeen&bit)) {
       o.hudKindsSeen|=bit;

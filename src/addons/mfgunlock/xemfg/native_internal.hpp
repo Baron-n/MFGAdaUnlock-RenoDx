@@ -20,6 +20,7 @@
 #include <sl_reflex.h>
 #include <sl_pcl.h>
 #include <atomic>
+#include <unordered_map>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -124,6 +125,9 @@ struct Output {
   uint32_t backbufferLogBudget{};
   bool viewportReset{}; // the selected viewport changed; the next admitted frame resets history
   uint32_t duplicateTagLogBudget{};
+  // Last valid state accepted per tagged resource, for tags with reserved bits.
+  std::unordered_map<ID3D12Resource*,uint32_t> taggedStates;
+  uint32_t reservedStateLogBudget{};
   DejitterRegion backbufferRegion{}; // last region the game declared; HUD inputs match it
   // Plan 4.4: the game's FP16 scRGB view over the Intel HDR10 proxy. The game
   // renders into scrgbBuffers; Present encodes them into Intel's buffers.
