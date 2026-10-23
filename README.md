@@ -588,11 +588,13 @@ the addon keeps the built-in rules.
 
 #### The panel says Intel files are missing or a different version
 
-Use **Diagnostics → Intel runtime files → Install / update files**. Game
-updates and Steam's **Verify integrity of game files** can restore the game's
-original Intel DLLs. When the installed pair is not a supported one, XeMFG
-does not start and the game runs normally without it. Run the installer again
-after every game update.
+The panel names each file's problem (for example *libxess_fg.dll: missing* or
+*libxell.dll: 1.3.0.5, not the supported 1.3.2.10*) and offers **Install /
+update files** right there; the same button is under **Diagnostics → Intel
+runtime files**. Game updates and Steam's **Verify integrity of game files**
+can restore the game's original Intel DLLs. When the installed pair is not a
+supported one, XeMFG does not start and the game runs normally without it. Run
+the installer again after every game update.
 
 The files must be in the folder shown as **Intel files folder** (the running
 executable's folder, see [XeMFG requirements](#xemfg-requirements)), not in the
@@ -606,8 +608,12 @@ installation root. If the installer does not finish:
   **Check again**. Other copies the game ships elsewhere are listed there too
   and must be the same versions.
 
-If it still fails, send the `startup_rejected` line of `MFGAdaUnlock-XeMFG.log`
-and the helper's last message (see [Reporting an XeMFG problem](#reporting-an-xemfg-problem)).
+The helper writes a log of every step in the installation's
+`.mfg-dependency-backups` folder (`helper-<date>-<id>.log`), or in the temporary
+folder when that folder needs administrator rights; its messages name the
+file. If it still fails, send that log together with the `runtime_files` and
+`startup_rejected` lines of `MFGAdaUnlock-XeMFG.log` (see
+[Reporting an XeMFG problem](#reporting-an-xemfg-problem)).
 
 #### Frame generation stays off
 

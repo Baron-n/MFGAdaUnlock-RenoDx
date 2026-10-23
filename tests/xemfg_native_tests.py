@@ -255,10 +255,20 @@ if args.runtime_layout in ('mutated-storage','missing'):
     expected='unreviewed_Intel_runtime_pair' if args.runtime_layout=='mutated-storage' else 'missing_Intel_runtime:libxess_fg.dll'
     refused=any(e.get('event')=='startup_rejected' and e.get('reason')==expected for e in events)
     unpublished=not any(e.get('event') in ('ready','runtime_selection','native_context_created') for e in events)
+    # 1.5.5: the refusal names each file's state before the reason code.
+    files=[e for e in events if e.get('event')=='runtime_files']
+    fg=files[-1].get('libxess_fg.dll',{}) if files else {}; ll=files[-1].get('libxell.dll',{}) if files else {}
+    if args.runtime_layout=='mutated-storage':
+        described=fg.get('state')=='different' and bool(fg.get('version')) and len(fg.get('sha256',''))==64 \
+            and '_storage_' in fg.get('path','') and ll.get('state') in ('pinned','accepted_older')
+    else:
+        described=fg.get('state')=='missing' and ll.get('state')=='missing' and not fg.get('sha256')
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,runtime_layout=args.runtime_layout,exit=result.returncode,
-        stdout=result.stdout,stderr=result.stderr,startup_rejection_verified=refused,model_unpublished=unpublished),indent=2))
+        stdout=result.stdout,stderr=result.stderr,startup_rejection_verified=refused,model_unpublished=unpublished,
+        runtime_files_described=described),indent=2))
     print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and refused and unpublished else 1)
+    if not described: print('runtime_files did not describe the refused files:',files[-1] if files else None)
+    raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and refused and unpublished and described else 1)
 selections=[e for e in events if e.get('event')=='runtime_selection']
 runtime_selection=bool(selections) and all('_storage_' in e['provider_path'] and '_storage_' in e['xell_path'] for e in selections) if args.runtime_layout!='adjacent' else bool(selections)
 sdk_deadlines=[e for e in events if e.get('event')=='dlssg_interval_deadline' and e.get('sdk_deadlines')]

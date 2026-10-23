@@ -40,7 +40,29 @@ void Draw() {
   if(unavailable) {
     mfgunlock::xemfg::Status model;
     TryModelStatus(model);
-    if(strstr(model.detail,"missing_Intel_runtime") || strstr(model.detail,"hash_file_open")) {
+    RuntimeFileReport files[2]{};
+    if(RuntimeFilesRejected(files)) {
+      // 1.5.5: name each file's problem and offer the install here.
+      const auto describe=[](const char* name,const RuntimeFileReport& file,const char* supported) {
+        const std::string version=file.version[0]?file.version:"unknown version";
+        const auto state=file.state==RuntimeFileState::Missing?std::string("missing"):
+            file.state==RuntimeFileState::Unreadable?std::string("cannot be read"):
+            file.state==RuntimeFileState::Different?version+", not the supported "+supported:
+            file.state==RuntimeFileState::AcceptedOlder?version+" (supported)":std::string("supported");
+        return std::string(name)+": "+state;
+      };
+      const auto folder=GameFolder();
+      const auto text="XeMFG needs Intel's frame-generation files in the game executable's folder"+(folder.empty()?std::string():":\n"+folder)
+          +"\n"+describe("libxess_fg.dll",files[0],"1.3.1.78")+"\n"+describe("libxell.dll",files[1],"1.3.2.10")
+          +"\nInstall the supported files, close the game when the helper asks, then start it again.";
+      ui::Notice(text.c_str());
+      ui::ButtonRow actions(1);
+      if(actions("Install / update files","Opens the external helper with the list of files it will change. Nothing changes until you confirm; it then waits for the game to exit and keeps backups."))
+        dependencies::Repair();
+      const auto repair=dependencies::Snapshot();
+      if(repair.helperRunning || !repair.message.empty()) ui::Description(repair.message.c_str());
+    }
+    else if(strstr(model.detail,"missing_Intel_runtime") || strstr(model.detail,"hash_file_open")) {
       const auto folder=GameFolder();
       const auto text="Intel frame generation files are missing. libxess_fg.dll and libxell.dll must be in the game executable's folder"
           +(folder.empty()?std::string():":\n"+folder)+"\nUse Diagnostics > Intel runtime files > Install / update files, then restart.";
