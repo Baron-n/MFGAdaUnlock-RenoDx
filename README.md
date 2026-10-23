@@ -291,9 +291,9 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Death Stranding 2: On the Beach | Working — its jittered motion vectors are corrected automatically |
 | Ghostrunner 2 | Working |
 | S.T.A.L.K.E.R. 2: Heart of Chornobyl | Working — set the display mode to **Borderless / Windowed Fullscreen** |
-| Warhammer 40,000: Darktide | Working — add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` (see [Frame generation stays off](#frame-generation-stays-off)) |
+| Warhammer 40,000: Darktide | Working — fixed in 1.5.1; on 1.5.0, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` |
 | Black Myth: Wukong | Working |
-| Kingdom Come: Deliverance II | Working with the DLSS-SR input: add `[Adapters] DlssSr=1` (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
+| Kingdom Come: Deliverance II | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
@@ -413,7 +413,12 @@ turn frame generation on or off.
   XeMFG; the game's display mode is kept unchanged and frame generation stays
   off in that mode.
 - Intel's `libxess_fg.dll` and `libxell.dll` beside the game executable. The
-  panel installs the supported versions for you (step 4 below).
+  panel installs the supported versions for you (step 4 below). That is the
+  folder of the running `.exe`, not the installation root: in Unreal Engine
+  games it is `<Game>\Binaries\Win64` (S.T.A.L.K.E.R. 2:
+  `Stalker2\Binaries\Win64`; Black Myth: Wukong: `b1\Binaries\Win64`), in
+  Kingdom Come: Deliverance II it is `Bin\Win64MasterMasterSteamPGO`. The panel
+  shows it as **Diagnostics → Intel runtime files → Intel files folder**.
 - A game that provides frame-generation inputs; see
   [Supported inputs](#supported-xemfg-inputs).
 - **Capcom / RE Engine games with REFramework:** a REFramework build with the
@@ -497,34 +502,45 @@ available yet.
 
 Some games offer DLSS Super Resolution but no DLSS frame generation, such as
 Kingdom Come: Deliverance II. For those, XeMFG can take its depth and motion
-vectors from DLSS-SR. The input is off by default and is turned on by hand:
+vectors from DLSS-SR. The input is experimental and off by default; the panel
+offers it only in such games.
 
 1. Install XeMFG as described in [Installing XeMFG](#installing-xemfg), select
-   the XeMFG backend, and start the game once. This creates
-   `MFGAdaUnlock.ini` in the folder of the game's executable, next to
-   `renodx-mfgunlock.addon64` (for Kingdom Come: Deliverance II, that is
-   `Bin\Win64MasterMasterSteamPGO`).
-2. Close the game and open `MFGAdaUnlock.ini` in a text editor.
-3. Add these two lines at the end:
-
-   ```ini
-   [Adapters]
-   DlssSr=1
-   ```
-
-   If the file already has an `[Adapters]` section (for example with
-   `FidelityFX=0`), add only `DlssSr=1` under it instead of a second section.
-4. Save the file and start the game. The setting is read at startup, so a
-   change needs a game restart.
-5. In the game's graphics settings, select **DLSS** as the upscaler (any
+   the XeMFG backend, and restart the game.
+2. In the game's graphics settings, select **DLSS** as the upscaler (any
    quality mode, DLAA included) and turn off any frame generation the game
-   offers itself. XeMFG generates the frames from DLSS-SR's inputs.
+   offers itself.
+3. Open the **MFG Unlock** panel. When the game has no frame generation XeMFG
+   can use but runs DLSS, **General** says so and shows **Enable DLSS-SR input
+   (experimental)**. Select it, or tick **DLSS-SR input (experimental)** under
+   **Frame generation**.
+4. Restart the game. The setting is read at startup; the panel shows
+   *"Restart the game to apply"* until then.
+
+The panel does not offer the input in games with Streamline (DLSS frame
+generation), FSR 3.1 frame generation or their own XeSS-FG; those routes give
+better results. The same row turns the input off again (restart required).
+
+<details>
+<summary>Setting it by hand in <code>MFGAdaUnlock.ini</code></summary>
+
+The panel writes the same setting. `MFGAdaUnlock.ini` is in the folder of the
+game's executable (for Kingdom Come: Deliverance II,
+`Bin\Win64MasterMasterSteamPGO`). With the game closed, add:
+
+```ini
+[Adapters]
+DlssSr=1
+```
+
+If the file already has an `[Adapters]` section (for example with
+`FidelityFX=0`), add only `DlssSr=1` under it. `DlssSr=0` turns it off.
+
+</details>
 
 Limitations: DLSS-SR passes no camera data, so a default projection is
 assumed, and the HUD is interpolated with the image (no HUD-less image is
-available). Leave `DlssSr` at `0` in games that have DLSS frame generation;
-the Streamline route is used there and gives better results. To turn the input
-off again, set `DlssSr=0` or delete the line.
+available).
 
 ### Game profiles
 
@@ -553,6 +569,21 @@ original Intel DLLs. When the installed pair is not a supported one, XeMFG
 does not start and the game runs normally without it. Run the installer again
 after every game update.
 
+The files must be in the folder shown as **Intel files folder** (the running
+executable's folder, see [XeMFG requirements](#xemfg-requirements)), not in the
+installation root. If the installer does not finish:
+
+- close the game completely; the helper waits for the game to exit before it
+  changes anything;
+- accept the administrator prompt for games under `Program Files`;
+- if it still cannot write, copy `libxess_fg.dll` and `libxell.dll` (version
+  1.3.1.78 and 1.3.2.10) into the **Intel files folder** yourself, then use
+  **Check again**. Other copies the game ships elsewhere are listed there too
+  and must be the same versions.
+
+If it still fails, send the `startup_rejected` line of `MFGAdaUnlock-XeMFG.log`
+and the helper's last message (see [Reporting an XeMFG problem](#reporting-an-xemfg-problem)).
+
 #### Frame generation stays off
 
 - Turn frame generation on in the game's menu. XeMFG follows the game's
@@ -566,8 +597,8 @@ after every game update.
   game to enable frame generation, missing inputs, or unsupported format.
 - If the game offers both DLSS and FSR frame generation and the panel never
   leaves *"The game has paused frame generation"* with DLSS Frame Generation
-  on, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` and restart the
-  game (Warhammer 40,000: Darktide is one such game).
+  on, update to 1.5.1 or later. On 1.5.0, add `[Adapters] FidelityFX=0` to
+  `MFGAdaUnlock.ini`.
 - If you changed the backend, restart the game completely.
 
 #### The game shows a DirectX error or crashes at start
