@@ -83,10 +83,21 @@ target_include_directories(mfgunlock_native_xemfg PRIVATE vendor
   "${RENODX_SOURCE_DIR}/external/reshade/include")
 target_include_directories(mfgunlock_native_xemfg SYSTEM PRIVATE
   $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
-target_link_libraries(mfgunlock_native_xemfg PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES} d3d12 dxgi bcrypt psapi)
-target_link_options(mfgunlock_native_xemfg PRIVATE /DEBUG:FULL $<$<NOT:$<CONFIG:Debug>>:/OPT:REF> $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>)
+target_link_libraries(mfgunlock_native_xemfg PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES} d3d12 dxgi bcrypt psapi delayimp)
+# 1.5.2: the DLLs only XeMFG calls load on first use. The DLSS-G backend then
+# maps the same imports as 1.4.5 (KERNEL32, USER32, VERSION), also when ReShade
+# loads the addon from its own DllMain (ADDON.LoadFromDllMain).
+set(XEMFG_DELAY_LOADED d3d12.dll dxgi.dll bcrypt.dll SHELL32.dll)
+list(TRANSFORM XEMFG_DELAY_LOADED PREPEND "/DELAYLOAD:" OUTPUT_VARIABLE XEMFG_DELAY_OPTIONS)
+target_link_options(mfgunlock_native_xemfg PRIVATE /DEBUG:FULL $<$<NOT:$<CONFIG:Debug>>:/OPT:REF> $<$<NOT:$<CONFIG:Debug>>:/OPT:ICF>
+  ${XEMFG_DELAY_OPTIONS})
 set_target_properties(mfgunlock_native_xemfg PROPERTIES PREFIX "" SUFFIX ".addon64"
   OUTPUT_NAME "renodx-mfgunlock-native" MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+  add_test(NAME xemfg_addon_imports COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/xemfg_import_tests.py"
+    $<TARGET_FILE:mfgunlock_native_xemfg>)
+endif()
 
 # Explicit offline probe only. Never built by ALL, packaged, or installed in a
 # game: it records initialization parameter/weight identities for shader audits.
