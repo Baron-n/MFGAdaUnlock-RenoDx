@@ -295,7 +295,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Black Myth: Wukong | Working |
 | Kingdom Come: Deliverance II | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 | Red Dead Redemption 2 | Working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
-| Elden Ring | Working with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off (see [Elden Ring](#elden-ring)) |
+| Elden Ring | Working with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
@@ -473,6 +473,7 @@ users never need to edit it.
 | `[XeFG] Multiplier` | `4` | Output multiplier, `2`–`6` |
 | `[XeFG] UIComposition` | `0` | `1` composes the HUD from the game's HUD-less image, which avoids HUD interpolation artifacts (the HUD then updates at the real frame rate). Needs the game to provide a HUD-less image |
 | `[XeFG] XeFGFlipMetering` | `auto` | NVIDIA driver flip metering for generated frames; can also be toggled live in the panel |
+| `[XeFG] ForceVSyncOff` | `0` | `1` presents the game's frames with sync interval 0, as with VSync off in the game, for games that offer no VSync option (Elden Ring). Game VSync keeps flip metering and generated-frame pacing from applying. Also in the panel as **Force game VSync off** |
 | `[Latency] Input` / `Output` | `Auto` | Latency route. XeMFG always uses XeLL for output; Reflex input from the game is translated to XeLL |
 | `[XeFG] InvertedDepth` / `JitteredMotion` | not set | Manual convention overrides for unusual games. Normally learned automatically (see below) |
 | `[Adapters] FidelityFX` | `1` | `0` stops XeMFG from taking over FSR 3.1 frame generation |
@@ -560,6 +561,11 @@ ReShade DLL, the Streamline and DLSS files) does not apply.
    generation off; XeMFG generates the frames.
 4. Continue from step 3 of [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input):
    enable the DLSS-SR input in the panel and restart the game.
+5. **Force VSync off.** Elden Ring always presents with VSync and has no
+   option to turn it off; with it, frame pacing does not apply and generated
+   frames are unevenly spaced. In the panel, under **General → Smoothness and
+   display**, turn on **Force game VSync off** (`[XeFG] ForceVSyncOff=1`).
+   It applies immediately, and **Game VSync** then reads *On (forced off)*.
 
 ### Game profiles
 

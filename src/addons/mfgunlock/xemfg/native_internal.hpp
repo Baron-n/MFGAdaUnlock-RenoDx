@@ -172,6 +172,8 @@ struct Bridge {
   std::atomic<bool> streamlineGeneration{false};
   std::atomic<uint64_t> latencyModeUpdates{0}, lastSleepUs{0};
   std::atomic<uint32_t> gameReflexMode{0};
+  // Sync interval of the game's last Present, before ForceVSyncOff; UINT32_MAX until one is seen.
+  std::atomic<uint32_t> gameSyncInterval{UINT32_MAX};
   std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
   std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
