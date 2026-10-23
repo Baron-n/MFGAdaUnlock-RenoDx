@@ -56,8 +56,13 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
       frame.hudIssues|=issues; ++State().hudRejected;
       if(o.hudLogBudget<8) { ++o.hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)+",\"issues\":"+std::to_string(issues)); }
     }
-    if(o.rejectedTagLogBudget<12) {
-      ++o.rejectedTagLogBudget;
+    // A game pausing FG removes its tags every time; count those apart so
+    // they never use up the entries kept for real refusals.
+    const bool routine=!strcmp(rejection,"tag_removed_after_admission");
+    ++(routine?State().tagsRemoved:State().tagsRejected);
+    auto& budget=routine?o.removedTagLogBudget:o.rejectedTagLogBudget;
+    if(budget<(routine?4u:12u)) {
+      ++budget;
       xess_mod::WriteLog("native_tag_rejected","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)
           +",\"reason\":\""+rejection+"\",\"lifecycle\":"+std::to_string(t.rawLifecycle)
           +",\"tag_version\":"+std::to_string(t.tagVersion)+",\"resource_version\":"+std::to_string(t.resourceVersion)
@@ -93,6 +98,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     const auto known=o.taggedStates.find(resource.Get());
     const bool substituted=known!=o.taggedStates.end();
     if(substituted) state=known->second;
+    ++State().reservedStates;
     if(o.reservedStateLogBudget<8) {
       ++o.reservedStateLogBudget;
       xess_mod::WriteLog("native_tag_reserved_state","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)

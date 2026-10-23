@@ -903,6 +903,34 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   else Report(compatibility::Description(o->blocker));
   o->last=id;
 }
+// 1.5.5: one native_summary per [Diagnostics] SummaryIntervalMs (10 s) while
+// this output presents. Per-event logs keep only their first entries; the
+// summary carries the counts, and when it stops, presentation stopped.
+static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status,int queryResult) {
+  auto& s=State(); const auto tick=GetTickCount64();
+  uint32_t frames{},withoutFg{};
+  { std::lock_guard guard(s.lock); frames=s.status.frames; withoutFg=s.status.rejected; }
+  const uint64_t tagsRejected=s.tagsRejected,tagsRemoved=s.tagsRemoved,reservedStates=s.reservedStates;
+  const auto baseline=[&] {
+    o.summaryTick=tick; o.summaryFrames=frames; o.summaryRejectedFrames=withoutFg; o.summarySleeps=o.rejectedExplicitSleeps;
+    o.summaryTagsRejected=tagsRejected; o.summaryTagsRemoved=tagsRemoved; o.summaryReservedStates=reservedStates;
+  };
+  if(!o.summaryTick) { baseline(); return; }
+  if(tick-o.summaryTick<s.summaryIntervalMs.load()) return;
+  const auto sync=s.gameSyncInterval.load();
+  xess_mod::WriteLog("native_summary","\"output\":"+std::to_string(o.diagnosticOutput)+",\"interval_ms\":"+std::to_string(tick-o.summaryTick)
+      +",\"frames\":"+std::to_string(uint32_t(frames-uint32_t(o.summaryFrames)))
+      +",\"frames_without_fg\":"+std::to_string(uint32_t(withoutFg-uint32_t(o.summaryRejectedFrames)))
+      +",\"fg_enabled\":"+std::to_string(o.enabled)+",\"requested\":"+std::to_string(s.requested.load())
+      +",\"blocker\":\""+compatibility::Name(o.blocker)+"\""
+      +",\"frames_per_present\":"+std::to_string(queryResult==0?status.framesPresented:0)+",\"sdk_result\":"+std::to_string(status.frameGenResult)
+      +",\"tags_rejected\":"+std::to_string(tagsRejected-o.summaryTagsRejected)+",\"tags_removed\":"+std::to_string(tagsRemoved-o.summaryTagsRemoved)
+      +",\"reserved_states\":"+std::to_string(reservedStates-o.summaryReservedStates)
+      +",\"sleeps_rejected\":"+std::to_string(o.rejectedExplicitSleeps-o.summarySleeps)
+      +",\"game_sync_interval\":"+(sync==UINT32_MAX?std::string("-1"):std::to_string(sync))
+      +",\"force_vsync_off\":"+std::to_string(ForceVSyncOff()));
+  baseline();
+}
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT result) {
   std::lock_guard lock(o->io); xefg_swapchain_present_status_t status{};
   if(o->retired || !o->fg) return;
@@ -930,6 +958,7 @@ void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT resul
   }
   // Keep late PresentEnd markers for the preceding frame, but bound memory.
   o->frames.Prune(o->last);
+  WriteSummary(*o,status,queryResult);
   if(probe && probe->active) {
     auto& sample=probe->sample; sample.frame=o->last; sample.epoch=o->epoch; sample.output=o->diagnosticOutput;
     sample.presentResult=result; sample.admitted=o->enabled; sample.requestedOutputs=State().multiplier;

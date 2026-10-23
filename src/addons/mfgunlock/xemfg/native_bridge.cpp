@@ -522,6 +522,7 @@ void Attach(HMODULE module) {
   SetTimingEnabled(GetPrivateProfileIntW(L"Diagnostics",L"CpuTiming",0,ini.c_str())!=0);
   ConfigureTrace(GetPrivateProfileIntW(L"Diagnostics",L"StallTrace",0,ini.c_str())!=0,
       GetPrivateProfileIntW(L"Diagnostics",L"GpuTiming",0,ini.c_str())!=0);
+  s.summaryIntervalMs=std::clamp(GetPrivateProfileIntW(L"Diagnostics",L"SummaryIntervalMs",10000,ini.c_str()),100u,600000u);
   forceDred=GetPrivateProfileIntW(L"Diagnostics",L"ForceDRED",0,ini.c_str())!=0;
   debugLayer=GetPrivateProfileIntW(L"Diagnostics",L"D3D12DebugLayer",0,ini.c_str())!=0;  AttachModel(module);
   reshade::register_event<reshade::addon_event::create_device>(&CreateDeviceEvent);

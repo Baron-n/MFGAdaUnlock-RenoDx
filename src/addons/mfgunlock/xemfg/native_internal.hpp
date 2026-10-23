@@ -92,6 +92,13 @@ struct Output {
   DXGI_FORMAT format{DXGI_FORMAT_UNKNOWN};
   uint32_t hudLogBudget{},hudKindsSeen{};
   uint32_t rejectedTagLogBudget{};
+  // Tags the game removes when it pauses FG are routine; their own budget
+  // keeps rejectedTagLogBudget for real refusals.
+  uint32_t removedTagLogBudget{};
+  // 1.5.5: periodic native_summary (also a heartbeat while this output
+  // presents). Each field holds the totals at the previous summary.
+  uint64_t summaryTick{}, summaryFrames{}, summaryRejectedFrames{}, summarySleeps{};
+  uint64_t summaryTagsRejected{}, summaryTagsRemoved{}, summaryReservedStates{};
   uint32_t sleepAssociationLogBudget{};
   uint32_t unsleptSimulationStarts{};
   uint32_t sleepRejectLogBudget{},boundarySkipLogBudget{};
@@ -174,6 +181,9 @@ struct Bridge {
   std::atomic<uint32_t> gameReflexMode{0};
   // Sync interval of the game's last Present, before ForceVSyncOff; UINT32_MAX until one is seen.
   std::atomic<uint32_t> gameSyncInterval{UINT32_MAX};
+  // Totals for native_summary; the per-event logs keep only their first entries.
+  std::atomic<uint64_t> tagsRejected{0},tagsRemoved{0},reservedStates{0};
+  std::atomic<uint32_t> summaryIntervalMs{10000};
   std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
   std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
