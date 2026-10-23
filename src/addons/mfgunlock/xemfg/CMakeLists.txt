@@ -247,7 +247,8 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   # removes it from XEMFG_BACKLOG.
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
-    unsupported-dlssg learned-depth scrgb-output native-game-xefg ffx-adapter dlss-sr-adapter dlss-sr-default-off duplicate-tags game-xefg-probe ffx-with-streamline)
+    unsupported-dlssg learned-depth scrgb-output native-game-xefg ffx-adapter dlss-sr-adapter dlss-sr-default-off duplicate-tags game-xefg-probe ffx-with-streamline
+    ffx-with-reflex ffx-with-dlssg)
   set(XEMFG_BACKLOG)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
@@ -256,7 +257,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     endif()
     set(extra)
     set(executable $<TARGET_FILE:xemfg_native_smoke>)
-    if(case STREQUAL "ffx-adapter" OR case STREQUAL "ffx-with-streamline")
+    if(case MATCHES "^ffx-")
       set(extra --ffx-fixture $<TARGET_FILE:xemfg_ffx_fixture>)
     endif()
     if(case STREQUAL "dlss-sr-adapter" OR case STREQUAL "dlss-sr-default-off")

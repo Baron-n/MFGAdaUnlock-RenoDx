@@ -23,6 +23,9 @@ OverlayStatus OverlaySnapshot() noexcept { return {1,0,5500,0}; }
 OverlayInputStatus OverlayInputSnapshot() noexcept { return {4,2,0}; }
 Bridge& State() {static Bridge state; return state;}
 Status Snapshot(){ return State().status; }
+// DLSS-SR opt-in (1.5.1): the preview shows a Streamline game, where it is never offered.
+namespace ngx { bool Configured() noexcept { return false; } bool Suggested() noexcept { return false; }
+bool Save(bool) { return true; } int Saved() noexcept { return -1; } }
 bool OwnsPresentationHooks() noexcept {return true;}
 bool StreamlineStopping() noexcept {return false;}
 Output::~Output()=default;
