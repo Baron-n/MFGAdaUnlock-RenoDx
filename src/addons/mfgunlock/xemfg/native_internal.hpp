@@ -202,6 +202,9 @@ std::string CompatibilityReport(const char* exportReason=nullptr);
 // runs synchronously; other reasons use a coalesced worker thread.
 void ExportCompatibilityReport(const char* reason) noexcept;
 void RecordDeviceFailure(Output&,HRESULT);
+// [Diagnostics] ForceDRED / D3D12DebugLayer: opt-in local diagnostics that
+// change device creation; the failure log then names DRED lists and ops.
+bool D3D12DiagnosticsForced();
 std::shared_ptr<Output> Active();
 void BeforePresent(const std::shared_ptr<Output>& o);
 void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe=nullptr,HRESULT result=S_OK);
