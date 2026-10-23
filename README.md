@@ -290,10 +290,21 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Resonance: A Plague Tale Legacy | Working |
 | Death Stranding 2: On the Beach | Working — its jittered motion vectors are corrected automatically |
 | Ghostrunner 2 | Working |
+| S.T.A.L.K.E.R. 2: Heart of Chornobyl | Working — set the display mode to **Borderless / Windowed Fullscreen** |
+| Warhammer 40,000: Darktide | Working — add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` (see [Frame generation stays off](#frame-generation-stays-off)) |
+| Black Myth: Wukong | Working |
+| Kingdom Come: Deliverance II | Working with the DLSS-SR input: add `[Adapters] DlssSr=1` (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
 provides frame-generation inputs (see [Supported inputs](#supported-xemfg-inputs)).
+
+> [!IMPORTANT]
+> **XeMFG does not work in exclusive fullscreen.** Use **Borderless** or
+> **Windowed Fullscreen** in the game's display settings. In exclusive
+> fullscreen the game runs normally, but XeMFG keeps frame generation off and
+> the panel reports *"XeMFG needs a windowed output"*. Many Unreal Engine games,
+> such as S.T.A.L.K.E.R. 2, default to exclusive fullscreen.
 
 > [!IMPORTANT]
 > **Capcom / RE Engine games (Resident Evil Requiem, Monster Hunter Wilds,
@@ -428,9 +439,10 @@ turn frame generation on or off.
    official [XeSS repository](https://github.com/intel/xess). It also updates
    other Intel copies in the game folder, so the game cannot load a mismatched
    pair, and provides rollback. Launch the game again afterwards.
-5. In the game's graphics settings, turn **Frame Generation** on (DLSS Frame
-   Generation, XeSS Frame Generation, or FSR Frame Generation, depending on
-   what the game offers).
+5. In the game's graphics settings, set the display mode to **Borderless**
+   or **Windowed Fullscreen** (not exclusive fullscreen), and turn **Frame
+   Generation** on (DLSS Frame Generation, XeSS Frame Generation, or FSR Frame
+   Generation, depending on what the game offers).
 6. Choose the multiplier in the panel (**General → Frame multiplier**, 2x–6x). For
    games that run their own XeSS-FG, the panel multiplier replaces the game's.
 
@@ -481,6 +493,39 @@ output is supported directly. scRGB (FP16) HDR output is converted to HDR10
 for XeFG; in scRGB games, HUD composition from a HUD-less image is not
 available yet.
 
+### Enabling the DLSS-SR input
+
+Some games offer DLSS Super Resolution but no DLSS frame generation, such as
+Kingdom Come: Deliverance II. For those, XeMFG can take its depth and motion
+vectors from DLSS-SR. The input is off by default and is turned on by hand:
+
+1. Install XeMFG as described in [Installing XeMFG](#installing-xemfg), select
+   the XeMFG backend, and start the game once. This creates
+   `MFGAdaUnlock.ini` in the folder of the game's executable, next to
+   `renodx-mfgunlock.addon64` (for Kingdom Come: Deliverance II, that is
+   `Bin\Win64MasterMasterSteamPGO`).
+2. Close the game and open `MFGAdaUnlock.ini` in a text editor.
+3. Add these two lines at the end:
+
+   ```ini
+   [Adapters]
+   DlssSr=1
+   ```
+
+   If the file already has an `[Adapters]` section (for example with
+   `FidelityFX=0`), add only `DlssSr=1` under it instead of a second section.
+4. Save the file and start the game. The setting is read at startup, so a
+   change needs a game restart.
+5. In the game's graphics settings, select **DLSS** as the upscaler (any
+   quality mode, DLAA included) and turn off any frame generation the game
+   offers itself. XeMFG generates the frames from DLSS-SR's inputs.
+
+Limitations: DLSS-SR passes no camera data, so a default projection is
+assumed, and the HUD is interpolated with the image (no HUD-less image is
+available). Leave `DlssSr` at `0` in games that have DLSS frame generation;
+the Streamline route is used there and gives better results. To turn the input
+off again, set `DlssSr=0` or delete the line.
+
 ### Game profiles
 
 XeMFG contains no game-specific code. The few behaviors observed to differ
@@ -512,9 +557,17 @@ after every game update.
 
 - Turn frame generation on in the game's menu. XeMFG follows the game's
   toggle, and many games only enable it during gameplay, not in menus.
-- Use windowed or borderless mode.
+- Use **Borderless** or **Windowed Fullscreen**. If the panel says *"XeMFG
+  needs a windowed output"*, the game is in exclusive fullscreen. In Unreal
+  Engine games the setting is usually called *Fullscreen Mode*; with the game
+  closed, `FullscreenMode=1` in the game's `GameUserSettings.ini` also selects
+  windowed fullscreen.
 - Check **General**: it states the current reason, such as waiting for the
   game to enable frame generation, missing inputs, or unsupported format.
+- If the game offers both DLSS and FSR frame generation and the panel never
+  leaves *"The game has paused frame generation"* with DLSS Frame Generation
+  on, add `[Adapters] FidelityFX=0` to `MFGAdaUnlock.ini` and restart the
+  game (Warhammer 40,000: Darktide is one such game).
 - If you changed the backend, restart the game completely.
 
 #### The game shows a DirectX error or crashes at start
