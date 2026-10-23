@@ -283,7 +283,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Control Resonant | Working |
 | Assassin's Creed IV: Black Flag Resynced | Working — a built-in profile turns off native-output retention for this game |
 | Cyberpunk 2077 | Working — after a game update, run **Install / update files** again (see [below](#the-panel-says-intel-files-are-missing-or-a-different-version)) |
-| The Witcher 3: Wild Hunt (next-gen) | Working — fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
+| The Witcher 3: Wild Hunt (next-gen) | Working — turn off the game's **VSync** for correct frame pacing. Fixed in 1.5.3: changing path tracing or other graphics settings with frame generation on no longer loses the graphics device |
 | Alan Wake 2 | Working |
 | The Last of Us Part II Remastered | Working |
 | Mafia: The Old Country | Working |
