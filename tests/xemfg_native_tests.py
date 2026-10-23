@@ -266,7 +266,7 @@ if args.game_vsync:
     verified=len(reported)==1 and reported[0].get('sync_interval')==1 and reported[0].get('force_vsync_off')==int(args.force_vsync_off)
     verified=verified and (len(forced)==1 and forced[0].get('game_sync_interval')==1 if args.force_vsync_off else not forced)
     verified=verified and any(e.get('frames',0)>0 and e.get('game_sync_interval')==1 and e.get('force_vsync_off')==int(args.force_vsync_off)
-                              and e.get('interval_ms',0)>=200 for e in summaries)
+                              and e.get('interval_ms',0)>=200 and e.get('tags_rejected')==0 and 'hud_filtered' in e for e in summaries)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         game_vsync_verified=verified,reported=reported,forced=forced,summaries=summaries[:3]),indent=2))
     print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)

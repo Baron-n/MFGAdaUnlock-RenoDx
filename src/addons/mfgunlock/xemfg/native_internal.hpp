@@ -98,7 +98,7 @@ struct Output {
   // 1.5.5: periodic native_summary (also a heartbeat while this output
   // presents). Each field holds the totals at the previous summary.
   uint64_t summaryTick{}, summaryFrames{}, summaryRejectedFrames{}, summarySleeps{};
-  uint64_t summaryTagsRejected{}, summaryTagsRemoved{}, summaryReservedStates{};
+  uint64_t summaryTagsRejected{}, summaryTagsRemoved{}, summaryReservedStates{}, summaryHudFiltered{};
   uint32_t sleepAssociationLogBudget{};
   uint32_t unsleptSimulationStarts{};
   uint32_t sleepRejectLogBudget{},boundarySkipLogBudget{};

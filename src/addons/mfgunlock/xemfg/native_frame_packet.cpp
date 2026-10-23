@@ -56,10 +56,12 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
       frame.hudIssues|=issues; ++State().hudRejected;
       if(o.hudLogBudget<8) { ++o.hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)+",\"issues\":"+std::to_string(issues)); }
     }
-    // A game pausing FG removes its tags every time; count those apart so
-    // they never use up the entries kept for real refusals.
-    const bool routine=!strcmp(rejection,"tag_removed_after_admission");
-    ++(routine?State().tagsRemoved:State().tagsRejected);
+    // A game pausing FG removes its tags every time, and a HUD tag in another
+    // format is filtered every frame (counted in hudRejected above). Neither
+    // may use up the entries kept for refused required inputs.
+    const bool removed=!strcmp(rejection,"tag_removed_after_admission");
+    const bool routine=removed || optional;
+    if(removed) ++State().tagsRemoved; else if(!optional) ++State().tagsRejected;
     auto& budget=routine?o.removedTagLogBudget:o.rejectedTagLogBudget;
     if(budget<(routine?4u:12u)) {
       ++budget;

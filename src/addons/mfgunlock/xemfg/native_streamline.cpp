@@ -910,10 +910,11 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
   auto& s=State(); const auto tick=GetTickCount64();
   uint32_t frames{},withoutFg{};
   { std::lock_guard guard(s.lock); frames=s.status.frames; withoutFg=s.status.rejected; }
-  const uint64_t tagsRejected=s.tagsRejected,tagsRemoved=s.tagsRemoved,reservedStates=s.reservedStates;
+  const uint64_t tagsRejected=s.tagsRejected,tagsRemoved=s.tagsRemoved,reservedStates=s.reservedStates,hudFiltered=s.hudRejected;
   const auto baseline=[&] {
     o.summaryTick=tick; o.summaryFrames=frames; o.summaryRejectedFrames=withoutFg; o.summarySleeps=o.rejectedExplicitSleeps;
     o.summaryTagsRejected=tagsRejected; o.summaryTagsRemoved=tagsRemoved; o.summaryReservedStates=reservedStates;
+    o.summaryHudFiltered=hudFiltered;
   };
   if(!o.summaryTick) { baseline(); return; }
   if(tick-o.summaryTick<s.summaryIntervalMs.load()) return;
@@ -925,6 +926,7 @@ static void WriteSummary(Output& o,const xefg_swapchain_present_status_t& status
       +",\"blocker\":\""+compatibility::Name(o.blocker)+"\""
       +",\"frames_per_present\":"+std::to_string(queryResult==0?status.framesPresented:0)+",\"sdk_result\":"+std::to_string(status.frameGenResult)
       +",\"tags_rejected\":"+std::to_string(tagsRejected-o.summaryTagsRejected)+",\"tags_removed\":"+std::to_string(tagsRemoved-o.summaryTagsRemoved)
+      +",\"hud_filtered\":"+std::to_string(hudFiltered-o.summaryHudFiltered)
       +",\"reserved_states\":"+std::to_string(reservedStates-o.summaryReservedStates)
       +",\"sleeps_rejected\":"+std::to_string(o.rejectedExplicitSleeps-o.summarySleeps)
       +",\"game_sync_interval\":"+(sync==UINT32_MAX?std::string("-1"):std::to_string(sync))
