@@ -414,6 +414,20 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --runtime-layout ${layout})
     set_tests_properties(xemfg_native_runtime_${layout} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   endforeach()
+  # 1.5.5: a game presenting with VSync is reported (and overridden only when
+  # the user turns on ForceVSyncOff); native_summary is written meanwhile.
+  foreach(vsync IN ITEMS reported forced-off)
+    set(vsync_flags --game-vsync)
+    if(vsync STREQUAL "forced-off")
+      list(APPEND vsync_flags --force-vsync-off)
+    endif()
+    add_test(NAME xemfg_native_game_vsync_${vsync} COMMAND "${Python3_EXECUTABLE}"
+      "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+      --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+      --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+      --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" ${vsync_flags} --active-support)
+    set_tests_properties(xemfg_native_game_vsync_${vsync} PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
+  endforeach()
   foreach(multiplier IN ITEMS 2 3 4 6)
   add_test(NAME xemfg_native_reshade_${multiplier}x COMMAND "${Python3_EXECUTABLE}"
     "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"

@@ -1097,7 +1097,8 @@ int main(int argc,char** argv) {
       const bool lateSubmitEnd=frame>=17;
       if(!lateSubmitEnd) mark(sl::PCLMarker::eRenderSubmitEnd,token);
       mark(sl::PCLMarker::ePresentStart,token);
-      Check(chain->Present(0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
+      // --game-vsync: present like a game whose VSync cannot be turned off (1.5.5).
+      Check(chain->Present(flag("--game-vsync")?1:0,0),"Present"); mark(sl::PCLMarker::ePresentEnd,token); wait();
       if(boundaryScenario && (frame==7 || frame==8)) {
         bridgeStatus(&bs,sizeof(bs));Require(bs.enabled==(frame==8),"simulation-boundary sleep warmup/admission");
       }

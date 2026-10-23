@@ -177,6 +177,10 @@ void DrawControls(PanelPage page) {
     const auto sync=status.gameSyncInterval;
     const std::string gameVSync=sync==UINT32_MAX?"Not observed yet":sync==0?"Off":value.forceVSyncOff?"On (forced off)":"On";
     ui::Readout("##xe_vsync_state","Game VSync",gameVSync.c_str(),vsyncHelp,sync && sync!=UINT32_MAX && !value.forceVSyncOff?ui::Warning:ui::Muted);
+    // 1.5.5: warn instead of changing it; the user decides (no profile does).
+    if(sync && sync!=UINT32_MAX && !value.forceVSyncOff && State().requested.load())
+      ui::Notice("The game presents with VSync, so frame pacing does not apply to generated frames. "
+          "Turn off VSync in the game's settings. If the game has no VSync setting, turn on Force game VSync off.");
     if(ui::Expander("Advanced pacing comparison")) {
       ui::Setting("##xe_queue_row","Queue metered frames early","Lets the driver space a verified group of frames while the SDK prepares its next work. GPU fences and resource waits remain owned by Intel. Applies only when the driver accepts flip metering and Present uses sync interval 0. Turn off to compare with the previous CPU timing.",[&] {
         ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);

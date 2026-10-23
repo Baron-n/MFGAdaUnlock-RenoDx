@@ -166,6 +166,11 @@ public:
     // XeFG presents generated frames with the game's sync interval; game VSync
     // (Elden Ring has no option for it) keeps flip metering and extra pacing off.
     State().gameSyncInterval.store(sync,std::memory_order_relaxed);
+    if(sync && State().requested.load()) {
+      static std::atomic<bool> reported{};
+      if(!reported.exchange(true)) xess_mod::WriteLog("native_game_vsync","\"sync_interval\":"+std::to_string(sync)
+          +",\"force_vsync_off\":"+std::to_string(ForceVSyncOff()));
+    }
     if(sync && ForceVSyncOff()) {
       static std::atomic<bool> logged{};
       if(!logged.exchange(true)) xess_mod::WriteLog("native_vsync_forced_off","\"game_sync_interval\":"+std::to_string(sync));
