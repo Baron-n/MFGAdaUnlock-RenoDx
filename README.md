@@ -295,6 +295,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Black Myth: Wukong | Working |
 | Kingdom Come: Deliverance II | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 | Red Dead Redemption 2 | Working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
+| Elden Ring | Working with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off (see [Elden Ring](#elden-ring)) |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
@@ -542,6 +543,23 @@ If the file already has an `[Adapters]` section (for example with
 Limitations: DLSS-SR passes no camera data, so a default projection is
 assumed, and the HUD is interpolated with the image (no HUD-less image is
 available).
+
+#### Elden Ring
+
+Elden Ring has no DLSS of its own, so XeMFG takes its inputs from the
+EldenRingDLSS ReShade addon by masonpetrosky (tested with
+[0.4.0](https://github.com/masonpetrosky/EldenRingDLSS/releases/tag/v0.4.0)).
+Only its `.addon64` is needed; the rest of its install guide (me3, the renamed
+ReShade DLL, the Streamline and DLSS files) does not apply.
+
+1. Download the EldenRingDLSS zip from Nexus Mods and copy the `.addon64` from
+   its `EldenRingDLSS` folder into the game's `Game` folder, next to
+   `eldenring.exe` and the MFG Unlock addon.
+2. Play offline with Easy Anti-Cheat off; ReShade addons do not load under it.
+3. Keep EldenRingDLSS running DLSS, with its own experimental frame
+   generation off; XeMFG generates the frames.
+4. Continue from step 3 of [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input):
+   enable the DLSS-SR input in the panel and restart the game.
 
 ### Game profiles
 
