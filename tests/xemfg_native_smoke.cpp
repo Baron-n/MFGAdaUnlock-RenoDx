@@ -700,6 +700,33 @@ int main(int argc,char** argv) {
       destroyProbe=reinterpret_cast<decltype(&xefgSwapChainDestroy)>(GetProcAddress(runtime,"xefgSwapChainDestroy"));
       Require(create && destroyProbe && create(device.Get(),&probe)==XEFG_SWAPCHAIN_RESULT_SUCCESS && probe,"game probe context");
     }
+    if(flag("--ffx-with-streamline")) {
+      // Conformance (Darktide field session, 1.5.1): the game always creates
+      // its swapchain through FidelityFX and an FSR frame-generation context it
+      // never enables, while frame generation runs through Streamline DLSS-G.
+      // The Streamline route must own the frames; FSR stays passive.
+      HMODULE provider=LoadLibraryW(L"amd_fidelityfx_loader_dx12.dll"); Require(provider,"FidelityFX loader fixture");
+      const auto create=reinterpret_cast<PfnFfxCreateContext>(GetProcAddress(provider,"ffxCreateContext"));
+      Require(create,"ffxCreateContext");
+      const auto* entry=reinterpret_cast<const uint8_t*>(create);
+      for(const auto deadline=GetTickCount64()+5000;entry[0]!=0xE9 && GetTickCount64()<deadline;) Sleep(10);
+      Require(entry[0]==0xE9,"FidelityFX provider was not hooked");
+      IDXGISwapChain4* replaced{}; ffxContext swapchainContext{};
+      ffxCreateContextDescFrameGenerationSwapChainForHwndDX12 swapDesc{};
+      swapDesc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATIONSWAPCHAIN_FOR_HWND_DX12;
+      swapDesc.swapchain=&replaced; swapDesc.hwnd=hwnd; swapDesc.desc=&desc; swapDesc.fullscreenDesc=&exclusive;
+      swapDesc.dxgiFactory=factory.Get(); swapDesc.gameQueue=proxyQueue?proxyQueue.Get():queue.Get();
+      Require(create(&swapchainContext,&swapDesc.header,nullptr)==FFX_API_RETURN_OK && replaced,"FidelityFX swapchain context");
+      base.Attach(replaced);
+      ffxCreateBackendDX12Desc backendDesc{}; backendDesc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12; backendDesc.device=device.Get();
+      ffxCreateContextDescFrameGeneration generationDesc{};
+      generationDesc.header.type=FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION; generationDesc.header.pNext=&backendDesc.header;
+      generationDesc.displaySize={desc.Width,desc.Height}; generationDesc.maxRenderSize={desc.Width,desc.Height};
+      generationDesc.backBufferFormat=FFX_API_SURFACE_FORMAT_R8G8B8A8_UNORM;
+      ffxContext unusedGeneration{};
+      Require(create(&unusedGeneration,&generationDesc.header,nullptr)==FFX_API_RETURN_OK,"unused FSR generation context");
+      std::cout<<"FidelityFX swapchain with Streamline DLSS-G: FSR frame generation never enabled"<<std::endl;
+    } else
     Check(CreateTestSwapchain(legacyFactory,factory.Get(),proxyQueue?proxyQueue.Get():queue.Get(),hwnd,desc,&exclusive,&base),"swapchain");
     if(probe) {
       mfgunlock::xemfg::native::Status probed{}; bridgeStatus(&probed,sizeof(probed));

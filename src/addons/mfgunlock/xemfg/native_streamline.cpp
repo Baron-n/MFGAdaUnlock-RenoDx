@@ -508,6 +508,7 @@ sl::Result SleepHook(const sl::FrameToken& f) {
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   TraceInput("latency_marker",FrameId(uint32_t(f)),UINT32_MAX,int(marker));
   const auto id=FrameId(uint32_t(f)); auto& s=State(); const auto value=uint32_t(marker);
+  s.streamlineMarkerTick=GetTickCount64();
   if(marker==sl::PCLMarker::eRenderSubmitStart) s.recording=id;
   if(marker==sl::PCLMarker::ePresentStart) s.presenting=id;
   if(auto o=Active()) {

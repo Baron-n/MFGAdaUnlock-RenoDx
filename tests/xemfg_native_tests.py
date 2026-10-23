@@ -56,6 +56,7 @@ ap.add_argument('--ngx-fixture',type=Path)
 ap.add_argument('--dlss-sr-default-off',action='store_true')
 ap.add_argument('--duplicate-tags',action='store_true')
 ap.add_argument('--game-xefg-probe',action='store_true')
+ap.add_argument('--ffx-with-streamline',action='store_true')
 ap.add_argument('--menu-viewport-first',action='store_true')
 ap.add_argument('--late-interposer',action='store_true')
 ap.add_argument('--sl1-interposer',action='store_true')
@@ -84,8 +85,8 @@ if args.dlss_sr_adapter or args.dlss_sr_default_off:
     shutil.copy2(args.ngx_fixture,d/'_nvngx.dll')
     manifest['_nvngx.dll']=hashlib.sha256(args.ngx_fixture.read_bytes()).hexdigest()
     # Streamline is never loaded by this executable; the staged copy stays inert.
-if args.ffx_adapter:
-    if args.ffx_fixture is None: ap.error('--ffx-adapter requires --ffx-fixture')
+if args.ffx_adapter or args.ffx_with_streamline:
+    if args.ffx_fixture is None: ap.error('the FidelityFX cases require --ffx-fixture')
     shutil.copy2(args.ffx_fixture,d/'amd_fidelityfx_loader_dx12.dll')
     manifest['amd_fidelityfx_loader_dx12.dll']=hashlib.sha256(args.ffx_fixture.read_bytes()).hexdigest()
 if args.steam_observer:
@@ -129,7 +130,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','game_xefg_probe'):
+for name in ('legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','game_xefg_probe','ffx_with_streamline'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -360,6 +361,11 @@ except json.JSONDecodeError:
 diagnostics_verified['report_export']=(exported_report.get('schema')=='mfgunlock.compatibility'
     and exported_report.get('export_reason') in ('steady','retired','shutdown')
     and not re.search(r'[A-Za-z]:[\\/]',json.dumps(exported_report)))
+if args.ffx_with_streamline:
+    # 1.5.1 (Darktide): the FSR swapchain is ours, but the frames are Streamline's.
+    diagnostics_verified['ffx_with_streamline']=('FidelityFX swapchain with Streamline DLSS-G' in result.stdout
+        and any(e.get('event')=='native_ffx_swapchain' and e.get('adapter') is True for e in events)
+        and not any(e.get('event')=='native_synthetic_active' for e in events))
 if args.game_xefg_probe:
     diagnostics_verified['game_xefg_probe']='Game XeFG probe: uninitialized context did not block the Intel output' in result.stdout
 if args.duplicate_tags:
