@@ -46,15 +46,15 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 0.1 | Build limpo da 1.5.5 e matriz completa; anotar contagem de testes como referência | matriz verde, contagem no registro | 1 h | pendente |
+| 0.1 | Build limpo da 1.5.5 e matriz completa; anotar contagem de testes como referência | matriz verde, contagem no registro | 1 h | feito (sem commit: só build e matriz) |
 
 ### Bloco 1: XeMFG, estado reservado do recurso (branch `fix/xemfg-reserved-resource-state`)
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 1.1 | Cenário de conformidade: recurso A tagueado com estado válido, liberado; recurso B no mesmo endereço tagueado com `0x80000000` | caso novo no `backlog`, falhando por herdar o estado de A | 1 h | pendente |
-| 1.2 | Guardar o último estado válido no próprio recurso (`SetPrivateData` com GUID próprio); remover `taggedStates` | caso 1.1 sai do backlog; cenário Witcher 3 atual continua verde | 1 h | pendente |
-| 1.3 | **[você]** Witcher 3: mudar opções gráficas várias vezes com FG ligado | nenhuma perda de device; `native_tag_reserved_state` no log | 30 min | pendente |
+| 1.1 | Cenário de conformidade: recurso A tagueado com estado válido, liberado; recurso B no mesmo endereço tagueado com `0x80000000` | caso novo no `backlog`, falhando por herdar o estado de A | 1 h | feito (`8a371fe`) |
+| 1.2 | Guardar o último estado válido no próprio recurso (`SetPrivateData` com GUID próprio); remover `taggedStates` | caso 1.1 sai do backlog; a substituição no mesmo recurso (Witcher 3) continua passando | 1 h | feito (`4c06b10`) |
+| 1.3 | **[você]** Witcher 3: mudar opções gráficas várias vezes com FG ligado | nenhuma perda de device; `native_tag_reserved_state` no log | 30 min | em andamento |
 
 ### Bloco 2: DLSS-G, crash e custo (branch `fix/dlssg-hook-safety`)
 
@@ -145,3 +145,8 @@ Um PR por item.
 ## Registro de sessões
 
 (Uma linha por item concluído: data, item, commit, resultado do gate e observações.)
+
+- **2026-10-24 · 0.1** Build Release incremental da 1.5.5 na árvore `build/tests` já configurada (sem erros nem avisos). Matriz `-LE backlog`: **175/175**, opcionais de sempre pulados (`provider_identity`, `engineering_manifest`, `release_1_4_5_manifest`), replay incluído, ~16 min.
+- **2026-10-24 · 1.1** (`8a371fe`) A correção da 1.5.3 não tinha teste automático; o caso `xemfg_conformance_reserved-state` cobre a substituição no mesmo recurso e a herança num recurso recriado no mesmo endereço. Falhou como esperado: o recurso novo herdou o estado 64 do liberado. **O risco era real**, não só teórico.
+- **2026-10-24 · 1.2** (`4c06b10`) Estado guardado como private data no próprio recurso; mapa removido. Ajustes no cenário: quadros 10–13 (o quadro 9 tem a verificação de UI composition) e lotes de recursos candidatos para garantir a reutilização do endereço (o heap entrega blocos livres em ordem aleatória; uma tentativa só falhou 1 vez em 5 na matriz). Com a correção: 25/25. Sem ela: 5/5 falham pelo motivo certo. Matriz **176/176**.
+
