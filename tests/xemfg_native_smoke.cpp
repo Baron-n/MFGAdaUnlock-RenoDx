@@ -1026,6 +1026,21 @@ int main(int argc,char** argv) {
         Require(!cs.flipRequested && !cs.flipEnabled,"flip request did not commit at a batch boundary");
         Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
       }
+      // Conformance (Witcher 3, 1.5.3): depth tagged with the reserved state
+      // 0x80000000. Frame 8 reuses the state accepted for the same resource;
+      // frame 9 recreates depth at the released address, which must not
+      // inherit that state; frame 10 tags it validly again.
+      if(flag("--reserved-state")) {
+        if(frame==9) {
+          const auto released=reinterpret_cast<uintptr_t>(depth.Get());
+          depth.Reset();
+          for(int attempt=0;attempt<256 && reinterpret_cast<uintptr_t>(depth.Get())!=released;++attempt)
+            depth=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
+          Require(reinterpret_cast<uintptr_t>(depth.Get())==released,"recreated depth did not reuse the released address");
+          upload(depth.Get(),true); rd.native=depth.Get();
+        }
+        rd.state=frame==8 || frame==9?0x80000000u:uint32_t(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+      }
       Token token; token.id=frame;
       const bool boundaryScenario=flag("--simulation-sleep") || flag("--midsim-sleep");
       const bool midSimulationSleep=flag("--midsim-sleep") && frame<=16;
@@ -1136,6 +1151,17 @@ int main(int argc,char** argv) {
         controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
+      if(flag("--reserved-state") && (frame==8 || frame==9 || frame==11)) {
+        bridgeStatus(&bs,sizeof(bs));
+        if(frame==8) Require(bs.enabled,"reserved state on a known resource was not substituted");
+        if(frame==9) Require(!bs.enabled,"recreated resource inherited the released resource's state");
+        if(frame==11) {
+          Require(bs.enabled,"valid state on the recreated resource did not resume generation");
+          Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"reserved state flush");
+          std::cout<<"PASS: reserved resource state substituted per resource and not inherited"<<std::endl;
+          return 0;
+        }
+      }
       if(flag("--scrgb-output") && frame==8) {
         // The game keeps its FP16 view of the chain; XeFG runs on the HDR10 copy.
         // FP16 HUD-less is filtered (not converted yet), so composition checks do not apply.

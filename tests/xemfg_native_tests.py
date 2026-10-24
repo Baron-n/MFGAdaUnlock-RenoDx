@@ -57,6 +57,7 @@ ap.add_argument('--dlss-sr-adapter',action='store_true')
 ap.add_argument('--ngx-fixture',type=Path)
 ap.add_argument('--dlss-sr-default-off',action='store_true')
 ap.add_argument('--duplicate-tags',action='store_true')
+ap.add_argument('--reserved-state',action='store_true')
 ap.add_argument('--game-xefg-probe',action='store_true')
 ap.add_argument('--ffx-with-streamline',action='store_true')
 ap.add_argument('--ffx-with-reflex',action='store_true')
@@ -137,7 +138,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
+for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -205,6 +206,18 @@ if args.native_game_xefg:
         and any(e.get('event')=='game_multiplier_applied' for e in events))
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         game_multiplier_verified=verified),indent=2))
+    print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
+    raise SystemExit(0 if result.returncode==0 and verified else 1)
+if args.reserved_state:
+    # 1.5.6 (Witcher 3): a reserved state is replaced by the last valid state
+    # of the SAME resource, never by a released resource's at the same address.
+    reserved=[e for e in events if e.get('event')=='native_tag_reserved_state']
+    verified=('PASS: reserved resource state substituted per resource and not inherited' in result.stdout
+        and any(e.get('substituted')==64 for e in reserved)
+        and any(e.get('substituted') is None for e in reserved)
+        and not any(e.get('event') in ('native_present_failure','native_device_failure') for e in events))
+    (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
+        reserved_state_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.scrgb_output:
