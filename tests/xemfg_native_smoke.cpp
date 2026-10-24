@@ -1027,19 +1027,30 @@ int main(int argc,char** argv) {
         Require(!cs.flipConfigured && !cs.flipMetered,"disabled metering still reported configured");
       }
       // Conformance (Witcher 3, 1.5.3): depth tagged with the reserved state
-      // 0x80000000. Frame 8 reuses the state accepted for the same resource;
-      // frame 9 recreates depth at the released address, which must not
-      // inherit that state; frame 10 tags it validly again.
+      // 0x80000000. Frame 10 reuses the state accepted for the same resource;
+      // frame 11 recreates depth at the released address, which must not
+      // inherit that state; frame 12 tags it validly again. (Frame 9 has its
+      // own UI composition check, which a refused frame would break.)
       if(flag("--reserved-state")) {
-        if(frame==9) {
+        if(frame==11) {
           const auto released=reinterpret_cast<uintptr_t>(depth.Get());
           depth.Reset();
-          for(int attempt=0;attempt<256 && reinterpret_cast<uintptr_t>(depth.Get())!=released;++attempt)
-            depth=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
+          // The heap hands out free blocks in randomized order, and XeFG may
+          // still hold the released resource for a few milliseconds after
+          // Present. Keep batches of candidates alive until one takes the slot.
+          for(int round=0;round<20 && !depth;++round) {
+            std::vector<ComPtr<ID3D12Resource>> held;
+            for(int i=0;i<64;++i) {
+              auto candidate=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
+              if(reinterpret_cast<uintptr_t>(candidate.Get())==released) { depth=std::move(candidate); break; }
+              held.push_back(std::move(candidate));
+            }
+            if(!depth) Sleep(10);
+          }
           Require(reinterpret_cast<uintptr_t>(depth.Get())==released,"recreated depth did not reuse the released address");
           upload(depth.Get(),true); rd.native=depth.Get();
         }
-        rd.state=frame==8 || frame==9?0x80000000u:uint32_t(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        rd.state=frame==10 || frame==11?0x80000000u:uint32_t(D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
       }
       Token token; token.id=frame;
       const bool boundaryScenario=flag("--simulation-sleep") || flag("--midsim-sleep");
@@ -1151,11 +1162,11 @@ int main(int argc,char** argv) {
         controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");
       }
       MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg);
-      if(flag("--reserved-state") && (frame==8 || frame==9 || frame==11)) {
+      if(flag("--reserved-state") && (frame==10 || frame==11 || frame==13)) {
         bridgeStatus(&bs,sizeof(bs));
-        if(frame==8) Require(bs.enabled,"reserved state on a known resource was not substituted");
-        if(frame==9) Require(!bs.enabled,"recreated resource inherited the released resource's state");
-        if(frame==11) {
+        if(frame==10) Require(bs.enabled,"reserved state on a known resource was not substituted");
+        if(frame==11) Require(!bs.enabled,"recreated resource inherited the released resource's state");
+        if(frame==13) {
           Require(bs.enabled,"valid state on the recreated resource did not resume generation");
           Require(Import<bool(*)(uint32_t)>(addon,"MFGAXeLogFlush")(2000),"reserved state flush");
           std::cout<<"PASS: reserved resource state substituted per resource and not inherited"<<std::endl;

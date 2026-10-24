@@ -4,6 +4,8 @@
 
 namespace mfgunlock::xemfg::native::packet {
 namespace {
+// Private-data key on tagged resources: the last valid state accepted for it.
+constexpr GUID kTaggedState={0x6f1c2b8e,0x4a5d,0x4e7b,{0x9c,0x1a,0x3d,0x2f,0x8e,0x6b,0x7a,0x10}};
 // Plan 4.2: jittered motion is held for conversion at Present instead of
 // being tagged; a volatile tag is copied now, on the producer's list.
 xefg_swapchain_result_t StageMotion(Output& o,Frame& frame,ID3D12CommandList* producer,ID3D12Resource* resource,
@@ -91,15 +93,17 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   // bits fails Close(); executing that list removes the device. Witcher 3
   // tags depth as 0x80000000 (RESERVED_INTERNAL_8000) for whole FG periods
   // after some graphics-menu changes while the resource is still COPY_DEST,
-  // the state it declares for it otherwise. Reuse the last valid state this
-  // output accepted for the same resource; without one, reject the tag.
+  // the state it declares for it otherwise. Reuse the last valid state
+  // accepted for the same resource; without one, reject the tag. The state is
+  // kept as private data on the resource itself, so it dies with it: a
+  // resource recreated at a released address starts with none (1.5.6).
   constexpr uint32_t publicStates=0x3FFFu|0xF0000u|0x200000u|0x400000u|0x800000u|0x1000000u;
   auto state=t.state;
   const bool reserved=state&~publicStates;
   if(reserved) {
-    const auto known=o.taggedStates.find(resource.Get());
-    const bool substituted=known!=o.taggedStates.end();
-    if(substituted) state=known->second;
+    uint32_t known{}; UINT size=sizeof(known);
+    const bool substituted=SUCCEEDED(resource->GetPrivateData(kTaggedState,&size,&known)) && size==sizeof(known);
+    if(substituted) state=known;
     ++State().reservedStates;
     if(o.reservedStateLogBudget<8) {
       ++o.reservedStateLogBudget;
@@ -187,10 +191,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     frame.resources|=bit;
     // Only the first tag of a type is used; a later duplicate may declare
     // another state for the same resource and must not replace this one.
-    if(!reserved) {
-      if(o.taggedStates.size()>=64) o.taggedStates.clear();
-      o.taggedStates[resource.Get()]=state;
-    }
+    if(!reserved) resource->SetPrivateData(kTaggedState,sizeof(state),&state);
     if(optional) { frame.hudTags[hudSlot]=hudIdentity; frame.hudAllocations[hudSlot]=std::move(allocation); }
     if(optional && !(o.hudKindsSeen&bit)) {
       o.hudKindsSeen|=bit;
