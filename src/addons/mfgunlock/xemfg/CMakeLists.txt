@@ -292,7 +292,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
     --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
     --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --constant-sleep-token --latency-output Reflex)
-  set_tests_properties(xemfg_conformance_reflex-constant-sleep-token PROPERTIES RUN_SERIAL TRUE TIMEOUT 150 LABELS backlog)
+  set_tests_properties(xemfg_conformance_reflex-constant-sleep-token PROPERTIES RUN_SERIAL TRUE TIMEOUT 150)
   # Real Streamline runtimes: NVIDIA's Streamline_Sample built per SDK release
   # by tools/sl_sample.py under ${XEMFG_SL_SAMPLES_ROOT}/sample-<version>.
   set(XEMFG_SL_SAMPLES_ROOT "" CACHE PATH "Folder with sample-v2.x.y Streamline_Sample builds")

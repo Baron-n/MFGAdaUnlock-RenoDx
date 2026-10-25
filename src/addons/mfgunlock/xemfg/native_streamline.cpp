@@ -463,14 +463,28 @@ sl::Result ReflexOptionsHook(const sl::ReflexOptions& opts) {
   s.limitUs=opts.frameLimitUs;
   return result;
 }
+sl::Result AssociateSourceSleep(const std::shared_ptr<Output>& o,uint32_t source);
 sl::Result SleepHook(const sl::FrameToken& f) {
   const auto source=FrameId(uint32_t(f));
   TraceInput("slReflexSleep",source);
   auto o=Active(); if(!o) return reflexSleep(f);
+  // Native Reflex output (1.5.6): every game wait reaches the original
+  // slReflexSleep with its own token, on its own thread, and the game gets its
+  // result. Only the XeLL frame association below can be refused; a game that
+  // passes a constant token (Plague Tale) is then covered by the simulation
+  // boundary, as on the XeLL route.
+  if(State().latencyOutput.load()==LatencyOutput::Reflex) {
+    const auto native=reflexSleep(f);
+    if(native==sl::Result::eOk) AssociateSourceSleep(o,source);
+    return native;
+  }
+  return AssociateSourceSleep(o,source);
+}
+sl::Result AssociateSourceSleep(const std::shared_ptr<Output>& o,uint32_t source) {
   uint32_t target{};uint64_t epoch{};
   {
     std::lock_guard guard(o->io);
-    // Rejected waits are never dispatched, so they must not disable the
+    // Refused associations never reach XeLL, so they must not disable the
     // per-frame simulation boundary that covers the same frames.
     const auto rejected=[&](const char* reason,uint32_t observed) {
       ++o->rejectedExplicitSleeps;
@@ -502,9 +516,8 @@ sl::Result SleepHook(const sl::FrameToken& f) {
     epoch=o->epoch;
   }
   State().inputTick=GetTickCount64();
-  // Native Reflex, when selected, keeps the ORIGINAL token and calling thread.
   // Only the XeLL frame association follows the simulation after this wait.
-  return SleepSourceFrame(o,target,reflexSleep,&f,epoch);
+  return SleepSourceFrame(o,target,nullptr,nullptr,epoch);
 }
 void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
   TraceInput("latency_marker",FrameId(uint32_t(f)),UINT32_MAX,int(marker));
@@ -527,9 +540,12 @@ void CaptureMarker(sl::PCLMarker marker,const sl::FrameToken& f) {
           // Accepted explicit waits mark the frame sleeping and skip this path.
           // Do not replay timestamps, sleep after simulation began, or
           // override native Reflex output.
+          // XeLL route: XeLL paces, so native Reflex must be off. Reflex route:
+          // the game's own waits pace; this only associates the frame (1.5.6).
+          const auto route=s.latencyOutput.load();
           boundarySleep=o->unsleptSimulationStarts>=8 && !(previous&63u)
-              && !o->sleepActive && !frame->sleepInFlight && s.requested && s.nativeOff && s.reflexOff
-              && s.latencyOutput.load()==LatencyOutput::XeLL;
+              && !o->sleepActive && !frame->sleepInFlight && s.requested && s.nativeOff
+              && ((route==LatencyOutput::XeLL && s.reflexOff) || route==LatencyOutput::Reflex);
           if(boundarySleep) {epoch=o->epoch;boundaryLog=o->sleepAssociationLogBudget++<8;}
           else if(s.requested && o->unsleptSimulationStarts>=8 && o->boundarySkipLogBudget++<4)
             xess_mod::WriteLog("native_simulation_boundary_skipped","\"id\":"+std::to_string(id)

@@ -903,6 +903,7 @@ int main(int argc,char** argv) {
       const auto deadline=GetTickCount64()+3000;
       while(!entered() && GetTickCount64()<deadline) ::Sleep(1);
       Require(entered(),"source sleep did not enter the gate");
+      controlStatus(&cs,sizeof(cs)); const auto associatedBefore=cs.reflexSleeps;
       chain.Reset();
       mfgunlock::xemfg::Status retired; modelStatus(&retired,sizeof(retired));
       if(retired.contexts) { hold(false); pendingSleep.wait(); throw std::runtime_error("latency lease retained the old FG presentation context"); }
@@ -911,7 +912,10 @@ int main(int argc,char** argv) {
       Check(base.As(&chain),"new output during old source sleep"); base.Reset();
       hold(false);
       const auto result=pendingSleep.get();
-      Require(result==sl::Result::eErrorInvalidState,"retired source sleep published a stale frame");
+      // 1.5.6: the game gets the native Reflex result; only the XeLL frame
+      // association with the retired output is refused.
+      controlStatus(&cs,sizeof(cs));
+      Require(result==sl::Result::eOk && cs.reflexSleeps==associatedBefore,"retired source sleep published a stale frame");
       sl::DLSSGOptions retiredOff; retiredOff.mode=sl::DLSSGMode::eOff;
       Require(options(viewport,retiredOff)==sl::Result::eOk,"replacement native FG off");
       Check(chain->Present(0,0),"new passthrough output"); chain.Reset();
@@ -1231,7 +1235,9 @@ int main(int argc,char** argv) {
           "observed latency route/counters missing");
     else Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:flag("--constant-sleep-token")?41u:expectedSleeps)*6,
         "observed latency route/counters missing");
-    Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
+    // Native Reflex route: every game wait reaches the original slReflexSleep,
+    // including the tail scenario's duplicate wait on frame 5 (1.5.6).
+    Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?(flag("--tail-sleep")?49u:48u):0u),"original Reflex wait dispatch count");
     if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==(constantToken?0u:48u),"native Reflex token was shifted");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     if(flag("--tail-sleep")) std::cout<<"Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved"<<std::endl;

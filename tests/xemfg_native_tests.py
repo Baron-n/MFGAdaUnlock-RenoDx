@@ -265,7 +265,11 @@ if args.foreign_refs or args.retained_output:
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and verified else 1)
 if args.retire_sleep:
-    verified=any(e.get('event')=='native_output_retired' and e.get('sleep_in_flight') and e.get('destroy_result')==0 for e in events)
+    # 1.5.6: the game's native Reflex wait runs before any XeLL operation, so
+    # nothing is in flight on the Intel side when the output retires during it
+    # (sleep_in_flight false). Retirement during an in-flight XeLL wait is
+    # covered by xemfg_latency_translation.
+    verified=any(e.get('event')=='native_output_retired' and e.get('sleep_in_flight') is False and e.get('destroy_result')==0 for e in events)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,retirement_during_sleep_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
     raise SystemExit(0 if result.returncode==0 and verified and 'same HWND rebound before sleep returned' in result.stdout else 1)
