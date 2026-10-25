@@ -210,6 +210,8 @@ target_include_directories(xemfg_profiles_tests PRIVATE "${RENODX_SOURCE_DIR}/ex
 add_test(NAME xemfg_profiles COMMAND xemfg_profiles_tests "${CMAKE_CURRENT_SOURCE_DIR}/profiles.json")
 add_executable(xemfg_async_log_tests "${CMAKE_SOURCE_DIR}/xemfg_async_log_tests.cpp")
 add_test(NAME xemfg_async_log COMMAND xemfg_async_log_tests)
+add_executable(xemfg_log_budget_tests "${CMAKE_SOURCE_DIR}/xemfg_log_budget_tests.cpp")
+add_test(NAME xemfg_log_budget COMMAND xemfg_log_budget_tests)
 add_executable(xemfg_diagnostics_tests "${CMAKE_SOURCE_DIR}/xemfg_diagnostics_tests.cpp" native_diagnostics.cpp)
 add_test(NAME xemfg_cpu_diagnostics COMMAND xemfg_diagnostics_tests)
 add_executable(xemfg_panel_preview "${CMAKE_SOURCE_DIR}/xemfg_panel_preview.cpp" native_panel.cpp native_controls.cpp native_diagnostics.cpp native_session.cpp native_compatibility.cpp native_trace.cpp native_reframework.cpp dependency_manager.cpp
