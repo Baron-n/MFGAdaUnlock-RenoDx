@@ -532,7 +532,7 @@ int main(int argc,char** argv) {
     DXGI_SWAP_CHAIN_DESC1 desc{}; desc.Width=640; desc.Height=360; desc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
     desc.SampleDesc.Count=1; desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.BufferCount=3; desc.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
     // Plan 4.4: an HDR game presenting scRGB (FP16, linear BT.709).
-    if(flag("--scrgb-output")) desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
+    if(flag("--scrgb-output") || flag("--scrgb-hudless")) desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;
     if(flag("--capcom-flags")) desc.Flags=0x842; // waitable, mode switch, tearing: captured RE Engine description
     if(legacyFactory) desc.Flags=0x802; // Control Resonant: legacy API, tearing + mode switch
     const bool ffxReflex=flag("--ffx-with-reflex"),ffxDlssg=flag("--ffx-with-dlssg");
@@ -944,7 +944,7 @@ int main(int argc,char** argv) {
     auto motion=texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_FLAG_NONE);
     // 1.5.7 conformance: HUD-less in another type of the output's bits, as
     // Death Stranding 2 (UNORM_SRGB) and Cyberpunk 2077 (TYPELESS) tag it.
-    const DXGI_FORMAT colorFormat=flag("--scrgb-output")?DXGI_FORMAT_R16G16B16A16_FLOAT:flag("--hud-srgb")?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+    const DXGI_FORMAT colorFormat=flag("--scrgb-output") || flag("--scrgb-hudless")?DXGI_FORMAT_R16G16B16A16_FLOAT:flag("--hud-srgb")?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
         :flag("--hud-typeless")?DXGI_FORMAT_R8G8B8A8_TYPELESS:DXGI_FORMAT_R8G8B8A8_UNORM;
     auto color=texture(colorFormat,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     auto upload=[&](ID3D12Resource* resource,bool isDepth) {
@@ -1169,7 +1169,7 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
-      if((flag("--hud-srgb") || flag("--hud-typeless")) && frame==10) {
+      if((flag("--hud-srgb") || flag("--hud-typeless") || flag("--scrgb-hudless")) && frame==10) {
         // 1.5.7: the panel reports the HUD-less input as received and converted.
         controlStatus(&cs,sizeof(cs));
         Require((cs.hudInputs&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)) && (cs.hudCopied&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)),"panel did not report the converted HUD-less input");

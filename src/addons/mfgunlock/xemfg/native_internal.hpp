@@ -81,6 +81,7 @@ struct Frame {
     D3D12_RESOURCE_STATES state{};
     DejitterRegion region{};
     xefg_swapchain_resource_type_t type{};
+    bool encode{}; // FP16 scRGB HUD-less encoded to HDR10 like the backbuffer
   } pendingHud[2];
   uint32_t constantIssues{};
   LatencyOutput latencyOutput{LatencyOutput::XeLL};

@@ -21,6 +21,9 @@ class HudCopy {
   // kind: 0 HUD-less, 1 UI. Returns nullptr on failure.
   ID3D12Resource* Record(ID3D12GraphicsCommandList* list,ID3D12Resource* source,D3D12_RESOURCE_STATES state,
       const DejitterRegion& region,DXGI_FORMAT format,unsigned kind,uint32_t frame);
+  // An owned texture for a conversion target (kind, frame slot), created in
+  // COMMON with the given flags. Returns nullptr on failure.
+  ID3D12Resource* Target(unsigned kind,uint32_t frame,DXGI_FORMAT format,uint32_t width,uint32_t height,D3D12_RESOURCE_FLAGS flags);
   // Opens the own list; tags may be recorded on it before Submit.
   ID3D12GraphicsCommandList* Begin();
   bool Submit(ID3D12CommandQueue* queue);
@@ -34,7 +37,8 @@ class HudCopy {
   Microsoft::WRL::ComPtr<ID3D12CommandAllocator> allocators[kSlots];
   Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> list;
   Microsoft::WRL::ComPtr<ID3D12Fence> fence;
-  Microsoft::WRL::ComPtr<ID3D12Resource> textures[2][kSlots];
+  Microsoft::WRL::ComPtr<ID3D12Resource> textures[2][kSlots], targets[2][kSlots];
+  bool Ensure(Microsoft::WRL::ComPtr<ID3D12Resource>& texture,DXGI_FORMAT format,uint32_t width,uint32_t height,D3D12_RESOURCE_FLAGS flags);
   HANDLE event{};
   uint64_t fenceValues[kSlots]{}, nextFence{1};
   uint32_t slot{};

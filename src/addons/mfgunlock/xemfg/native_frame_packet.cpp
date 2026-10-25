@@ -28,7 +28,7 @@ xefg_swapchain_result_t StageMotion(Output& o,Frame& frame,ID3D12CommandList* pr
 // tagged now on the producer's list (XeFG copies ONLY_NOW inputs at the tag);
 // one valid until Present waits for the source Present (SubmitPendingHud).
 xefg_swapchain_result_t StageHudCopy(Output& o,Frame& frame,ID3D12CommandList* producer,ID3D12Resource* resource,
-    const xefg_swapchain_d3d12_resource_data_t& data,uint32_t id,unsigned slot) {
+    const xefg_swapchain_d3d12_resource_data_t& data,uint32_t id,unsigned slot,bool encode) {
   if(!o.hudCopy) {
     auto copy=std::make_unique<HudCopy>();
     if(!copy->Initialize(o.device.Get())) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
@@ -36,14 +36,21 @@ xefg_swapchain_result_t StageHudCopy(Output& o,Frame& frame,ID3D12CommandList* p
   }
   const DejitterRegion region{uint32_t(data.resourceBase.x),uint32_t(data.resourceBase.y),data.resourceSize.x,data.resourceSize.y};
   if(data.validity!=XEFG_SWAPCHAIN_RV_ONLY_NOW) {
-    frame.pendingHud[slot]={resource,data.incomingState,region,data.type};
+    frame.pendingHud[slot]={resource,data.incomingState,region,data.type,encode};
     return XEFG_SWAPCHAIN_RESULT_SUCCESS;
   }
   ComPtr<ID3D12GraphicsCommandList> graphics;
   ID3D12Resource* copy{};
+  // An FP16 input is copied as it is now and encoded at the source Present,
+  // on the encoder's own list (no heap or pipeline state on the game's list).
+  const auto format=encode?resource->GetDesc().Format:o.format;
   if(!producer || FAILED(producer->QueryInterface(IID_PPV_ARGS(&graphics)))
-      || !(copy=o.hudCopy->Record(graphics.Get(),resource,data.incomingState,region,o.format,slot,id)))
+      || !(copy=o.hudCopy->Record(graphics.Get(),resource,data.incomingState,region,format,slot,id)))
     return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  if(encode) {
+    frame.pendingHud[slot]={copy,D3D12_RESOURCE_STATE_COMMON,{0,0,region.width,region.height},data.type,true};
+    return XEFG_SWAPCHAIN_RESULT_SUCCESS;
+  }
   auto copied=data; copied.pResource=copy; copied.incomingState=D3D12_RESOURCE_STATE_COMMON; copied.resourceBase={0,0};
   RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
   const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,producer,id,&copied);trace.Result(r);return r;
@@ -51,13 +58,25 @@ xefg_swapchain_result_t StageHudCopy(Output& o,Frame& frame,ID3D12CommandList* p
 }
 bool SubmitPendingHud(Output& o,Frame& f,uint32_t id) {
   if(!f.pendingHud[0].source && !f.pendingHud[1].source) return true;
-  auto* list=o.hudCopy?o.hudCopy->Begin():nullptr;
-  bool ok=list!=nullptr;
+  // FP16 scRGB inputs are encoded first, on the encoder's list; the tags
+  // below then run on the copy list, after it on the same queue.
+  ID3D12Resource* encoded[2]{};
+  bool ok=o.hudCopy!=nullptr;
+  for(unsigned slot=0;ok && slot<2;++slot) {
+    auto& pending=f.pendingHud[slot];
+    if(!pending.source || !pending.encode) continue;
+    encoded[slot]=o.hudCopy->Target(slot,id,ScrgbEncoder::kTargetFormat,pending.region.width,pending.region.height,
+        D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    ok=encoded[slot] && o.scrgbEncoder && o.scrgbEncoder->Encode(o.queue.Get(),pending.source.Get(),pending.state,
+        encoded[slot],D3D12_RESOURCE_STATE_COMMON);
+  }
+  auto* list=ok?o.hudCopy->Begin():nullptr;
+  ok=list!=nullptr;
   int tag=XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
   for(unsigned slot=0;ok && slot<2;++slot) {
     auto& pending=f.pendingHud[slot];
     if(!pending.source) continue;
-    auto* copy=o.hudCopy->Record(list,pending.source.Get(),pending.state,pending.region,o.format,slot,id);
+    auto* copy=encoded[slot]?encoded[slot]:o.hudCopy->Record(list,pending.source.Get(),pending.state,pending.region,o.format,slot,id);
     xefg_swapchain_d3d12_resource_data_t data{};
     data.type=pending.type; data.pResource=copy; data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
     data.incomingState=D3D12_RESOURCE_STATE_COMMON; data.resourceSize={pending.region.width,pending.region.height};
@@ -180,14 +199,21 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
   if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
       || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { rejection="extent"; reject(HudExtent); return; }
-  bool copyFormat{};
+  bool copyFormat{},encodeScrgb{};
   if(optional) {
     // XeFG requires HUD-less and backbuffer resolutions to match (plan 4.3).
     const auto& area=o.backbufferRegion;
     auto issues=CheckHudInput(desc,o.format,area.width?area.width:o.width,area.width?area.height:o.height,
         data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
-    // 1.5.7: the same bits under another type are tagged through a copy.
+    // 1.5.7: the same bits under another type are tagged through a copy, and
+    // a full-size FP16 HUD-less of an scRGB game is encoded to HDR10 with the
+    // backbuffer's own conversion (both hold the game's linear scRGB).
     if(issues==HudFormat && CopyableHudFormat(desc.Format,o.format)) { issues=0; copyFormat=true; }
+    else if(issues==HudFormat && type==XEFG_SWAPCHAIN_RES_HUDLESS_COLOR && o.scrgb && o.scrgbEncoder
+        && (desc.Format==DXGI_FORMAT_R16G16B16A16_FLOAT || desc.Format==DXGI_FORMAT_R16G16B16A16_TYPELESS)
+        && !data.resourceBase.x && !data.resourceBase.y && data.resourceSize.x==desc.Width && data.resourceSize.y==desc.Height) {
+      issues=0; copyFormat=encodeScrgb=true;
+    }
     if(issues) { rejection="optional_hud"; reject(issues); return; }
   }
   const unsigned hudSlot=type==XEFG_SWAPCHAIN_RES_UI?1:0;
@@ -232,7 +258,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   }
   const auto code=[&] {
     if(type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR && o.dejitter) return StageMotion(o,frame,list.Get(),resource.Get(),data,id);
-    if(copyFormat) return StageHudCopy(o,frame,list.Get(),resource.Get(),data,id,hudSlot);
+    if(copyFormat) return StageHudCopy(o,frame,list.Get(),resource.Get(),data,id,hudSlot,encodeScrgb);
     RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
     const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,list.Get(),id,&data);trace.Result(r);return r;
   }();

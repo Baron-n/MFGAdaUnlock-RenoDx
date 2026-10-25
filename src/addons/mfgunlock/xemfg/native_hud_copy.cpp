@@ -28,18 +28,7 @@ ID3D12Resource* HudCopy::Record(ID3D12GraphicsCommandList* target,ID3D12Resource
     const DejitterRegion& region,DXGI_FORMAT format,unsigned kind,uint32_t frame) {
   if(!target || !source || kind>1 || !region.width || !region.height) { Fail(E_INVALIDARG); return nullptr; }
   auto& texture=textures[kind][frame%kSlots];
-  if(texture) {
-    const auto d=texture->GetDesc();
-    if(d.Format!=format || d.Width!=region.width || d.Height!=region.height) texture.Reset();
-  }
-  if(!texture) {
-    D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
-    D3D12_RESOURCE_DESC d{};
-    d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D; d.Width=region.width; d.Height=region.height;
-    d.DepthOrArraySize=1; d.MipLevels=1; d.Format=format; d.SampleDesc.Count=1;
-    const HRESULT hr=device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&texture));
-    if(FAILED(hr)) { Fail(hr); return nullptr; }
-  }
+  if(!Ensure(texture,format,region.width,region.height,D3D12_RESOURCE_FLAG_NONE)) return nullptr;
   // The copy rests in COMMON: CopyTextureRegion promotes it implicitly to
   // COPY_DEST and an explicit barrier returns it, as MotionDejitter::Capture.
   Transition(target,source,state,D3D12_RESOURCE_STATE_COPY_SOURCE);
@@ -50,6 +39,24 @@ ID3D12Resource* HudCopy::Record(ID3D12GraphicsCommandList* target,ID3D12Resource
   Transition(target,source,D3D12_RESOURCE_STATE_COPY_SOURCE,state);
   Transition(target,texture.Get(),D3D12_RESOURCE_STATE_COPY_DEST,D3D12_RESOURCE_STATE_COMMON);
   return texture.Get();
+}
+bool HudCopy::Ensure(ComPtr<ID3D12Resource>& texture,DXGI_FORMAT format,uint32_t width,uint32_t height,D3D12_RESOURCE_FLAGS flags) {
+  if(texture) {
+    const auto d=texture->GetDesc();
+    if(d.Format==format && d.Width==width && d.Height==height && d.Flags==flags) return true;
+    texture.Reset();
+  }
+  D3D12_HEAP_PROPERTIES heap{D3D12_HEAP_TYPE_DEFAULT};
+  D3D12_RESOURCE_DESC d{};
+  d.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D; d.Width=width; d.Height=height;
+  d.DepthOrArraySize=1; d.MipLevels=1; d.Format=format; d.SampleDesc.Count=1; d.Flags=flags;
+  const HRESULT hr=device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&d,D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&texture));
+  return SUCCEEDED(hr)?true:Fail(hr);
+}
+ID3D12Resource* HudCopy::Target(unsigned kind,uint32_t frame,DXGI_FORMAT format,uint32_t width,uint32_t height,D3D12_RESOURCE_FLAGS flags) {
+  if(kind>1 || !width || !height) { Fail(E_INVALIDARG); return nullptr; }
+  auto& texture=targets[kind][frame%kSlots];
+  return Ensure(texture,format,width,height,flags)?texture.Get():nullptr;
 }
 ID3D12GraphicsCommandList* HudCopy::Begin() {
   if(open) { Fail(E_UNEXPECTED); return nullptr; }
