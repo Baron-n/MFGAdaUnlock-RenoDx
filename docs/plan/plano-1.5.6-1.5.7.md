@@ -79,8 +79,8 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 
 | # | Tarefa | Est. | Status |
 |---|---|---|---|
-| R6.1 | Gate completo no build final de release | 1 h | pendente |
-| R6.2 | **[você]** Regressão rápida: um jogo XeMFG (ex.: CONTROL) e um DLSS-G (ex.: Cyberpunk) | 30 min | pendente |
+| R6.1 | Gate completo no build final de release | 1 h | feito (2026-10-25) |
+| R6.2 | **[você]** Regressão rápida: um jogo XeMFG (ex.: CONTROL) e um DLSS-G (ex.: Cyberpunk) | 30 min | em andamento |
 | R6.3 | Versão, `docs/releases/1.5.6.md`, merge na `fork/main` e `develop`, tag e release no GitHub | 45 min | pendente |
 
 ---
@@ -159,4 +159,7 @@ Um PR por item.
 - **2026-10-25 · 3.3** (`f6059c4`) Log do SDK XeFG agrupado por padrão, com `occurrence`. Matriz como no 3.2.
 - **2026-10-25 · 3.4** Build `f6059c4` instalado no Plague Tale (versão Xbox, `C:\XboxGames\Resonance- A Plague Tale Legacy\Content`) com backup (`renodx-mfgunlock.addon64.1.5.5.bak`, `MFGAdaUnlock.ini.1.5.5.bak`); `[Latency] Output=Reflex`. Log com 2.092 linhas antes do teste.
 - **2026-10-25 · 3.4** Plague Tale com o build `f6059c4` e saída Reflex: `native_latency_binding` Reflex; em todos os resumos de 10 s, FG ativo (`ready`, 0 frames sem FG, 3 frames por Present no multiplicador 3x). O jogo continua mandando token 0; os frames são associados pela fronteira da simulação (`native_simulation_boundary_sleep`, resultado 0) e o contador `sleeps_rejected` conta as associações recusadas (o Reflex nativo recebe todas as esperas). Nenhuma perda de device, falha de Present ou erro do XeLL. INI devolvido a `Output=Auto`; o build novo continua instalado. **Blocos 1 a 3 concluídos**; falta o gate de release (R6.1), que depende dos três casos ambientais.
+- **2026-10-25 · ambiente resolvido** Com o plano de energia Alto desempenho, os três casos da rota sintetizada passam 3/3 cada: no Equilibrado a CPU segura o ritmo e esses testes curtos perdem um frame gerado. O plano voltou ao Equilibrado depois do gate. **Para os próximos gates, rodar a matriz com Alto desempenho.**
+- **2026-10-25 · R6.1** Build do `d720c33` (código igual ao `f6059c4`), Alto desempenho: matriz **179/179**, backlog vazio, opcionais de sempre pulados.
+- **2026-10-25 · R6.2** Build instalado no CONTROL Resonant (XeMFG) e no Cyberpunk 2077 com `[Backend] Selected=DLSSG` temporário; backups `*.before-1.5.6.bak` do addon e do INI.
 
