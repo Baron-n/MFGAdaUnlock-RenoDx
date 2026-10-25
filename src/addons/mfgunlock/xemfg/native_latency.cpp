@@ -48,7 +48,8 @@ sl::Result SleepSourceFrame(const std::shared_ptr<Output>& o,uint32_t id,
       ++o->rejectedExplicitSleeps;
       return sl::Result::eErrorInvalidState;
     }
-    const auto interval=reflex?0:s.limitUs.load();
+    // 1.5.7: the optional display cap joins the game's own limit (XeLL only).
+    const auto interval=reflex?0:CombinedIntervalUs(s.limitUs.load(),DisplayCapIntervalForOutput());
     const bool lowLatency=!reflex;
     if(!o->sleepConfigured || o->sleepInterval!=interval || o->sleepLowLatency!=lowLatency) {
       xell_sleep_params_t mode{}; mode.bLowLatencyMode=lowLatency; mode.minimumIntervalUs=interval;

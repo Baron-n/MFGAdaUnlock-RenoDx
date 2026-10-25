@@ -12,6 +12,8 @@ struct ControlSettings {
   bool queueAhead{true};
   bool flipMetering{true}, forceBorderless{}, uiComposition{},sdkDeadlines{};
   bool forceVSyncOff{};
+  // 1.5.7: limit the source rate to the display refresh / multiplier (XeLL output).
+  bool displayCap{};
 };
 struct ControlStatus {
   uint32_t version{5};
@@ -42,6 +44,9 @@ struct ControlStatus {
   bool latencyRestartPending{},reflexOutputObserved{},reflexOptionsReady{};
   uint64_t reflexSleeps{},xellSleeps{};
   uint32_t gameSyncInterval{UINT32_MAX};
+  // 1.5.7: display refresh (mHz, 0 unknown), smoothed source interval and the
+  // display cap's minimum source interval (0 when off or unavailable).
+  uint32_t displayRefreshMilliHz{}, sourceIntervalUs{}, displayCapIntervalUs{};
 };
 void LoadControls();
 ControlSettings ControlsSettings();

@@ -61,6 +61,7 @@ ap.add_argument('--duplicate-tags',action='store_true')
 ap.add_argument('--reserved-state',action='store_true')
 ap.add_argument('--hud-srgb',action='store_true')
 ap.add_argument('--hud-typeless',action='store_true')
+ap.add_argument('--display-cap',action='store_true')
 ap.add_argument('--game-xefg-probe',action='store_true')
 ap.add_argument('--ffx-with-streamline',action='store_true')
 ap.add_argument('--ffx-with-reflex',action='store_true')
@@ -119,7 +120,7 @@ if args.runtime_layout!='adjacent':
         content=bytearray(path.read_bytes()); content[0x40]^=1; path.write_bytes(content)
         manifest['_storage_/libxess_fg.dll']=hashlib.sha256(content).hexdigest()
 (d/'MFGAdaUnlock.ini').write_text(f'[Backend]\nSelected=XeMFG\n[XeFG]\nMultiplier={args.multiplier}\n'
-    +('InvertedDepth=0\n' if args.normal_depth else '')+('ForceVSyncOff=1\n' if args.force_vsync_off else '')
+    +('InvertedDepth=0\n' if args.normal_depth else '')+('ForceVSyncOff=1\n' if args.force_vsync_off else '')+('DisplayCap=1\n' if args.display_cap else '')
     +f'[Latency]\nOutput={args.latency_output}\n',encoding='ascii')
 # One [Diagnostics] section: a second one would be ignored by GetPrivateProfile*.
 diagnostics=(['StallTrace=1'] if args.d3d_debug else [])+(['SummaryIntervalMs=200'] if args.game_vsync else [])
@@ -141,7 +142,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
+for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','display_cap','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -437,6 +438,13 @@ if args.game_xefg_probe:
 if args.duplicate_tags:
     diagnostics_verified['duplicate_tags']=any(e.get('event')=='native_tag_duplicate' for e in events) and not any(
         e.get('event')=='native_sdk_log' and 'already tagged' in e.get('message','') for e in events)
+if args.display_cap:
+    # 1.5.7: with no game limit, the XeLL interval is the display cap for the
+    # measured refresh and multiplier, and 0 again after it is turned off.
+    caps=[e for e in events if e.get('event')=='native_display_cap' and e.get('interval_us',0)>0]
+    modes=[e.get('interval_us') for e in events if e.get('event')=='native_sleep_mode']
+    diagnostics_verified['display_cap']=(bool(caps) and caps[0].get('enabled')==1
+        and caps[0]['interval_us'] in modes and 0 in modes[modes.index(caps[0]['interval_us']):])
 if args.hud_srgb or args.hud_typeless:
     # 1.5.7: the HUD-less tag in another type of the output's bits is copied
     # into the output format, at the tag (volatile) and at Present.

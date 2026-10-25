@@ -875,6 +875,8 @@ int main(int argc,char** argv) {
     Require(options(viewport,opt)==sl::Result::eOk,"native FG disable");
     queryFeatures();
     sl::ReflexOptions ro; ro.mode=sl::ReflexMode::eLowLatency; ro.frameLimitUs=25000;
+    // 1.5.7: without a game limit the XeLL interval is the display cap alone.
+    if(flag("--display-cap")) ro.frameLimitUs=0;
     // Conformance: a newer ReflexOptions or one with an extension chain.
     sl::ReflexOptions reflexExtension;
     if(flag("--reflex-v2")) ro.structVersion=2;
@@ -1017,6 +1019,12 @@ int main(int argc,char** argv) {
       }
       if(keyTest && (frame==4 || frame==8 || frame==12 || frame==16)) PostMessageW(hwnd,WM_KEYUP,VK_HOME,LPARAM(1u<<31));
       if(keyTest) { MSG msg{}; while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)) DispatchMessageW(&msg); }
+      if(flag("--display-cap") && frame==30) {
+        // 1.5.7: turning the display cap off removes the XeLL interval at the next wait.
+        controlStatus(&cs,sizeof(cs));
+        Require(cs.settings.displayCap && cs.displayCapIntervalUs>0 && cs.displayRefreshMilliHz>0,"display cap not active");
+        settings.displayCap=false; Require(configure(&settings,sizeof(settings)),"display cap off");
+      }
       if(frame==36 || frame==42) {
         settings.sdkDeadlines=frame==36; Require(configure(&settings,sizeof(settings)),"deadline comparison request");
       }
@@ -1252,7 +1260,8 @@ int main(int argc,char** argv) {
     if(flag("--midsim-sleep")) std::cout<<"Simulation boundary: refused mid-simulation waits recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
     if(flag("--zero-resource")) std::cout<<"Zero resource metadata: real D3D12 textures, volatile producer copies and inference accepted"<<std::endl;
     if(flag("--jittered-motion")) std::cout<<"Jittered motion: dejittered by the bridge pass and interpolated"<<std::endl;
-    Require(cs.modeUpdates<=(flag("--retained-output")?3u:2u),"identical XeLL configuration reapplied every frame");
+    // The display cap case changes the XeLL interval twice (cap on, then off).
+    Require(cs.modeUpdates<=(flag("--retained-output") || flag("--display-cap")?3u:2u),"identical XeLL configuration reapplied every frame");
     // An invalid producer removes this frame's HUD-less input, then the next
     // valid frame restores it: one additional disable/enable transition.
     const uint64_t compositionTransitions=(flag("--producer-shadow")?6:4)+(flag("--stale-input")?1:0);

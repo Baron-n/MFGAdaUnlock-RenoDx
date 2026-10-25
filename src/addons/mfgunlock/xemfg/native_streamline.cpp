@@ -825,6 +825,15 @@ void ReselectViewport(Output& o,uint32_t id) {
 }
 void BeforePresent(const std::shared_ptr<Output>& o) {
   auto& s=State(); auto& a=s.api; std::lock_guard lock(o->io);
+  {
+    // 1.5.7: smoothed interval between source Presents (display-cap notice).
+    LARGE_INTEGER now{},frequency{}; QueryPerformanceCounter(&now); QueryPerformanceFrequency(&frequency);
+    const auto previous=o->lastSourcePresentQpc; o->lastSourcePresentQpc=now.QuadPart;
+    const auto us=previous && frequency.QuadPart?uint64_t(now.QuadPart-previous)*1000000/uint64_t(frequency.QuadPart):0;
+    const auto smoothed=s.sourceIntervalUs.load();
+    if(us && us<250000) s.sourceIntervalUs=smoothed?uint32_t((uint64_t(smoothed)*7+us)/8):uint32_t(us);
+    else if(us) s.sourceIntervalUs=0; // a pause or a loading screen: start again
+  }
   ReselectViewport(*o,s.presenting.load());
   if(o->retired || !o->fg) return;
   if(o->deviceLost) {o->blocker=compatibility::Failure::DeviceLost;Report(compatibility::Description(o->blocker));return;}
@@ -977,6 +986,22 @@ void AfterPresent(const std::shared_ptr<Output>& o,CpuProbe* probe,HRESULT resul
   }
   // Keep late PresentEnd markers for the preceding frame, but bound memory.
   o->frames.Prune(o->last);
+  // 1.5.7: refresh of the display showing this output, every 2 s (display cap).
+  if(const auto tick=GetTickCount64(); tick-o->refreshTick>=2000) {
+    o->refreshTick=tick;
+    uint32_t refresh{};
+    if(const auto monitor=MonitorFromWindow(o->hwnd,MONITOR_DEFAULTTONEAREST)) {
+      MONITORINFOEXW info{}; info.cbSize=sizeof(info); DEVMODEW mode{}; mode.dmSize=sizeof(mode);
+      if(GetMonitorInfoW(monitor,&info) && EnumDisplaySettingsW(info.szDevice,ENUM_CURRENT_SETTINGS,&mode)
+          && mode.dmDisplayFrequency>1 && mode.dmDisplayFrequency<=1000) refresh=mode.dmDisplayFrequency*1000;
+    }
+    if(State().displayRefreshMilliHz.exchange(refresh)!=refresh || !o->displayCapLogged) {
+      o->displayCapLogged=true;
+      xess_mod::WriteLog("native_display_cap","\"output\":"+std::to_string(o->diagnosticOutput)+",\"refresh_mhz\":"+std::to_string(refresh)
+          +",\"multiplier\":"+std::to_string(State().multiplier.load())+",\"enabled\":"+std::to_string(State().displayCap.load())
+          +",\"interval_us\":"+std::to_string(DisplayCapIntervalUs(refresh,State().multiplier.load())));
+    }
+  }
   WriteSummary(*o,status,queryResult);
   if(probe && probe->active) {
     auto& sample=probe->sample; sample.frame=o->last; sample.epoch=o->epoch; sample.output=o->diagnosticOutput;

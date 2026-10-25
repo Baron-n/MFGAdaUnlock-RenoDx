@@ -12,6 +12,7 @@
 #include "native_dejitter.hpp"
 #include "native_scrgb.hpp"
 #include "native_hud_copy.hpp"
+#include "display_cap.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -139,6 +140,9 @@ struct Output {
   // 1.5.7: owned copies of HUD inputs in the output format; created on first use.
   std::unique_ptr<HudCopy> hudCopy;
   uint32_t hudCopyLogBudget{};
+  uint64_t refreshTick{};
+  bool displayCapLogged{};
+  int64_t lastSourcePresentQpc{};
   DejitterVector lastJitter{};
   uint32_t lastJitterId{}, dejitterLogBudget{};
   uint32_t backbufferLogBudget{};
@@ -191,6 +195,10 @@ struct Bridge {
   std::atomic<uint32_t> gameReflexMode{0};
   // Sync interval of the game's last Present, before ForceVSyncOff; UINT32_MAX until one is seen.
   std::atomic<uint32_t> gameSyncInterval{UINT32_MAX};
+  // 1.5.7: refresh of the output's display (mHz, refreshed every 2 s) and the
+  // smoothed interval between source Presents, for the display cap and notice.
+  std::atomic<uint32_t> displayRefreshMilliHz{0}, sourceIntervalUs{0};
+  std::atomic<bool> displayCap{false}; // [XeFG] DisplayCap, set by the controls
   // Totals for native_summary; the per-event logs keep only their first entries.
   std::atomic<uint64_t> tagsRejected{0},tagsRemoved{0},reservedStates{0};
   std::atomic<uint32_t> summaryIntervalMs{10000};
@@ -204,6 +212,12 @@ struct Bridge {
   std::atomic<uint64_t> staleInputs{0},externalResolutions{0};
 };
 Bridge& State();
+// 1.5.7: minimum source interval of the display cap for the XeLL output, or 0.
+inline uint32_t DisplayCapIntervalForOutput() noexcept {
+  auto& s=State();
+  if(!s.displayCap.load(std::memory_order_relaxed) || s.latencyOutput.load()!=LatencyOutput::XeLL) return 0;
+  return DisplayCapIntervalUs(s.displayRefreshMilliHz.load(),s.multiplier.load());
+}
 inline Frame* FindFrame(Output& o,uint32_t id) {
   return o.frames.Acquire(id);
 }

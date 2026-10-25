@@ -49,6 +49,8 @@ void LoadControls() {
   sdk_pacing::RequestSdkDeadlines(settings.sdkDeadlines);
   settings.forceVSyncOff=ReadBool(L"XeFG",L"ForceVSyncOff",false);
   forceVSyncOff=settings.forceVSyncOff;
+  settings.displayCap=ReadBool(L"XeFG",L"DisplayCap",false);
+  State().displayCap=settings.displayCap;
   wchar_t flip[32]{}; GetPrivateProfileStringW(L"XeFG",L"XeFGFlipMetering",L"auto",flip,32,Ini().c_str());
   settings.flipMetering=_wcsicmp(flip,L"off") && _wcsicmp(flip,L"false") && wcscmp(flip,L"0");
   if(_wcsicmp(flip,L"auto") && _wcsicmp(flip,L"on") && _wcsicmp(flip,L"true") && wcscmp(flip,L"1")
@@ -71,11 +73,13 @@ bool ConfigureControls(const ControlSettings& incoming) {
     {L"XeFG",L"ForceBorderless",value.forceBorderless?L"1":L"0"},
     {L"XeFG",L"UIComposition",value.uiComposition?L"1":L"0"},
     {L"XeFG",L"SdkDeadlines",value.sdkDeadlines?L"1":L"0"},
-    {L"XeFG",L"ForceVSyncOff",value.forceVSyncOff?L"1":L"0"}});
+    {L"XeFG",L"ForceVSyncOff",value.forceVSyncOff?L"1":L"0"},
+    {L"XeFG",L"DisplayCap",value.displayCap?L"1":L"0"}});
   settingsSaved=saved;
   if(!saved) return false;
   settings=value; invalidConfiguration=false; settingsGuard.unlock();
   forceVSyncOff=value.forceVSyncOff;
+  State().displayCap=value.displayCap;
   sdk_pacing::RequestQueueAhead(value.queueAhead);
   if(old.flipMetering!=value.flipMetering) sdk_pacing::RequestFlipMetering(value.flipMetering);
   if(old.sdkDeadlines!=value.sdkDeadlines) sdk_pacing::RequestSdkDeadlines(value.sdkDeadlines);
@@ -83,7 +87,7 @@ bool ConfigureControls(const ControlSettings& incoming) {
       +",\"output\":"+std::to_string(uint32_t(value.output))+",\"flip_requested\":"+(value.flipMetering?"true":"false")
       +",\"borderless_requested\":"+(value.forceBorderless?"true":"false")
       +",\"ui_composition_requested\":"+(value.uiComposition?"true":"false")
-      +",\"force_vsync_off\":"+(value.forceVSyncOff?"true":"false")+",\"saved\":"+(saved?"true":"false"));
+      +",\"force_vsync_off\":"+(value.forceVSyncOff?"true":"false")+",\"display_cap\":"+(value.displayCap?"true":"false")+",\"saved\":"+(saved?"true":"false"));
   return saved;
 }
 ControlSettings ControlsSettings() { std::lock_guard guard(settingsLock); return settings; }
@@ -109,6 +113,8 @@ ControlStatus ControlsSnapshot() {
   result.xellObserved=result.activeLatencyOutput==LatencyOutput::XeLL && s.outputTick && now-s.outputTick.load()<2000;
   result.nativeReflexDisabled=s.reflexOff; result.gameReflexMode=s.gameReflexMode;
   result.gameSyncInterval=s.gameSyncInterval;
+  result.displayRefreshMilliHz=s.displayRefreshMilliHz; result.sourceIntervalUs=s.sourceIntervalUs;
+  result.displayCapIntervalUs=DisplayCapIntervalForOutput();
   result.hudIssues=s.lastHudIssues; result.hudInputs=s.lastHudInputs; result.hudRejected=s.hudRejected;
   xefg_cuda::Status cuda;
   result.cudaUpdating=!xefg_cuda::TrySnapshot(cuda);
@@ -181,6 +187,24 @@ void DrawControls(PanelPage page) {
     if(sync && sync!=UINT32_MAX && !value.forceVSyncOff && State().requested.load())
       ui::Notice("The game presents with VSync, so frame pacing does not apply to generated frames. "
           "Turn off VSync in the game's settings. If the game has no VSync setting, turn on Force game VSync off.");
+    // 1.5.7: optional cap to the display refresh (XeLL output only).
+    constexpr const char* capHelp="Limits the game's frame rate so that, with the multiplier, frames are presented slightly below the display refresh (3% margin, for variable-refresh displays). Without a limit, a high game frame rate presents generated frames faster than the display shows them, and motion becomes uneven. The game's own frame limit still applies when it is lower. Available with the XeLL latency output. Applies at the next frame.";
+    const bool xellOutput=status.activeLatencyOutput==LatencyOutput::XeLL;
+    ui::Setting("##xe_display_cap_row","Limit to display refresh",capHelp,[&] {
+      ImGui::BeginDisabled(!xellOutput);
+      if(ImGui::Checkbox("##xe_display_cap",&value.displayCap)) ConfigureControls(value);
+      ImGui::EndDisabled();
+    });
+    const auto refreshHz=status.displayRefreshMilliHz/1000;
+    const std::string capState=!xellOutput?"Not available with the Reflex output":!value.displayCap?"Off":
+        !status.displayCapIntervalUs?"Waiting for the display refresh":
+        "Game up to "+std::to_string(1000000/status.displayCapIntervalUs)+" FPS ("+std::to_string(refreshHz)+" Hz display)";
+    ui::Readout("##xe_display_cap_state","Frame rate limit",capState.c_str(),capHelp,value.displayCap && status.displayCapIntervalUs?ui::Accent:ui::Muted);
+    // Warn, never enable it automatically (the user decides).
+    if(xellOutput && !value.displayCap && State().requested.load() && (!sync || sync==UINT32_MAX)
+        && ExceedsDisplay(status.sourceIntervalUs,status.displayRefreshMilliHz,State().multiplier.load()))
+      ui::Notice(("The game's frame rate times the multiplier is above the display refresh ("+std::to_string(refreshHz)
+          +" Hz), so some generated frames are not shown and motion can look uneven. Turn on Limit to display refresh, or cap the game's frame rate.").c_str());
     if(ui::Expander("Advanced pacing comparison")) {
       ui::Setting("##xe_queue_row","Queue metered frames early","Lets the driver space a verified group of frames while the SDK prepares its next work. GPU fences and resource waits remain owned by Intel. Applies only when the driver accepts flip metering and Present uses sync interval 0. Turn off to compare with the previous CPU timing.",[&] {
         ImGui::BeginDisabled(value.sdkDeadlines || !value.flipMetering);
