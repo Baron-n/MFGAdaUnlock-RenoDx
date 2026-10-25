@@ -16,12 +16,19 @@ namespace mfgunlock::ngxparam {
 // Slot 11 of NVSDK_NGX_Parameter == Get(const char*, unsigned int*).
 inline constexpr size_t kGetUInt32Slot = 11;
 
-enum class PatchResult { kPatched, kAlreadyPatched, kNoObject, kProtectFailed };
+enum class PatchResult { kPatched, kAlreadyPatched, kNoObject, kProtectFailed, kForeignHook };
 
+// NGX hands out parameter blocks on several threads, so the slot write is
+// serialized: two unsynchronized patches could both pass the `patched` check,
+// and the second would save the first one's hook as the original (the hook
+// then calls itself until the stack overflows) or write the slot after the
+// first had made the page read-only again.
 struct VTablePatch {
+  SRWLOCK lock = SRWLOCK_INIT;
   std::atomic_bool patched{false};
   void** slot = nullptr;
-  void* original = nullptr;
+  // Read by the hook on any thread; published before the slot points to it.
+  std::atomic<void*> original{nullptr};
 };
 
 // Every parameter object shares one vtable; replacing the slot once covers
@@ -31,16 +38,26 @@ inline PatchResult Patch(VTablePatch& state, void* object, void* hook,
   if (object == nullptr) return PatchResult::kNoObject;
   if (state.patched.load(std::memory_order_acquire))
     return PatchResult::kAlreadyPatched;
+  AcquireSRWLockExclusive(&state.lock);
+  struct Unlock {
+    SRWLOCK* lock;
+    ~Unlock() { ReleaseSRWLockExclusive(lock); }
+  } unlock{&state.lock};
+  if (state.patched.load(std::memory_order_acquire))
+    return PatchResult::kAlreadyPatched;
 
   auto** vtable = *reinterpret_cast<void***>(object);
   if (vtable == nullptr) return PatchResult::kNoObject;
   void** slot = &vtable[index];
+  // The slot already holds this hook without a recorded original: never adopt
+  // the hook as the original.
+  if (*slot == hook) return PatchResult::kForeignHook;
 
   DWORD old_protect = 0;
   if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old_protect) == 0)
     return PatchResult::kProtectFailed;
 
-  state.original = *slot;
+  state.original.store(*slot, std::memory_order_release);
   *slot = hook;
   state.slot = slot;
 
@@ -52,12 +69,18 @@ inline PatchResult Patch(VTablePatch& state, void* object, void* hook,
 }
 
 inline void Restore(VTablePatch& state) {
+  AcquireSRWLockExclusive(&state.lock);
+  struct Unlock {
+    SRWLOCK* lock;
+    ~Unlock() { ReleaseSRWLockExclusive(lock); }
+  } unlock{&state.lock};
   if (!state.patched.load(std::memory_order_acquire)) return;
-  if (state.slot == nullptr || state.original == nullptr) return;
+  void* original = state.original.load(std::memory_order_acquire);
+  if (state.slot == nullptr || original == nullptr) return;
 
   DWORD old_protect = 0;
   if (VirtualProtect(state.slot, sizeof(void*), PAGE_READWRITE, &old_protect) != 0) {
-    *state.slot = state.original;
+    *state.slot = original;
     DWORD ignored = 0;
     VirtualProtect(state.slot, sizeof(void*), old_protect, &ignored);
   }

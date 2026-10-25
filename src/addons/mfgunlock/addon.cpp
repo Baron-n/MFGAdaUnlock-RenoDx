@@ -389,7 +389,7 @@ bool NgxFailed(NVSDK_NGX_Result result) {
 }
 
 NVSDK_NGX_Result HookedGetUInt32(void* self, const char* name, unsigned int* out) {
-  const auto real = reinterpret_cast<GetUInt32Fn>(g_vtable_patch.original);
+  const auto real = reinterpret_cast<GetUInt32Fn>(g_vtable_patch.original.load(std::memory_order_acquire));
   NVSDK_NGX_Result result = real(self, name, out);
 
   if (!g_enabled.load(std::memory_order_relaxed)) return result;
@@ -435,6 +435,13 @@ bool PatchParameterVTable(NVSDK_NGX_Parameter* params) {
     reshade::log::message(
         reshade::log::level::info,
         "mfgunlock: NGX parameter vtable patched; multi-frame capability override armed.");
+  }
+  if (result == PatchResult::kForeignHook) {
+    static std::atomic_bool warned{false};
+    if (!warned.exchange(true, std::memory_order_relaxed))
+      reshade::log::message(
+          reshade::log::level::warning,
+          "mfgunlock: NGX parameter vtable already points to this hook without a recorded original; left unchanged.");
   }
   return result == PatchResult::kPatched || result == PatchResult::kAlreadyPatched;
 }
