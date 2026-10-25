@@ -137,6 +137,7 @@
 #include "./midpoint.hpp"
 #include "./nvapi_status.hpp"
 #include "./ngx_hook.hpp"
+#include "./ngx_param_vtable.hpp"
 #include "./cuda_temporal.hpp"
 #include "./quality_build_policy.hpp"
 #include "./pacing_policy.hpp"
@@ -148,9 +149,6 @@ namespace {
 
 constexpr const char* kConfigSection = "RenoDX.MFGUnlock";
 constexpr const char* kParamName = "DLSSG.MultiFrameCountMax";
-
-// Slot 11 of NVSDK_NGX_Parameter == Get(const char*, unsigned int*).
-constexpr size_t kGetUInt32Slot = 11;
 
 constexpr unsigned int kMinCount = 2;
 constexpr unsigned int kMaxCount = 5;
@@ -379,23 +377,20 @@ const char* RenderApiName(DetectedRenderApi api) {
 // make sense of it. Harmless where the real plugin is enumerated first;
 // fatal where it is not loaded at all.
 
-std::atomic_bool g_vtable_patched{false};
+mfgunlock::ngxparam::VTablePatch g_vtable_patch;
 std::atomic_bool g_override_reported{false};
 std::atomic<unsigned int> g_override_hits{0};
 std::atomic<unsigned int> g_runtime_reported_value{0};
 
-void** g_patched_slot = nullptr;
-void* g_original_slot_value = nullptr;
-
 using GetUInt32Fn = NVSDK_NGX_Result (*)(void* self, const char* name, unsigned int* out);
-GetUInt32Fn g_real_get_uint32 = nullptr;
 
 bool NgxFailed(NVSDK_NGX_Result result) {
   return (static_cast<unsigned int>(result) & 0xfff00000u) == 0xbad00000u;
 }
 
 NVSDK_NGX_Result HookedGetUInt32(void* self, const char* name, unsigned int* out) {
-  NVSDK_NGX_Result result = g_real_get_uint32(self, name, out);
+  const auto real = reinterpret_cast<GetUInt32Fn>(g_vtable_patch.original);
+  NVSDK_NGX_Result result = real(self, name, out);
 
   if (!g_enabled.load(std::memory_order_relaxed)) return result;
   if (name == nullptr || out == nullptr) return result;
@@ -428,47 +423,23 @@ NVSDK_NGX_Result HookedGetUInt32(void* self, const char* name, unsigned int* out
 }
 
 bool PatchParameterVTable(NVSDK_NGX_Parameter* params) {
-  if (params == nullptr) return false;
-  if (g_vtable_patched.load(std::memory_order_acquire)) return true;
-
-  auto** vtable = *reinterpret_cast<void***>(params);
-  if (vtable == nullptr) return false;
-  void** slot = &vtable[kGetUInt32Slot];
-
-  DWORD old_protect = 0;
-  if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old_protect) == 0) {
+  using mfgunlock::ngxparam::PatchResult;
+  const auto result = mfgunlock::ngxparam::Patch(
+      g_vtable_patch, params, reinterpret_cast<void*>(&HookedGetUInt32));
+  if (result == PatchResult::kProtectFailed) {
     reshade::log::message(reshade::log::level::error,
                           "mfgunlock: could not make the NGX parameter vtable writable.");
     return false;
   }
-
-  g_original_slot_value = *slot;
-  g_real_get_uint32 = reinterpret_cast<GetUInt32Fn>(g_original_slot_value);
-  *slot = reinterpret_cast<void*>(&HookedGetUInt32);
-  g_patched_slot = slot;
-
-  DWORD ignored = 0;
-  VirtualProtect(slot, sizeof(void*), old_protect, &ignored);
-
-  g_vtable_patched.store(true, std::memory_order_release);
-  reshade::log::message(
-      reshade::log::level::info,
-      "mfgunlock: NGX parameter vtable patched; multi-frame capability override armed.");
-  return true;
-}
-
-void RestoreParameterVTable() {
-  if (!g_vtable_patched.load(std::memory_order_acquire)) return;
-  if (g_patched_slot == nullptr || g_original_slot_value == nullptr) return;
-
-  DWORD old_protect = 0;
-  if (VirtualProtect(g_patched_slot, sizeof(void*), PAGE_READWRITE, &old_protect) != 0) {
-    *g_patched_slot = g_original_slot_value;
-    DWORD ignored = 0;
-    VirtualProtect(g_patched_slot, sizeof(void*), old_protect, &ignored);
+  if (result == PatchResult::kPatched) {
+    reshade::log::message(
+        reshade::log::level::info,
+        "mfgunlock: NGX parameter vtable patched; multi-frame capability override armed.");
   }
-  g_vtable_patched.store(false, std::memory_order_release);
+  return result == PatchResult::kPatched || result == PatchResult::kAlreadyPatched;
 }
+
+void RestoreParameterVTable() { mfgunlock::ngxparam::Restore(g_vtable_patch); }
 
 // ---------------------------------------------------------------- NGX entries
 
@@ -568,7 +539,7 @@ int g_bootstrap_attempts = 0;
 constexpr int kMaxBootstrapAttempts = 2000;
 
 void TryBootstrapVTable() {
-  if (g_vtable_patched.load(std::memory_order_acquire)) return;
+  if (g_vtable_patch.patched.load(std::memory_order_acquire)) return;
   if (!g_hooked.load(std::memory_order_acquire)) return;
   if (g_real_allocate_parameters == nullptr) return;
   if (g_bootstrap_attempts >= kMaxBootstrapAttempts) return;

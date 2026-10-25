@@ -234,6 +234,8 @@ add_executable(force_policy_tests force_policy_tests.cpp)
 target_include_directories(force_policy_tests SYSTEM PRIVATE
   "${RENODX_SOURCE_DIR}/external/Streamline/include")
 add_test(NAME force_policy_tests COMMAND force_policy_tests)
+add_executable(ngx_param_vtable_tests ngx_param_vtable_tests.cpp)
+add_test(NAME ngx_param_vtable_tests COMMAND ngx_param_vtable_tests)
 add_executable(runtime_version_tests runtime_version_tests.cpp)
 add_test(NAME runtime_version_tests COMMAND runtime_version_tests)
 add_executable(validation_status_tests validation_status_tests.cpp)
