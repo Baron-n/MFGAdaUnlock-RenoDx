@@ -620,7 +620,9 @@ int main(int argc,char** argv) {
       } else {
       Require(readyFrames>=16,"FidelityFX frames did not reach ready");
       // framesPresented counts the last source Present: itself plus the generated frames.
-      Require(ms.generated==multiplier-1 && ms.presented==multiplier && ms.result==0,"FidelityFX output presented no generated frames");
+      // As in the Streamline check below, a covered or unfocused window may have
+      // one generated frame dropped by DWM; the SDK still generated all of them.
+      Require(ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0,"FidelityFX output presented no generated frames");
       }
       Require(originals()==0,"a replaced FidelityFX call reached the provider");
       Require(destroy(&generation,nullptr)==FFX_API_RETURN_OK,"FidelityFX generation destroy");
