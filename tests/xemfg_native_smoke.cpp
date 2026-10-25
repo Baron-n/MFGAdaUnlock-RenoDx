@@ -1169,6 +1169,11 @@ int main(int argc,char** argv) {
         Require(cs.uiCompositionKnown && cs.uiCompositionResult>=0 && cs.uiCompositionApplied==composed,"UI composition effective state mismatch");
         Require(cs.settings.uiComposition==(frame!=25),"missing HUD-less erased UI preference");
       }
+      if((flag("--hud-srgb") || flag("--hud-typeless")) && frame==10) {
+        // 1.5.7: the panel reports the HUD-less input as received and converted.
+        controlStatus(&cs,sizeof(cs));
+        Require((cs.hudInputs&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)) && (cs.hudCopied&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)),"panel did not report the converted HUD-less input");
+      }
       if(frame==34 || frame==38 || invalidProducer || ((frame==39 || frame==40) && flag("--hud-conflict"))) {
         bridgeStatus(&bs,sizeof(bs)); Require(!bs.enabled,"invalid input did not bypass FG");
         if(frame==39) { controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues&16u,"conflicting removal not diagnosed"); }
@@ -1176,6 +1181,7 @@ int main(int argc,char** argv) {
       else if(lateSubmitEnd) { bridgeStatus(&bs,sizeof(bs)); Require(bs.enabled,producer?"heap producer command was not accepted":"valid overlapping RenderSubmit/Present was rejected"); }
       if(frame==37) {
         controlStatus(&cs,sizeof(cs)); Require(cs.hudIssues && cs.hudRejected && !cs.uiCompositionApplied,"invalid optional HUD did not fall back to default interpolation");
+        Require(cs.hudFiltered&(1u<<XEFG_SWAPCHAIN_RES_UI),"panel did not report the filtered UI input");
       }
       if(frame==40 || frame==48) {
         controlStatus(&cs,sizeof(cs)); Require(cs.sdkDeadlinesActive==(frame==40),"deadline policy did not commit/restore");

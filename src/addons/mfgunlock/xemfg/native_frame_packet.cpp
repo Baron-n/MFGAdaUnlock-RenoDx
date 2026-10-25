@@ -106,7 +106,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     // Cannot retract an earlier successful tag for this same frame: bypass
     // that batch instead. Otherwise omit only the incompatible optional tag.
     if(optional) {
-      frame.hudIssues|=issues; ++State().hudRejected;
+      frame.hudIssues|=issues; frame.hudFiltered|=bit; ++State().hudRejected;
       if(o.hudLogBudget<8) { ++o.hudLogBudget; xess_mod::WriteLog("native_hud_filtered","\"id\":"+std::to_string(id)+",\"type\":"+std::to_string(type)+",\"issues\":"+std::to_string(issues)); }
     }
     // A game pausing FG removes its tags every time, and a HUD tag in another
@@ -248,6 +248,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
     // another state for the same resource and must not replace this one.
     if(!reserved) resource->SetPrivateData(kTaggedState,sizeof(state),&state);
     if(optional) { frame.hudTags[hudSlot]=hudIdentity; frame.hudAllocations[hudSlot]=std::move(allocation); }
+    if(copyFormat) frame.hudCopied|=bit;
     if(optional && !(o.hudKindsSeen&bit)) {
       o.hudKindsSeen|=bit;
       xess_mod::WriteLog("native_hud_input","\"type\":"+std::to_string(type)+",\"format\":"+std::to_string(desc.Format)

@@ -116,6 +116,7 @@ ControlStatus ControlsSnapshot() {
   result.displayRefreshMilliHz=s.displayRefreshMilliHz; result.sourceIntervalUs=s.sourceIntervalUs;
   result.displayCapIntervalUs=DisplayCapIntervalForOutput();
   result.hudIssues=s.lastHudIssues; result.hudInputs=s.lastHudInputs; result.hudRejected=s.hudRejected;
+  result.hudFiltered=s.lastHudFiltered; result.hudCopied=s.lastHudCopied;
   xefg_cuda::Status cuda;
   result.cudaUpdating=!xefg_cuda::TrySnapshot(cuda);
   result.cudaState=uint32_t(cuda.state); result.cudaLayers=cuda.layers;
@@ -235,8 +236,18 @@ void DrawControls(PanelPage page) {
       ImGui::EndDisabled();
     });
     ui::Readout("##xe_composition_state","HUD handling",composition,compositionHelp);
-    ui::Readout("##xe_hud_safety","HUD input safety",status.hudIssues?"Incompatible input filtered":status.hudInputs?"Game HUD inputs accepted":"No separate HUD texture",
-        "Checks the game's optional HUD textures for matching format, full output size and valid shader input. Compatible textures can help Intel's UI interpolation with composition off. Invalid optional input falls back to backbuffer interpolation. This does not prove matching HDR encoding or remove every model artifact.");
+    // 1.5.7: what the game provides, per kind: received, converted, filtered or absent.
+    const auto hudKind=[&](unsigned type,const char* name) {
+      const uint32_t bit=1u<<type;
+      return std::string(name)+(status.hudInputs&bit?(status.hudCopied&bit?": received (converted)":": received")
+          :status.hudFiltered&bit?": filtered":": not provided");
+    };
+    const std::string hudInputs=hudKind(XEFG_SWAPCHAIN_RES_HUDLESS_COLOR,"HUD-less")+" | "+hudKind(XEFG_SWAPCHAIN_RES_UI,"UI");
+    ui::Readout("##xe_hud_safety","Game HUD inputs",hudInputs.c_str(),
+        "The game's optional HUD textures: HUD-less color (the image without HUD) and UI (the HUD alone). Converted means the texture used another type of the output's format and is copied into the output format. Filtered textures do not match the output (format, size or shader input) and are not used; frame generation then interpolates the HUD with the image. This does not prove matching HDR encoding or remove every model artifact.");
+    // Suggest, never enable it automatically (the user decides).
+    if(status.uiCompositionAvailable && !value.uiComposition)
+      ui::Description("This game provides HUD-less color. If HUD elements show artifacts in generated frames, turn on UI Composition.");
     if(status.uiCompositionResult<0) ui::Notice("UI composition could not be applied. Copy Diagnostics for details.");
     ui::Description("For best results, keep the game's rendered frame rate stable.");
     ui::Tooltip("A higher base frame rate supplies more recent motion information. Generated frames improve smoothness but do not add new input samples.");

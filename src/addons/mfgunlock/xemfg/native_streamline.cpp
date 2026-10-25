@@ -840,6 +840,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
   const auto id=s.presenting.load(); auto* frame=o->frames.Find(id);
   s.lastHudIssues=frame?frame->hudIssues:0;
   s.lastHudInputs=frame?frame->resources&((1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR)|(1u<<XEFG_SWAPCHAIN_RES_UI)):0;
+  s.lastHudFiltered=frame?frame->hudFiltered:0; s.lastHudCopied=frame?frame->hudCopied:0;
   const bool hudless=frame && !frame->failed
       && (frame->resources&(1u<<XEFG_SWAPCHAIN_RES_HUDLESS_COLOR));
   const bool compositionReady=ApplyUiComposition(*o,hudless);

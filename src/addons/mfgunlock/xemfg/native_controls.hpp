@@ -38,6 +38,7 @@ struct ControlStatus {
   bool sdkDeadlinesRequested{},sdkDeadlinesActive{};
   bool queueAheadActive{}; uint64_t queueAheadDeadlines{};
   uint32_t hudIssues{},hudInputs{};
+  uint32_t hudFiltered{},hudCopied{}; // 1.5.7: per kind, 1u<<xefg type
   uint64_t hudRejected{};
   char cudaReason[128]{};
   LatencyOutput activeLatencyOutput{LatencyOutput::XeLL};

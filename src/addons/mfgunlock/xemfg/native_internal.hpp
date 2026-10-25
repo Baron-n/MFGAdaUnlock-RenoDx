@@ -67,6 +67,8 @@ struct Frame {
   // Plan 4.3: the game's kBufferTypeBackbuffer extent; empty means the whole buffer.
   DejitterRegion backbufferRegion{};
   uint32_t hudIssues{};
+  // 1.5.7: optional HUD kinds (1u<<xefg type) filtered or tagged through a copy.
+  uint32_t hudFiltered{}, hudCopied{};
   HudTagIdentity hudTags[2]{};
   // Pin the allocation identity until frame retirement, never infer its
   // generation from a reused address. Contents still obey the SDK lifecycle.
@@ -202,7 +204,7 @@ struct Bridge {
   // Totals for native_summary; the per-event logs keep only their first entries.
   std::atomic<uint64_t> tagsRejected{0},tagsRemoved{0},reservedStates{0};
   std::atomic<uint32_t> summaryIntervalMs{10000};
-  std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0};
+  std::atomic<uint32_t> lastHudIssues{0},lastHudInputs{0},lastHudFiltered{0},lastHudCopied{0};
   std::atomic<uint64_t> hudRejected{0};
   bool lowLatency{true}, invert{true}, jitter{false};
   // Plan 3.3: conventions set explicitly in the INI are never relearned.
