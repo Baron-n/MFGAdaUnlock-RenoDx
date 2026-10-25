@@ -73,7 +73,7 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 | 3.1 | Cenário: rota Reflex com token constante (como o Plague Tale) | caso novo no backlog: `slReflexSleep` original não é chamado | 45 min | feito (`6ecd5b8`) |
 | 3.2 | Rota Reflex chama o `slReflexSleep` original em toda recusa e devolve o resultado dele | caso 3.1 sai do backlog; rota XeLL inalterada | 45 min | feito (`1c693f9`) |
 | 3.3 | Log do XeFG agrupado por padrão (`PatternBudget`), como o do XeLL | teste: 200 mensagens repetidas + 1 nova; a nova aparece | 45 min | feito (`f6059c4`) |
-| 3.4 | **[você]** Plague Tale com saída Reflex | Reflex ativo no painel, interpolando, sem erro | 30 min | em andamento |
+| 3.4 | **[você]** Plague Tale com saída Reflex | Reflex ativo no painel, interpolando, sem erro | 30 min | feito (campo, 2026-10-25) |
 
 ### Release 1.5.6
 
@@ -158,4 +158,5 @@ Um PR por item.
 - **2026-10-25 · 3.2** (`1c693f9`) **Escopo maior que o planejado**, para o Plague Tale interpolar na rota Reflex: o Reflex nativo é chamado primeiro, com o token e a thread do jogo, e o jogo recebe o resultado dele; a associação com o XeLL (só ordena markers, sem pacing nessa rota) segue a fronteira da simulação como na rota XeLL. Efeito colateral: o adaptador FSR também passa a admitir frames na rota Reflex (antes sempre recusava). Três testes foram ajustados ao contrato novo (espera duplicada chega ao nativo; espera nativa durante a aposentadoria devolve o resultado nativo sem associação; `SleepSourceFrame` sem espera do jogo associa sem chamar o nativo). Matriz 176/179 (as três ambientais).
 - **2026-10-25 · 3.3** (`f6059c4`) Log do SDK XeFG agrupado por padrão, com `occurrence`. Matriz como no 3.2.
 - **2026-10-25 · 3.4** Build `f6059c4` instalado no Plague Tale (versão Xbox, `C:\XboxGames\Resonance- A Plague Tale Legacy\Content`) com backup (`renodx-mfgunlock.addon64.1.5.5.bak`, `MFGAdaUnlock.ini.1.5.5.bak`); `[Latency] Output=Reflex`. Log com 2.092 linhas antes do teste.
+- **2026-10-25 · 3.4** Plague Tale com o build `f6059c4` e saída Reflex: `native_latency_binding` Reflex; em todos os resumos de 10 s, FG ativo (`ready`, 0 frames sem FG, 3 frames por Present no multiplicador 3x). O jogo continua mandando token 0; os frames são associados pela fronteira da simulação (`native_simulation_boundary_sleep`, resultado 0) e o contador `sleeps_rejected` conta as associações recusadas (o Reflex nativo recebe todas as esperas). Nenhuma perda de device, falha de Present ou erro do XeLL. INI devolvido a `Output=Auto`; o build novo continua instalado. **Blocos 1 a 3 concluídos**; falta o gate de release (R6.1), que depende dos três casos ambientais.
 
