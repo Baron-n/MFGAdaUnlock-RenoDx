@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 import shutil
 import subprocess
+import evidence
 
 ap=argparse.ArgumentParser()
 for name in ('directory','addon','exe','fixture','reshade','sdk-fg','sdk-ll'):
@@ -165,7 +166,7 @@ if args.dlss_sr_default_off:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         dlss_sr_default_off_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.dlss_sr_adapter:
     # Plan 5.4: opt-in NGX DLSS-SR adapter; DLSS itself keeps running.
     verified=('PASS: DLSS-SR adapter reached ready' in result.stdout
@@ -176,7 +177,7 @@ if args.dlss_sr_adapter:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         dlss_sr_adapter_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.ffx_adapter or args.ffx_with_reflex or args.ffx_with_dlssg:
     # Plan 5.3: FSR 3.1 contexts replaced by the Intel output; markers synthesized.
     hooks=[e for e in events if e.get('event')=='native_ffx_hooks']
@@ -197,7 +198,7 @@ if args.ffx_adapter or args.ffx_with_reflex or args.ffx_with_dlssg:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         ffx_adapter_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.native_game_xefg:
     # Plan 5.2: the game's own XeFG context receives the user's multiplier.
     counts=[e for e in events if e.get('event')=='count_result' and e.get('owner')=='game']
@@ -207,7 +208,7 @@ if args.native_game_xefg:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         game_multiplier_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.reserved_state:
     # 1.5.6 (Witcher 3): a reserved state is replaced by the last valid state
     # of the SAME resource, never by a released resource's at the same address.
@@ -219,7 +220,7 @@ if args.reserved_state:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         reserved_state_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.scrgb_output:
     # Plan 4.4: FP16 scRGB is converted to HDR10 PQ for the Intel proxy.
     inits=[e for e in events if e.get('event')=='native_swapchain_init']
@@ -231,13 +232,13 @@ if args.scrgb_output:
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         scrgb_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.sl1_interposer:
     untouched='PASS: SL 1.x interposer left untouched' in result.stdout
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,
         sl1_untouched_verified=untouched),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and untouched else 1)
+    evidence.finish(d,result.returncode==0 and untouched)
 if args.reframework:
     blocked=args.reframework in ('blocked','invalid','exception','ambiguous')
     decisions=[e for e in events if e.get('event')=='native_reframework_retire']
@@ -250,12 +251,12 @@ if args.reframework:
         verified=verified and 'REFramework safe handoff: reentrant callback, module lease and recreation verified' in result.stdout
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,scenario=args.reframework,retirement_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.parallel_factory:
     verified='PASS: simultaneous factory callers published one Intel owner; both outputs and contexts retired' in result.stdout
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,parallel_factory_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.foreign_refs or args.retained_output:
     verified='PASS: foreign native references block HWND recreation; only observer-owned releases permit recovery' in result.stdout
     if args.retained_output:
@@ -263,7 +264,7 @@ if args.foreign_refs or args.retained_output:
         verified=verified and any(e.get('event')=='native_output_reused' and e.get('result')==0 for e in events)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,foreign_reference_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified else 1)
+    evidence.finish(d,result.returncode==0 and verified)
 if args.retire_sleep:
     # 1.5.6: the game's native Reflex wait runs before any XeLL operation, so
     # nothing is in flight on the Intel side when the output retires during it
@@ -272,7 +273,7 @@ if args.retire_sleep:
     verified=any(e.get('event')=='native_output_retired' and e.get('sleep_in_flight') is False and e.get('destroy_result')==0 for e in events)
     (d/'result.json').write_text(json.dumps(dict(inputs=manifest,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,retirement_during_sleep_verified=verified),indent=2))
     print(result.stdout,end='');print(result.stderr,end='');print('Evidence:',d)
-    raise SystemExit(0 if result.returncode==0 and verified and 'same HWND rebound before sleep returned' in result.stdout else 1)
+    evidence.finish(d,result.returncode==0 and verified and 'same HWND rebound before sleep returned' in result.stdout)
 if args.game_vsync:
     # The game presents with sync interval 1. It is reported once; the
     # override happens only with ForceVSyncOff, and native_summary carries
@@ -288,7 +289,7 @@ if args.game_vsync:
         game_vsync_verified=verified,reported=reported,forced=forced,summaries=summaries[:3]),indent=2))
     print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
     if not verified: print('game VSync not reported as expected:',reported,forced,summaries[:2])
-    raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and verified else 1)
+    evidence.finish(d,result.returncode==0 and 'PASS:' in result.stdout and verified)
 if args.runtime_layout in ('mutated-storage','missing'):
     expected='unreviewed_Intel_runtime_pair' if args.runtime_layout=='mutated-storage' else 'missing_Intel_runtime:libxess_fg.dll'
     refused=any(e.get('event')=='startup_rejected' and e.get('reason')==expected for e in events)
@@ -306,7 +307,7 @@ if args.runtime_layout in ('mutated-storage','missing'):
         runtime_files_described=described),indent=2))
     print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
     if not described: print('runtime_files did not describe the refused files:',files[-1] if files else None)
-    raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and refused and unpublished and described else 1)
+    evidence.finish(d,result.returncode==0 and 'PASS:' in result.stdout and refused and unpublished and described)
 selections=[e for e in events if e.get('event')=='runtime_selection']
 runtime_selection=bool(selections) and all('_storage_' in e['provider_path'] and '_storage_' in e['xell_path'] for e in selections) if args.runtime_layout!='adjacent' else bool(selections)
 sdk_deadlines=[e for e in events if e.get('event')=='dlssg_interval_deadline' and e.get('sdk_deadlines')]
@@ -470,4 +471,4 @@ if args.struct_probe:
     'gpu_queue_timestamps_verified':any(e.get('event')=='gpu_queue_span' for e in events) if args.stall_trace else None,
     'legacy_factory_success_records':sum(e.get('event')=='native_legacy_factory_create' and e.get('replaced') for e in events)},indent=2),encoding='utf-8')
 print(result.stdout,end=''); print(result.stderr,end=''); print('Evidence:',d)
-raise SystemExit(0 if result.returncode==0 and 'PASS:' in result.stdout and learned_verified is not False and all(diagnostics_verified.values()) and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout) else 1)
+evidence.finish(d,result.returncode==0 and 'PASS:' in result.stdout and learned_verified is not False and all(diagnostics_verified.values()) and compatibility_verified and all(input_verified.values()) and active_support_verified is not False and runtime_selection and persisted and policy_activation and passthrough is not False and hud_filter and passthrough_identity and native_keys is not False and native_child is not False and foreground_verified is not False and legacy_verified is not False and markers_verified is not False and tail_verified is not False and observer_verified is not False and stale_verified is not False and (not args.stall_trace or any(e.get('event')=='gpu_queue_span' for e in events)) and (not args.queue_proxy or 'Queue native identity: wrapper unwrapped; inference and lifetime verified' in result.stdout))
