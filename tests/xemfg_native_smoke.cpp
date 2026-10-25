@@ -940,7 +940,11 @@ int main(int argc,char** argv) {
     };
     auto depth=texture(DXGI_FORMAT_R32_FLOAT,D3D12_RESOURCE_FLAG_NONE);
     auto motion=texture(DXGI_FORMAT_R16G16_FLOAT,D3D12_RESOURCE_FLAG_NONE);
-    auto color=texture(flag("--scrgb-output")?DXGI_FORMAT_R16G16B16A16_FLOAT:DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
+    // 1.5.7 conformance: HUD-less in another type of the output's bits, as
+    // Death Stranding 2 (UNORM_SRGB) and Cyberpunk 2077 (TYPELESS) tag it.
+    const DXGI_FORMAT colorFormat=flag("--scrgb-output")?DXGI_FORMAT_R16G16B16A16_FLOAT:flag("--hud-srgb")?DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+        :flag("--hud-typeless")?DXGI_FORMAT_R8G8B8A8_TYPELESS:DXGI_FORMAT_R8G8B8A8_UNORM;
+    auto color=texture(colorFormat,D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET);
     auto upload=[&](ID3D12Resource* resource,bool isDepth) {
       auto d=resource->GetDesc(); D3D12_PLACED_SUBRESOURCE_FOOTPRINT fp{}; UINT rows{}; UINT64 rowBytes{},bytes{};
       device->GetCopyableFootprints(&d,0,1,0,&fp,&rows,&rowBytes,&bytes);
@@ -959,7 +963,8 @@ int main(int argc,char** argv) {
     D3D12_DESCRIPTOR_HEAP_DESC hd{}; hd.Type=D3D12_DESCRIPTOR_HEAP_TYPE_RTV; hd.NumDescriptors=2;
     ComPtr<ID3D12DescriptorHeap> rtvs; Check(device->CreateDescriptorHeap(&hd,IID_PPV_ARGS(&rtvs)),"rtvs");
     auto rtv=rtvs->GetCPUDescriptorHandleForHeapStart(); auto second=rtv; second.ptr+=device->GetDescriptorHandleIncrementSize(hd.Type);
-    device->CreateRenderTargetView(color.Get(),nullptr,second);
+    D3D12_RENDER_TARGET_VIEW_DESC colorView{DXGI_FORMAT_R8G8B8A8_UNORM,D3D12_RTV_DIMENSION_TEXTURE2D};
+    device->CreateRenderTargetView(color.Get(),flag("--hud-typeless")?&colorView:nullptr,second);
     sl::Constants c; DirectX::XMFLOAT4X4 projection;
     DirectX::XMStoreFloat4x4(&projection,DirectX::XMMatrixPerspectiveFovLH(1.0f,640.f/360.f,.1f,1000.f)); memcpy(&c.cameraViewToClip,&projection,64);
     c.cameraRight={1,0,0}; c.cameraUp={0,1,0}; c.cameraFwd={0,0,1}; c.cameraPos={0,0,0};

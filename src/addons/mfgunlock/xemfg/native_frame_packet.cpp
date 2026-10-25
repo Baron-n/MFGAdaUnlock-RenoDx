@@ -23,6 +23,57 @@ xefg_swapchain_result_t StageMotion(Output& o,Frame& frame,ID3D12CommandList* pr
   frame.motionRegion={0,0,region.width,region.height};
   return XEFG_SWAPCHAIN_RESULT_SUCCESS;
 }
+// 1.5.7: a HUD input whose type differs from the output format is tagged
+// through an owned copy in the output format. A volatile tag is copied and
+// tagged now on the producer's list (XeFG copies ONLY_NOW inputs at the tag);
+// one valid until Present waits for the source Present (SubmitPendingHud).
+xefg_swapchain_result_t StageHudCopy(Output& o,Frame& frame,ID3D12CommandList* producer,ID3D12Resource* resource,
+    const xefg_swapchain_d3d12_resource_data_t& data,uint32_t id,unsigned slot) {
+  if(!o.hudCopy) {
+    auto copy=std::make_unique<HudCopy>();
+    if(!copy->Initialize(o.device.Get())) return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+    o.hudCopy=std::move(copy);
+  }
+  const DejitterRegion region{uint32_t(data.resourceBase.x),uint32_t(data.resourceBase.y),data.resourceSize.x,data.resourceSize.y};
+  if(data.validity!=XEFG_SWAPCHAIN_RV_ONLY_NOW) {
+    frame.pendingHud[slot]={resource,data.incomingState,region,data.type};
+    return XEFG_SWAPCHAIN_RESULT_SUCCESS;
+  }
+  ComPtr<ID3D12GraphicsCommandList> graphics;
+  ID3D12Resource* copy{};
+  if(!producer || FAILED(producer->QueryInterface(IID_PPV_ARGS(&graphics)))
+      || !(copy=o.hudCopy->Record(graphics.Get(),resource,data.incomingState,region,o.format,slot,id)))
+    return XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  auto copied=data; copied.pResource=copy; copied.incomingState=D3D12_RESOURCE_STATE_COMMON; copied.resourceBase={0,0};
+  RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
+  const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,producer,id,&copied);trace.Result(r);return r;
+}
+}
+bool SubmitPendingHud(Output& o,Frame& f,uint32_t id) {
+  if(!f.pendingHud[0].source && !f.pendingHud[1].source) return true;
+  auto* list=o.hudCopy?o.hudCopy->Begin():nullptr;
+  bool ok=list!=nullptr;
+  int tag=XEFG_SWAPCHAIN_RESULT_ERROR_INVALID_ARGUMENT;
+  for(unsigned slot=0;ok && slot<2;++slot) {
+    auto& pending=f.pendingHud[slot];
+    if(!pending.source) continue;
+    auto* copy=o.hudCopy->Record(list,pending.source.Get(),pending.state,pending.region,o.format,slot,id);
+    xefg_swapchain_d3d12_resource_data_t data{};
+    data.type=pending.type; data.pResource=copy; data.validity=XEFG_SWAPCHAIN_RV_ONLY_NOW;
+    data.incomingState=D3D12_RESOURCE_STATE_COMMON; data.resourceSize={pending.region.width,pending.region.height};
+    if(copy) {
+      RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
+      tag=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,list,id,&data); trace.Result(tag);
+    }
+    ok=copy && tag>=0;
+  }
+  if(list) ok=o.hudCopy->Submit(o.queue.Get()) && ok; // an open list is always submitted
+  if(o.hudCopyLogBudget<4 || (!ok && o.hudCopyLogBudget<12)) {
+    ++o.hudCopyLogBudget;
+    xess_mod::WriteLog("native_hud_copy","\"id\":"+std::to_string(id)+",\"phase\":\"present\",\"ok\":"+(ok?"true":"false")
+        +",\"tag_result\":"+std::to_string(tag)+",\"hr\":"+std::to_string(int32_t(o.hudCopy?o.hudCopy->LastError():E_FAIL)));
+  }
+  return ok;
 }
 void SubmitBackbufferRegion(Output& o,Frame& frame,uint32_t id,const DejitterRegion& e) {
   // Plan 4.3: only the extent is used; XeFG reads its own swapchain buffer.
@@ -129,11 +180,14 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   data.resourceSize={t.extent.width?t.extent.width:uint32_t(desc.Width),t.extent.height?t.extent.height:desc.Height};
   if(uint64_t(data.resourceBase.x)+data.resourceSize.x>desc.Width
       || uint64_t(data.resourceBase.y)+data.resourceSize.y>desc.Height) { rejection="extent"; reject(HudExtent); return; }
+  bool copyFormat{};
   if(optional) {
     // XeFG requires HUD-less and backbuffer resolutions to match (plan 4.3).
     const auto& area=o.backbufferRegion;
-    const auto issues=CheckHudInput(desc,o.format,area.width?area.width:o.width,area.width?area.height:o.height,
+    auto issues=CheckHudInput(desc,o.format,area.width?area.width:o.width,area.width?area.height:o.height,
         data.resourceBase.x,data.resourceBase.y,data.resourceSize.x,data.resourceSize.y);
+    // 1.5.7: the same bits under another type are tagged through a copy.
+    if(issues==HudFormat && CopyableHudFormat(desc.Format,o.format)) { issues=0; copyFormat=true; }
     if(issues) { rejection="optional_hud"; reject(issues); return; }
   }
   const unsigned hudSlot=type==XEFG_SWAPCHAIN_RES_UI?1:0;
@@ -178,6 +232,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
   }
   const auto code=[&] {
     if(type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR && o.dejitter) return StageMotion(o,frame,list.Get(),resource.Get(),data,id);
+    if(copyFormat) return StageHudCopy(o,frame,list.Get(),resource.Get(),data,id,hudSlot);
     RuntimeCall trace("xefg_tag_resource",o.diagnosticOutput,id);
     const auto r=State().api.xefgSwapChainD3D12TagFrameResource(o.fg,list.Get(),id,&data);trace.Result(r);return r;
   }();
@@ -197,7 +252,7 @@ void SubmitResource(Output& o,Frame& frame,uint32_t id,const Resource& t) {
       o.hudKindsSeen|=bit;
       xess_mod::WriteLog("native_hud_input","\"type\":"+std::to_string(type)+",\"format\":"+std::to_string(desc.Format)
           +",\"output_format\":"+std::to_string(o.format)+",\"width\":"+std::to_string(data.resourceSize.x)
-          +",\"height\":"+std::to_string(data.resourceSize.y)+",\"encoding_verified\":false");
+          +",\"height\":"+std::to_string(data.resourceSize.y)+",\"copied\":"+(copyFormat?"true":"false")+",\"encoding_verified\":false");
     }
     if(type==XEFG_SWAPCHAIN_RES_MOTION_VECTOR) {
       frame.motionWidth=data.resourceSize.x; frame.motionHeight=data.resourceSize.y;

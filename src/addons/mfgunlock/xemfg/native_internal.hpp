@@ -11,6 +11,7 @@
 #include "native_session.hpp"
 #include "native_dejitter.hpp"
 #include "native_scrgb.hpp"
+#include "native_hud_copy.hpp"
 #include "vendor/port/port_support.h"
 #include "vendor/overlay_native.h"
 #include <xefg_swapchain_d3d12.h>
@@ -69,6 +70,15 @@ struct Frame {
   // Pin the allocation identity until frame retirement, never infer its
   // generation from a reused address. Contents still obey the SDK lifecycle.
   ComPtr<IUnknown> hudAllocations[2];
+  // 1.5.7: HUD inputs valid until Present whose type differs from the output
+  // format (CopyableHudFormat). Copied and tagged on the presentation queue
+  // at the source Present. Index 0 HUD-less, 1 UI.
+  struct PendingHud {
+    ComPtr<ID3D12Resource> source;
+    D3D12_RESOURCE_STATES state{};
+    DejitterRegion region{};
+    xefg_swapchain_resource_type_t type{};
+  } pendingHud[2];
   uint32_t constantIssues{};
   LatencyOutput latencyOutput{LatencyOutput::XeLL};
   xefg_swapchain_frame_constant_data_t data{};
@@ -126,6 +136,9 @@ struct Output {
   bool invert{}, jitter{}, enabled{}, compatible{true},retired{};
   // Present when the game's vectors are jittered; XeFG then runs unjittered.
   std::unique_ptr<MotionDejitter> dejitter;
+  // 1.5.7: owned copies of HUD inputs in the output format; created on first use.
+  std::unique_ptr<HudCopy> hudCopy;
+  uint32_t hudCopyLogBudget{};
   DejitterVector lastJitter{};
   uint32_t lastJitterId{}, dejitterLogBudget{};
   uint32_t backbufferLogBudget{};

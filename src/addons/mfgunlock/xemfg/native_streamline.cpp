@@ -873,6 +873,7 @@ void BeforePresent(const std::shared_ptr<Output>& o) {
       }
       ready=a.xefgSwapChainD3D12TagFrameResource(o->fg,nullptr,id,&region)>=0
           && (!o->dejitter || SubmitDejitteredMotion(*o,f,id))
+          && packet::SubmitPendingHud(*o,f,id)
           && a.xefgSwapChainTagFrameConstants(o->fg,id,&data)>=0;
     }
   }

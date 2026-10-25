@@ -59,6 +59,8 @@ ap.add_argument('--ngx-fixture',type=Path)
 ap.add_argument('--dlss-sr-default-off',action='store_true')
 ap.add_argument('--duplicate-tags',action='store_true')
 ap.add_argument('--reserved-state',action='store_true')
+ap.add_argument('--hud-srgb',action='store_true')
+ap.add_argument('--hud-typeless',action='store_true')
 ap.add_argument('--game-xefg-probe',action='store_true')
 ap.add_argument('--ffx-with-streamline',action='store_true')
 ap.add_argument('--ffx-with-reflex',action='store_true')
@@ -139,7 +141,7 @@ if args.reframework: flags+=['--ref-'+args.reframework]
 if args.steam_observer: flags+=['--steam-observer']
 if args.stale_input: flags+=['--stale-input']
 if args.active_support: flags+=['--active-support']
-for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
+for name in ('game_vsync','legacy_markers','mixed_markers','alias_markers','stall_trace','queue_proxy','parallel_factory','foreign_refs','retained_output','secondary_viewport','normal_depth','hud_conflict','tail_sleep','zero_resource','jittered_motion','simulation_sleep','midsim_sleep','struct_probe','reflex_v2','reflex_next','constants_v3','tag_next','backbuffer_subrect','menu_viewport_first','late_interposer','sl1_interposer','sleep_gap','constant_sleep_token','late_interposer_hooked','unsupported_dlssg','scrgb_output','native_game_xefg','ffx_adapter','dlss_sr_adapter','dlss_sr_default_off','duplicate_tags','reserved_state','hud_srgb','hud_typeless','game_xefg_probe','ffx_with_streamline','ffx_with_reflex','ffx_with_dlssg'):
     if getattr(args,name): flags+=['--'+name.replace('_','-')]
 if args.runtime_layout in ('preloaded-storage','mutated-storage'): flags+=['--preload-runtimes']
 if args.runtime_layout in ('mutated-storage','missing'): flags+=['--expect-startup-rejection']
@@ -435,6 +437,15 @@ if args.game_xefg_probe:
 if args.duplicate_tags:
     diagnostics_verified['duplicate_tags']=any(e.get('event')=='native_tag_duplicate' for e in events) and not any(
         e.get('event')=='native_sdk_log' and 'already tagged' in e.get('message','') for e in events)
+if args.hud_srgb or args.hud_typeless:
+    # 1.5.7: the HUD-less tag in another type of the output's bits is copied
+    # into the output format, at the tag (volatile) and at Present.
+    copies=[e for e in events if e.get('event')=='native_hud_copy']
+    diagnostics_verified['hud_copy']=(any(e.get('event')=='native_hud_input' and e.get('type')==0 and e.get('copied') is True for e in events)
+        # Frame 38 tags motion vectors as HUD-less on purpose; only this case's format must pass.
+        and not any(e.get('event')=='native_tag_rejected' and e.get('type')==0 and e.get('format')==(29 if args.hud_srgb else 27) for e in events)
+        and bool(copies) and all(e.get('ok') is True for e in copies)
+        and not any(e.get('event')=='native_sdk_log' and e.get('level',0)>=3 for e in events))
 if args.backbuffer_subrect:
     diagnostics_verified['backbuffer_region']=any(e.get('event')=='native_backbuffer_region' and e.get('width')==320 and e.get('height')==180 for e in events)
 # Shipped profiles load once per session, with no override error.
