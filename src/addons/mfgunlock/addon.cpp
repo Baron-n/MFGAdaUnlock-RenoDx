@@ -1537,7 +1537,10 @@ bool TryPatchFlipMeteringInModule(HMODULE mod) {
   const auto* profile = mfgunlock::binarypatch::ProfileFor(mod, 1);
   if (!profile) return false;
   ++g_flip_meter_attempts;
+  // No module lease (the module is unloading or unidentified): leave it alone,
+  // as the architecture gate does.
   const auto* session = mfgunlock::modulesession::Acquire(mod);
+  if (session == nullptr) return false;
   CodeTransaction transaction{mod, session->generation, {}};
   if (!mfgunlock::binarypatch::Plan(mod, *profile, transaction.writes) ||
       !mfgunlock::binarypatch::Apply(mod, transaction.writes)) {
