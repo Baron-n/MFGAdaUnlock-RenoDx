@@ -56,24 +56,24 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 | 1.2 | Guardar o último estado válido no próprio recurso (`SetPrivateData` com GUID próprio); remover `taggedStates` | caso 1.1 sai do backlog; a substituição no mesmo recurso (Witcher 3) continua passando | 1 h | feito (`4c06b10`) |
 | 1.3 | **[você]** Witcher 3: mudar opções gráficas várias vezes com FG ligado | nenhuma perda de device; `native_tag_reserved_state` no log | 30 min | feito (campo, 2026-10-24) |
 
-### Bloco 2: DLSS-G, crash e custo (branch `fix/dlssg-hook-safety`)
+### Bloco 2: DLSS-G, crash e custo (branch `fix/dlssg-hook-safety`, empilhada sobre a do bloco 1)
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 2.1 | Extrair o patch da vtable do NGX para um header testável | teste unitário com vtable falsa, comportamento idêntico | 1 h | pendente |
-| 2.2 | Patch da vtable instalado uma única vez (trava) e nunca guarda o próprio hook como original | teste com 8 threads simultâneas: um patch, sem recursão | 45 min | pendente |
-| 2.3 | Testar `session` nulo em `TryPatchFlipMeteringInModule` | teste de política/revisão; matriz verde | 20 min | pendente |
-| 2.4 | Política pura de "recusa lembrada" em `force_policy.hpp` | testes unitários: lembra, reseta em off/on, multiplicador, swapchain | 1 h | pendente |
-| 2.5 | Ligar a política no `HookedSetOptions` e nos pontos de reset | teste: com recusa, 1 chamada ao Streamline por frame em vez de 3 | 1 h | pendente |
+| 2.1 | Extrair o patch da vtable do NGX para um header testável | teste unitário com vtable falsa, comportamento idêntico | 1 h | feito (`8cdae1d`) |
+| 2.2 | Patch da vtable instalado uma única vez (trava) e nunca guarda o próprio hook como original | teste com 8 threads simultâneas: um patch, sem recursão | 45 min | feito (`0801e59`) |
+| 2.3 | Testar `session` nulo em `TryPatchFlipMeteringInModule` | teste de política/revisão; matriz verde | 20 min | feito (`ba963b6`) |
+| 2.4 | Política pura de "recusa lembrada" em `force_policy.hpp` | testes unitários: lembra, reseta em off/on, multiplicador, swapchain | 1 h | feito (`2896244`) |
+| 2.5 | Ligar a política no `HookedSetOptions` e nos pontos de reset | teste: com recusa, 1 chamada ao Streamline por frame em vez de 3 | 1 h | feito (`d9466ed`) |
 
-### Bloco 3: XeMFG, Reflex e log (branch `fix/xemfg-reflex-sleep-log`)
+### Bloco 3: XeMFG, Reflex e log (branch `fix/xemfg-reflex-sleep-log`, empilhada sobre a do bloco 2)
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 3.1 | Cenário: rota Reflex com token constante (como o Plague Tale) | caso novo no backlog: `slReflexSleep` original não é chamado | 45 min | pendente |
-| 3.2 | Rota Reflex chama o `slReflexSleep` original em toda recusa e devolve o resultado dele | caso 3.1 sai do backlog; rota XeLL inalterada | 45 min | pendente |
-| 3.3 | Log do XeFG agrupado por padrão (`PatternBudget`), como o do XeLL | teste: 200 mensagens repetidas + 1 nova; a nova aparece | 45 min | pendente |
-| 3.4 | **[você]** Plague Tale com saída Reflex | Reflex ativo no painel, interpolando, sem erro | 30 min | pendente |
+| 3.1 | Cenário: rota Reflex com token constante (como o Plague Tale) | caso novo no backlog: `slReflexSleep` original não é chamado | 45 min | feito (`6ecd5b8`) |
+| 3.2 | Rota Reflex chama o `slReflexSleep` original em toda recusa e devolve o resultado dele | caso 3.1 sai do backlog; rota XeLL inalterada | 45 min | feito (`1c693f9`) |
+| 3.3 | Log do XeFG agrupado por padrão (`PatternBudget`), como o do XeLL | teste: 200 mensagens repetidas + 1 nova; a nova aparece | 45 min | feito (`f6059c4`) |
+| 3.4 | **[você]** Plague Tale com saída Reflex | Reflex ativo no painel, interpolando, sem erro | 30 min | em andamento |
 
 ### Release 1.5.6
 
@@ -150,4 +150,12 @@ Um PR por item.
 - **2026-10-24 · 1.1** (`8a371fe`) A correção da 1.5.3 não tinha teste automático; o caso `xemfg_conformance_reserved-state` cobre a substituição no mesmo recurso e a herança num recurso recriado no mesmo endereço. Falhou como esperado: o recurso novo herdou o estado 64 do liberado. **O risco era real**, não só teórico.
 - **2026-10-24 · 1.2** (`4c06b10`) Estado guardado como private data no próprio recurso; mapa removido. Ajustes no cenário: quadros 10–13 (o quadro 9 tem a verificação de UI composition) e lotes de recursos candidatos para garantir a reutilização do endereço (o heap entrega blocos livres em ordem aleatória; uma tentativa só falhou 1 vez em 5 na matriz). Com a correção: 25/25. Sem ela: 5/5 falham pelo motivo certo. Matriz **176/176**.
 - **2026-10-24 · 1.3** Witcher 3 (5.0.15.65482) com o build `4c06b10`, path tracing ligado e desligado várias vezes. Nenhum crash, nenhum `native_device_failure`/`native_present_failure`. ~4.000 tags com o estado reservado, todas trocadas pelo último estado válido do mesmo recurso (1024 = `COPY_DEST`), inclusive em intervalos com o FG ativo; o FG voltou a interpolar a 4x depois das trocas. A primeira abertura foi recusada por `unreviewed_Intel_runtime_pair` (`libxess_fg.dll` 1.2.2.118 na pasta do jogo), sem relação com esta mudança; a segunda abertura rodou normalmente. **Bloco 1 concluído.**
+- **2026-10-25 · ambiente** Desde esta sessão, três casos da rota sintetizada (`xemfg_conformance_ffx-adapter`, `dlss-sr-adapter`, `ffx-with-reflex`) falham sempre com um frame gerado descartado (`presented=3`, esperado 4). Reproduz com o código de antes do 2.1, então não é regressão destes itens. Na máquina estavam abertos o NVIDIA Overlay e a edição do plano de energia (plano ativo: Equilibrado). **Precisa ficar verde antes da release (R6.1).** As branches dos blocos 2 e 3 ficaram empilhadas sobre a do bloco 1, porque os três vão juntos na 1.5.6 e o plano é versionado na primeira; os PRs entram em ordem.
+- **2026-10-25 · 2.1** (`8cdae1d`) `ngx_param_vtable.hpp` com `Patch`/`Restore`; teste com vtable falsa numa página somente-leitura. Matriz 176/177 (a falha ambiental acima).
+- **2026-10-25 · 2.2** (`0801e59`) Trava SRW, `original` atômico publicado antes do slot e recusa de adotar o próprio hook (`kForeignHook`). Teste de 8 threads × 400 rodadas: sem a trava todas as execuções falham (uma com segmentation fault, de outra thread escrevendo depois que a página voltou a somente-leitura); com a trava, 10/10.
+- **2026-10-25 · 2.3–2.5** (`ba963b6`, `2896244`, `d9466ed`) Um gate só para os três. 2.5: depois de uma recusa, a chamada seguinte faz 1 chamada ao Streamline; desligar o FG no jogo, mudar o multiplicador e a transição de swapchain liberam nova tentativa. Sem a ligação, o teste falha (3 chamadas). Matriz 174/177 (as três ambientais).
+- **2026-10-25 · 3.1** (`6ecd5b8`) O cenário mostrou **dois** problemas na rota Reflex com token constante: as esperas do jogo param de chegar ao Reflex nativo **e** nenhum frame é admitido, porque a associação pela fronteira da simulação só existia na rota XeLL.
+- **2026-10-25 · 3.2** (`1c693f9`) **Escopo maior que o planejado**, para o Plague Tale interpolar na rota Reflex: o Reflex nativo é chamado primeiro, com o token e a thread do jogo, e o jogo recebe o resultado dele; a associação com o XeLL (só ordena markers, sem pacing nessa rota) segue a fronteira da simulação como na rota XeLL. Efeito colateral: o adaptador FSR também passa a admitir frames na rota Reflex (antes sempre recusava). Três testes foram ajustados ao contrato novo (espera duplicada chega ao nativo; espera nativa durante a aposentadoria devolve o resultado nativo sem associação; `SleepSourceFrame` sem espera do jogo associa sem chamar o nativo). Matriz 176/179 (as três ambientais).
+- **2026-10-25 · 3.3** (`f6059c4`) Log do SDK XeFG agrupado por padrão, com `occurrence`. Matriz como no 3.2.
+- **2026-10-25 · 3.4** Build `f6059c4` instalado no Plague Tale (versão Xbox, `C:\XboxGames\Resonance- A Plague Tale Legacy\Content`) com backup (`renodx-mfgunlock.addon64.1.5.5.bak`, `MFGAdaUnlock.ini.1.5.5.bak`); `[Latency] Output=Reflex`. Log com 2.092 linhas antes do teste.
 
