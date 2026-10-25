@@ -286,6 +286,13 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
       set_tests_properties(xemfg_conformance_${case} PROPERTIES LABELS backlog)
     endif()
   endforeach()
+  # 1.5.6: the constant-token game (Plague Tale) on the native Reflex route.
+  add_test(NAME xemfg_conformance_reflex-constant-sleep-token COMMAND "${Python3_EXECUTABLE}"
+    "${CMAKE_SOURCE_DIR}/xemfg_native_tests.py" --directory "${CMAKE_BINARY_DIR}/native-checks"
+    --addon $<TARGET_FILE:mfgunlock_native_xemfg> --exe $<TARGET_FILE:xemfg_native_smoke>
+    --fixture $<TARGET_FILE:xemfg_streamline_fixture> --reshade "${XEMFG_OFFLINE_RESHADE}"
+    --sdk-fg "${XEMFG_OFFLINE_FG}" --sdk-ll "${XEMFG_OFFLINE_LL}" --constant-sleep-token --latency-output Reflex)
+  set_tests_properties(xemfg_conformance_reflex-constant-sleep-token PROPERTIES RUN_SERIAL TRUE TIMEOUT 150 LABELS backlog)
   # Real Streamline runtimes: NVIDIA's Streamline_Sample built per SDK release
   # by tools/sl_sample.py under ${XEMFG_SL_SAMPLES_ROOT}/sample-<version>.
   set(XEMFG_SL_SAMPLES_ROOT "" CACHE PATH "Folder with sample-v2.x.y Streamline_Sample builds")

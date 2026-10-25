@@ -1202,6 +1202,10 @@ int main(int argc,char** argv) {
     std::cout<<"model="<<ms.model<<" initialized="<<ms.initialized<<" frames="<<ms.presented<<" tensor="<<ms.tensor_launches<<" result="<<ms.result<<" rejected="<<bs.rejected<<" outputPresents="<<bs.outputPresents<<std::endl;
     // An occluded window can report only its generated submissions. Do not
     // turn this into a claim about four displayed frames or scanout cadence.
+    const bool constantToken=flag("--constant-sleep-token");
+    if(nativeReflex && constantToken)
+      std::cout<<"Reflex route, constant sleep token: original waits="<<Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()
+          <<" last token="<<Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()<<" fg_enabled="<<bs.enabled<<std::endl;
     Require(ms.model && ms.initialized && ms.tensor_launches>0 && ms.generated==multiplier-1 && ms.presented>=multiplier-1 && ms.result==0 && bs.enabled,"actual XeMFG interpolation missing");
     Require(bs.lateSubmitEnds>=30,"late RenderSubmitEnd timestamps were not forwarded to XeLL");
     Require(overlayStatus(&os,sizeof(os)) && os.updates>=48 && os.failed==0,"ReShade did not render final outputs");
@@ -1219,10 +1223,16 @@ int main(int argc,char** argv) {
     // dispatched id); boundary waits then cover frames 8-48.
     const auto expectedSleeps=flag("--constant-sleep-token")?42u:
         flag("--simulation-sleep") || flag("--midsim-sleep") || flag("--sleep-gap")?41u:48u;
-    Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:flag("--constant-sleep-token")?41u:expectedSleeps)*6,
+    // Reflex route with a constant token (Plague Tale, 1.5.6): every game wait
+    // reaches the original slReflexSleep with its own token; the per-frame
+    // XeLL association follows the simulation boundary as on the XeLL route.
+    if(nativeReflex && constantToken)
+      Require(cs.reflexObserved && cs.reflexOptionsReady && cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled,
+          "observed latency route/counters missing");
+    else Require(cs.reflexObserved && cs.reflexOptionsReady && (nativeReflex?(cs.reflexOutputObserved && !cs.xellObserved && !cs.nativeReflexDisabled && cs.reflexSleeps==48 && cs.xellSleeps==0):(!cs.reflexOutputObserved && cs.xellObserved && cs.nativeReflexDisabled && cs.reflexSleeps==0 && cs.xellSleeps==expectedSleeps)) && cs.sleeps==expectedSleeps && cs.markers>=(flag("--tail-sleep")?47u:flag("--constant-sleep-token")?41u:expectedSleeps)*6,
         "observed latency route/counters missing");
     Require(Import<uint32_t(*)()>(fixture,"FixtureReflexSleeps")()==(nativeReflex?48u:0u),"original Reflex wait dispatch count");
-    if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==48,"native Reflex token was shifted");
+    if(nativeReflex) Require(Import<uint32_t(*)()>(fixture,"FixtureLastReflexSleepToken")()==(constantToken?0u:48u),"native Reflex token was shifted");
     std::cout<<"Latency route: Reflex -> "<<(nativeReflex?"Reflex":"XeLL")<<"; native waits="<<cs.reflexSleeps<<"; XeLL waits="<<cs.xellSleeps<<std::endl;
     if(flag("--tail-sleep")) std::cout<<"Tail sleep: first frame bypassed, following frames interpolated, original Reflex token and wait count preserved"<<std::endl;
     if(flag("--simulation-sleep")) std::cout<<"Simulation boundary: missing sleep recovered after warmup; explicit source waits resumed without duplicate sleep"<<std::endl;
