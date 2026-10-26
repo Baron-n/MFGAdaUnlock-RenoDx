@@ -128,6 +128,20 @@ void TryInstallPresetHook() {
   ReleaseSRWLockExclusive(&lock);
 }
 
+// Present-time retry, at most every 250 ms, until the hook is installed. Some
+// games map _nvngx.dll through an import that bypasses the LoadLibrary hook
+// (KCD2 field test); they present their menu long before creating DLSS.
+void RetryPresetHookFromPresent() {
+  if (mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) == 0 ||
+      g_preset_hook_installed.load(std::memory_order_acquire))
+    return;
+  static std::atomic<uint64_t> last{0};
+  const uint64_t now = GetTickCount64();
+  uint64_t previous = last.load(std::memory_order_relaxed);
+  if (now - previous < 250 || !last.compare_exchange_strong(previous, now, std::memory_order_relaxed)) return;
+  TryInstallPresetHook();
+}
+
 const std::vector<mfgunlock::hook::HookItem> kNgxHooks = {
     {"NVSDK_NGX_D3D12_AllocateParameters",
      reinterpret_cast<void**>(&g_real_allocate_parameters),

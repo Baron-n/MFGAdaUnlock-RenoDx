@@ -576,6 +576,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
   StartDiscoveryWorker();
+  RetryPresetHookFromPresent();
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   if (g_render_api.load(std::memory_order_relaxed) ==
       DetectedRenderApi::kD3D12)
