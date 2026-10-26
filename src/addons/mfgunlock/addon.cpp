@@ -1258,6 +1258,7 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::loadhook::g_on_interposer_loaded = []() { mfgunlock::framecount::TryInstall(); };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
+      mfgunlock::loadhook::g_on_ngx_loaded = []() { TryInstallPresetHook(); };
       mfgunlock::loadhook::TryInstall();
       RunProviderMaintenance();
       TryPatchFrameCountCeiling();

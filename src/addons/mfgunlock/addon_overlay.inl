@@ -3293,7 +3293,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       if (!preset::g_wrapped.load(std::memory_order_relaxed) && preset::g_ngx_seen.load(std::memory_order_relaxed))
         summary = selected == preset::g_ngx_preset.load(std::memory_order_relaxed)
                       ? std::string("This game creates DLSS itself: ") + kPresets[index] + " is in use."
-                      : "This game creates DLSS itself: the change applies when it recreates DLSS (resolution or quality change, or restart).";
+                      : "This game creates DLSS itself: the change applies when it recreates DLSS. Many games do that only when the output resolution changes or at the next launch.";
       else if (!preset::g_wrapped.load(std::memory_order_relaxed))
         summary = "Waiting for the game's DLSS options.";
       else if (status == preset::Status::kUnknownAbi)
@@ -3310,7 +3310,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       ImGui::TableNextColumn();
       SettingLabel(
           "DLSS Super Resolution preset", summary.c_str(),
-          "Replaces the game's DLSS Super Resolution preset while you play. K is NVIDIA's default for Quality, Balanced and DLAA; M for Performance; L for Ultra Performance; J is similar to K with slightly less ghosting and more flicker. Streamline rebuilds DLSS when the preset changes, so the image resets for one frame. Games that call NGX directly, without Streamline, are not affected. A preset set in the NVIDIA App overrides this one.");
+          "Replaces the game's DLSS Super Resolution preset while you play. K is NVIDIA's default for Quality, Balanced and DLAA; M for Performance; L for Ultra Performance; J is similar to K with slightly less ghosting and more flicker. Streamline rebuilds DLSS when the preset changes, so the image resets for one frame. Games that create DLSS through NGX without Streamline use it when they recreate DLSS, which many do only when the output resolution changes or at the next launch. A preset set in the NVIDIA App overrides this one.");
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1.0f);
       if (ImGui::Combo("##dlss_sr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {

@@ -62,8 +62,6 @@ HMODULE Owner(const void* address) {
 int main() {
   try {
     auto fixture=LoadLibraryW(L"sl.interposer.dll"); Require(fixture,"fixture");
-    // 1.6 (plan B.3): the NGX driver module, for games that create DLSS without Streamline.
-    auto ngx=LoadLibraryW(L"_nvngx.dll"); Require(ngx,"NGX fixture");
     sl::Preferences preferences;
     Require(Import<PFun_slInit*>(fixture,"slInit")(preferences,sl::kSDKVersion)==sl::Result::eOk,"fixture startup");
     // ReShade loads its addons on the first device; the DLSS-G backend hooks
@@ -80,6 +78,9 @@ int main() {
     }
     Require(device!=nullptr,"NVIDIA device");
     auto addon=GetModuleHandleW(L"renodx-mfgunlock-native.addon64"); Require(addon,"ReShade did not load the addon");
+    // 1.6 (plan B.3): the NGX driver module, mapped after the device as games
+    // that create DLSS without Streamline do; the load hook installs the preset hook.
+    auto ngx=LoadLibraryW(L"_nvngx.dll"); Require(ngx,"NGX fixture");
     // 1.6 (plan B.3), before any slDLSSSetOptions call: a game creating DLSS
     // through NGX gets the selected preset (K) in every mode's creation hint;
     // another feature is left alone.
