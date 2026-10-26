@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // Streamline ABI fixture only. Rendering and XeFG/XeLL use the real D3D12 SDK.
 #include <sl.h>
+#include <sl_dlss.h>
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <sl_pcl.h>
@@ -58,6 +59,19 @@ static __declspec(noinline) sl::Result State(const sl::ViewportHandle&,sl::DLSSG
   if(s.structVersion>=sl::kStructVersion2) s.numFramesToGenerateMax=stateMax;
   return sl::Result::eOk;
 }
+// 1.6 (plan B): the DLSS Super Resolution options that reached the provider.
+static std::atomic<uint32_t> dlssMode{UINT32_MAX},dlssWidth{},dlssVersion{},dlssPresets[6]{};
+static __declspec(noinline) sl::Result DlssOptions(const sl::ViewportHandle&,const sl::DLSSOptions& o) {
+  ++calls; dlssMode=uint32_t(o.mode); dlssWidth=o.outputWidth; dlssVersion=uint32_t(o.structVersion);
+  const sl::DLSSPreset presets[]={o.dlaaPreset,o.qualityPreset,o.balancedPreset,o.performancePreset,o.ultraPerformancePreset,o.ultraQualityPreset};
+  for(int i=0;i<6;++i) dlssPresets[i]=uint32_t(presets[i]);
+  return sl::Result::eOk;
+}
+// Mode, output width and version, and the preset of one mode slot (0 DLAA .. 5 ultra quality).
+EXPORT uint32_t FixtureDlssMode() { return dlssMode; }
+EXPORT uint32_t FixtureDlssWidth() { return dlssWidth; }
+EXPORT uint32_t FixtureDlssVersion() { return dlssVersion; }
+EXPORT uint32_t FixtureDlssPreset(uint32_t slot) { return slot<6?dlssPresets[slot].load():UINT32_MAX; }
 EXPORT uint32_t FixtureLastGenerated() { return lastGenerated; }
 EXPORT uint32_t FixtureLastOptionsVersion() { return lastOptionsVersion; }
 EXPORT void FixtureStateMax(uint32_t value) { stateMax=value; }
@@ -89,7 +103,8 @@ EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   if(!initialized) { ++queriesAfterShutdown; lateQueryCaller=uintptr_t(_ReturnAddress()); fn=nullptr; return sl::Result::eErrorNotInitialized; }
   ++calls;
   if(unsupportedDlssg && !strncmp(name,"slDLSSG",7)) { fn=nullptr; return sl::Result::eErrorFeatureMissing; }
-  if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
+  if(!strcmp(name,"slDLSSSetOptions")) fn=reinterpret_cast<void*>(&DlssOptions);
+  else if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
   else if(!strcmp(name,"slReflexSetOptions")) fn=reinterpret_cast<void*>(&Reflex);
   else if(!strcmp(name,"slReflexSleep")) fn=reinterpret_cast<void*>(&ReflexSleep);

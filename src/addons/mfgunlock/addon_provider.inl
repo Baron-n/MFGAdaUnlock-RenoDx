@@ -48,6 +48,86 @@ NVSDK_NGX_Result NVSDK_CONV HookedGetParameters(NVSDK_NGX_Parameter** out_parame
 // capability query is not something we can know from outside. They all live in
 // the NGX loader, so hooking the set costs nothing extra -- and missing the one
 // that is actually used would look exactly like the addon doing nothing.
+// 1.6 (plan B.3): games that create DLSS through NGX themselves, without
+// Streamline, get the selected preset as a creation hint. NGX reads it only
+// when the feature is created: at startup and when the game changes
+// resolution or quality. Streamline games are left to the slDLSSSetOptions
+// wrapper. The game's own hints are kept per parameter block and restored
+// when "Game default" is selected again.
+using NgxCreateFeatureFn = NVSDK_NGX_Result(NVSDK_CONV*)(ID3D12GraphicsCommandList*, NVSDK_NGX_Feature,
+                                                         NVSDK_NGX_Parameter*, NVSDK_NGX_Handle**);
+NgxCreateFeatureFn g_real_create_feature = nullptr;
+constexpr const char* kNgxPresetHints[] = {
+    NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_DLAA, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Quality,
+    NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Balanced, NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_Performance,
+    NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraPerformance,
+    NVSDK_NGX_Parameter_DLSS_Hint_Render_Preset_UltraQuality};
+struct GamePresetHints {
+  NVSDK_NGX_Parameter* parameters;
+  unsigned int values[std::size(kNgxPresetHints)];
+};
+SRWLOCK g_game_preset_hints_lock = SRWLOCK_INIT;
+std::vector<GamePresetHints> g_game_preset_hints;
+
+NVSDK_NGX_Result NVSDK_CONV HookedCreateFeature(ID3D12GraphicsCommandList* list, NVSDK_NGX_Feature feature,
+                                                NVSDK_NGX_Parameter* parameters, NVSDK_NGX_Handle** handle) {
+  if (feature == NVSDK_NGX_Feature_SuperSampling && parameters != nullptr &&
+      !mfgunlock::dlsspreset::g_wrapped.load(std::memory_order_relaxed)) {
+    const uint32_t selected = mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed);
+    AcquireSRWLockExclusive(&g_game_preset_hints_lock);
+    auto saved = std::find_if(g_game_preset_hints.begin(), g_game_preset_hints.end(),
+                              [&](const auto& s) { return s.parameters == parameters; });
+    if (selected != 0) {
+      if (saved == g_game_preset_hints.end() && g_game_preset_hints.size() < 8) {
+        GamePresetHints game{parameters, {}};
+        for (size_t i = 0; i < std::size(kNgxPresetHints); ++i)
+          if (NgxFailed(parameters->Get(kNgxPresetHints[i], &game.values[i]))) game.values[i] = 0;
+        g_game_preset_hints.push_back(game);
+      }
+      for (const auto* hint : kNgxPresetHints) parameters->Set(hint, static_cast<unsigned int>(selected));
+    } else if (saved != g_game_preset_hints.end()) {
+      for (size_t i = 0; i < std::size(kNgxPresetHints); ++i) parameters->Set(kNgxPresetHints[i], saved->values[i]);
+      g_game_preset_hints.erase(saved);
+    }
+    ReleaseSRWLockExclusive(&g_game_preset_hints_lock);
+    mfgunlock::dlsspreset::g_ngx_seen.store(true, std::memory_order_relaxed);
+    if (mfgunlock::dlsspreset::g_ngx_preset.exchange(selected, std::memory_order_relaxed) != selected) {
+      std::stringstream s;
+      s << "mfgunlock: DLSS Super Resolution created through NGX with "
+        << (selected ? "preset " + std::to_string(selected) : std::string("the game's presets")) << '.';
+      reshade::log::message(reshade::log::level::info, s.str().c_str());
+    }
+  }
+  return g_real_create_feature(list, feature, parameters, handle);
+}
+
+// Installed on its own, only while a preset is selected, so a session that
+// never uses the selector gains no NGX hook.
+const std::vector<mfgunlock::hook::HookItem> kNgxPresetHooks = {
+    {"NVSDK_NGX_D3D12_CreateFeature",
+     reinterpret_cast<void**>(&g_real_create_feature),
+     reinterpret_cast<void*>(&HookedCreateFeature)},
+};
+std::atomic_bool g_preset_hook_installed{false};
+
+void TryInstallPresetHook() {
+  if (mfgunlock::dlsspreset::g_selected.load(std::memory_order_relaxed) == 0 ||
+      g_preset_hook_installed.load(std::memory_order_acquire))
+    return;
+  static SRWLOCK lock = SRWLOCK_INIT;
+  AcquireSRWLockExclusive(&lock);
+  for (const wchar_t* name : {L"_nvngx.dll", L"nvngx.dll"}) {
+    if (g_preset_hook_installed.load(std::memory_order_relaxed)) break;
+    HMODULE mod = GetModuleHandleW(name);
+    if (mod == nullptr || GetProcAddress(mod, "NVSDK_NGX_D3D12_CreateFeature") == nullptr) continue;
+    char narrow[64] = {};
+    WideCharToMultiByte(CP_UTF8, 0, name, -1, narrow, sizeof(narrow) - 1, nullptr, nullptr);
+    if (mfgunlock::hook::Install(mod, kNgxPresetHooks, narrow))
+      g_preset_hook_installed.store(true, std::memory_order_release);
+  }
+  ReleaseSRWLockExclusive(&lock);
+}
+
 const std::vector<mfgunlock::hook::HookItem> kNgxHooks = {
     {"NVSDK_NGX_D3D12_AllocateParameters",
      reinterpret_cast<void**>(&g_real_allocate_parameters),
@@ -802,6 +882,7 @@ void RunProviderMaintenance() {
   }
   version_candidates = g_gate_modules;
   ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
+  TryInstallPresetHook();
   // File-version APIs are deliberately kept out of the loader callback. Only
   // candidates whose architecture gates were validated are reported here.
   for (HMODULE module : version_candidates) {

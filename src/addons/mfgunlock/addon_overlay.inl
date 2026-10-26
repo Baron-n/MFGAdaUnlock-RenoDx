@@ -3274,6 +3274,53 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::TableSetupColumn("Setting", ImGuiTableColumnFlags_WidthStretch, 0.62f);
     ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthStretch, 0.38f);
 
+    // 1.6 (plan B): DLSS Super Resolution preset, applied during play.
+    {
+      namespace preset = mfgunlock::dlsspreset;
+      constexpr const char* kPresets[] = {"Game default", "Preset J", "Preset K", "Preset L", "Preset M"};
+      constexpr uint32_t kValues[] = {0, static_cast<uint32_t>(sl::DLSSPreset::ePresetJ),
+          static_cast<uint32_t>(sl::DLSSPreset::ePresetK), static_cast<uint32_t>(sl::DLSSPreset::ePresetL),
+          static_cast<uint32_t>(sl::DLSSPreset::ePresetM)};
+      const uint32_t selected = preset::g_selected.load(std::memory_order_relaxed);
+      int index = 0;
+      for (int i = 0; i < static_cast<int>(std::size(kValues)); ++i)
+        if (kValues[i] == selected) index = i;
+      const auto status = static_cast<preset::Status>(preset::g_status.load(std::memory_order_relaxed));
+      const bool driver_override =
+          (nvapi_status.ngx.feedback_super_resolution & mfgunlock::nvapistatus::kNgxOverridePreset) != 0;
+      const uint32_t game_preset = preset::g_game_preset.load(std::memory_order_relaxed);
+      std::string summary;
+      if (!preset::g_wrapped.load(std::memory_order_relaxed) && preset::g_ngx_seen.load(std::memory_order_relaxed))
+        summary = selected == preset::g_ngx_preset.load(std::memory_order_relaxed)
+                      ? std::string("This game creates DLSS itself: ") + kPresets[index] + " is in use."
+                      : "This game creates DLSS itself: the change applies when it recreates DLSS (resolution or quality change, or restart).";
+      else if (!preset::g_wrapped.load(std::memory_order_relaxed))
+        summary = "Waiting for the game's DLSS options.";
+      else if (status == preset::Status::kUnknownAbi)
+        summary = "This game's DLSS options are newer than this build; its own presets are kept.";
+      else if (status == preset::Status::kRejected)
+        summary = "Streamline refused the preset; the game's presets are kept.";
+      else if (status == preset::Status::kApplied)
+        summary = std::string("Applied: ") + kPresets[index] + ".";
+      else
+        summary = game_preset ? "The game's preset (" + std::string(1, static_cast<char>('A' + game_preset - 1)) + ")."
+                              : "The game's preset (DLSS default).";
+      if (driver_override) summary += " An NVIDIA App override is active and takes precedence.";
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      SettingLabel(
+          "DLSS Super Resolution preset", summary.c_str(),
+          "Replaces the game's DLSS Super Resolution preset while you play. K is NVIDIA's default for Quality, Balanced and DLAA; M for Performance; L for Ultra Performance; J is similar to K with slightly less ghosting and more flicker. Streamline rebuilds DLSS when the preset changes, so the image resets for one frame. Games that call NGX directly, without Streamline, are not affected. A preset set in the NVIDIA App overrides this one.");
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1.0f);
+      if (ImGui::Combo("##dlss_sr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {
+        preset::g_selected.store(kValues[index], std::memory_order_relaxed);
+        TryInstallPresetHook();
+        reshade::set_config_value(nullptr, kConfigSection, "DlssSuperResolutionPreset",
+                                  static_cast<int>(kValues[index]));
+      }
+    }
+
     constexpr const char* kHdrModes[] = {
         "Native (Most Games)", "Force UI Composition (Advanced)",
         "Automatic Guard + UI (HDR Compatibility)",

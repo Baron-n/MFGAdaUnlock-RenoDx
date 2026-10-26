@@ -53,6 +53,7 @@
 
 #include <include/reshade.hpp>
 
+#include "./dlss_preset.hpp"
 #include "./force_policy.hpp"
 #include "./hdr_compat.hpp"
 #include "./input_diagnostics.hpp"
@@ -2507,10 +2508,71 @@ inline sl::Result HookedGetState(const sl::ViewportHandle& viewport, sl::DLSSGSt
   return result;
 }
 
+// 1.6 (plan B): the DLSS Super Resolution preset selected in the panel.
+using DlssSetOptionsFn = sl::Result (*)(const sl::ViewportHandle&, const sl::DLSSOptions&);
+inline std::atomic<DlssSetOptionsFn> g_real_dlss_set_options{nullptr};
+
+inline sl::Result HookedDlssSetOptions(const sl::ViewportHandle& viewport,
+                                       const sl::DLSSOptions& options) {
+  const auto real = g_real_dlss_set_options.load(std::memory_order_acquire);
+  if (real == nullptr) return sl::Result::eErrorNotInitialized;
+  using dlsspreset::Status;
+  const uint32_t selected = dlsspreset::g_selected.load(std::memory_order_relaxed);
+  dlsspreset::g_mode.store(static_cast<uint32_t>(options.mode), std::memory_order_relaxed);
+  dlsspreset::g_game_preset.store(static_cast<uint32_t>(dlsspreset::GamePreset(options)),
+                                  std::memory_order_relaxed);
+  sl::DLSSOptions forwarded;
+  if (!g_addon_enabled.load(std::memory_order_relaxed) ||
+      !dlsspreset::Override(options, selected, forwarded)) {
+    const bool unknown = selected != 0 && options.mode != sl::DLSSMode::eOff &&
+                         dlsspreset::KnownSize(options.structVersion) == 0;
+    if (unknown && dlsspreset::g_status.exchange(static_cast<uint32_t>(Status::kUnknownAbi)) !=
+                       static_cast<uint32_t>(Status::kUnknownAbi)) {
+      reshade::log::message(reshade::log::level::warning,
+          "mfgunlock: refusing to change the DLSS preset in an unknown DLSSOptions ABI; forwarding the game's options unchanged.");
+    } else if (!unknown) {
+      dlsspreset::g_status.store(static_cast<uint32_t>(Status::kGame), std::memory_order_relaxed);
+      dlsspreset::g_applied_preset.store(0, std::memory_order_relaxed);
+    }
+    return real(viewport, options);
+  }
+  const sl::Result result = real(viewport, forwarded);
+  if (result != sl::Result::eOk) {
+    if (dlsspreset::g_status.exchange(static_cast<uint32_t>(Status::kRejected)) !=
+        static_cast<uint32_t>(Status::kRejected)) {
+      std::stringstream s;
+      s << "mfgunlock: slDLSSSetOptions refused DLSS preset " << selected << " (sl::Result "
+        << static_cast<unsigned int>(result) << "); forwarding the game's options.";
+      reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    }
+    return real(viewport, options);
+  }
+  dlsspreset::g_status.store(static_cast<uint32_t>(Status::kApplied), std::memory_order_relaxed);
+  if (dlsspreset::g_applied_preset.exchange(selected, std::memory_order_relaxed) != selected) {
+    std::stringstream s;
+    s << "mfgunlock: DLSS Super Resolution preset " << selected << " applied (game preset "
+      << static_cast<uint32_t>(dlsspreset::GamePreset(options))
+      << " for its mode); Streamline recreates the DLSS feature.";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+  return result;
+}
+
 inline sl::Result HookedGetFeatureFunction(sl::Feature feature, const char* function_name,
                                            void*& function) {
   const sl::Result result = g_real_get_feature_function(feature, function_name, function);
   if (result != sl::Result::eOk || function_name == nullptr || function == nullptr) return result;
+  if (feature == sl::kFeatureDLSS && std::strcmp(function_name, "slDLSSSetOptions") == 0 &&
+      function != reinterpret_cast<void*>(&HookedDlssSetOptions)) {
+    g_real_dlss_set_options.store(reinterpret_cast<DlssSetOptionsFn>(function),
+                                  std::memory_order_release);
+    function = reinterpret_cast<void*>(&HookedDlssSetOptions);
+    if (!dlsspreset::g_wrapped.exchange(true, std::memory_order_relaxed)) {
+      reshade::log::message(reshade::log::level::info,
+          "mfgunlock: wrapped slDLSSSetOptions; the DLSS Super Resolution preset selector is live.");
+    }
+    return result;
+  }
   if (feature == sl::kFeatureDLSS_G &&
       std::strcmp(function_name, "slDLSSGSetOptions") == 0 &&
       function != reinterpret_cast<void*>(&HookedSetOptions)) {
