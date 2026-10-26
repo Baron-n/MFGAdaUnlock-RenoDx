@@ -108,16 +108,16 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 | 5.1 | Busca de marcador com cache de módulos inspecionados e busca rápida | teste unitário da busca; contagem de varreduras por módulo = 1 | 1 h | feito (`5c125c7`) |
 | 5.2 | `OnInitDevice`/`OnInitCommandQueue` só sinalizam o worker | teste: nenhuma varredura na thread chamadora | 1 h | feito com mudança: continua síncrona e passa a ser medida (`dd79354`; ver registro) |
 | 5.3 | Sonda: `LdrRegisterDllNotification` dispara antes do DllMain de uma DLL de teste? | resultado registrado; decide o 5.4 | 45 min | feito (`9eae117`) |
-| 5.4 | Detecção por notificação (patch dentro do callback, sem varredura), mantendo o hook de `LoadLibrary` como reserva | teste com DLL carregada por `LdrLoadDll` direto | 1,5 h | feito (`e4c7c06`) |
-| 5.5 | **[você]** DLSS-G em 2 jogos (ex.: Cyberpunk, Alan Wake 2): MFG liberado de primeira, startup sem travadas | log mostra o patch antes do primeiro `SetOptions` | 30 min | em andamento |
+| 5.4 | Detecção por notificação (patch dentro do callback, sem varredura), mantendo o hook de `LoadLibrary` como reserva | teste com DLL carregada por `LdrLoadDll` direto | 1,5 h | descartado (crash no Cyberpunk; revertido em `f29f3d1`) |
+| 5.5 | **[você]** DLSS-G em 2 jogos (ex.: Cyberpunk, Alan Wake 2): MFG liberado de primeira, startup sem travadas | log mostra o patch antes do primeiro `SetOptions` | 30 min | feito (campo, 2026-10-25) |
 
 ### Release 1.5.7
 
 | # | Tarefa | Est. | Status |
 |---|---|---|---|
-| R7.1 | Gate completo no build final | 1 h | pendente |
-| R7.2 | **[você]** Regressão rápida XeMFG + DLSS-G | 30 min | pendente |
-| R7.3 | Versão, notas, merge, tag e release | 45 min | pendente |
+| R7.1 | Gate completo no build final | 1 h | feito (2026-10-26) |
+| R7.2 | **[você]** Regressão rápida XeMFG + DLSS-G | 30 min | feito (coberta pelos campos do 4.x e do 5.5) |
+| R7.3 | Versão, notas, merge, tag e release | 45 min | feito (2026-10-26) |
 
 ---
 
@@ -184,4 +184,8 @@ Um PR por item.
 - **2026-10-25 · 5.3** (`9eae117`) `loader_notification_probe`: a notificação dispara para DLL carregada por `LdrLoadDll`, antes do DllMain; patch feito no callback é visto pelo DllMain; relocações já aplicadas; identidade de código (`modulesession::Inspect`) igual no callback e depois da carga.
 - **2026-10-25 · 5.4** (`e4c7c06`) `LdrRegisterDllNotification` no loadhook: o provider é tratado ao ser mapeado (só os gates, sob o loader lock; logs enfileirados porque o log do ReShade tem trava própria). Hooks de `kernel32` mantidos; `Uninstall` desregistra. `loader_notification_dlssg_tests`. Matriz 187/187.
 - **2026-10-25 · 5.5** Candidato `dd79354` instalado no Cyberpunk e no Alan Wake 2 com `[Backend] Selected=DLSSG` temporário; backups `*.before-5.5.bak`.
+- **2026-10-25 · 5.5 e 5.4 descartado** Alan Wake 2 (DLSS-G): funcionou; override 4x → 6x aceito. Cyberpunk (DLSS-G): **crash no início**, `EXCEPTION_ACCESS_VIOLATION` dentro do plugin `sl.dlss_g` OTA (`190_E658703.dll+0x4f765`), no thread principal, logo depois do primeiro `slDLSSGGetState`, lendo um endereço fora de qualquer módulo. O log mostrava os gates aplicados pela notificação, antes do DllMain do `nvngx_dlssg`. Com o 5.4 revertido (`f29f3d1`), o Cyberpunk em DLSS-G funcionou (override 6x → 4x aceito, fechamento normal). Hipótese: o `nvngx_dlssg` confere o próprio código na inicialização e o patch antes do DllMain muda esse resultado; a sonda (DLL simples) não tinha como reproduzir isso. A sonda do 5.3 continua no repositório como conhecimento.
+- **2026-10-25 · medição do 5.2** No Cyberpunk, a manutenção na criação do device levou 1.677 ms e algumas criações de fila 332–698 ms (thread do jogo, no carregamento). Não causou o crash; fica para investigar depois (provável custo dos patches e hashes de módulo, não da busca).
+- **2026-10-25 · flicker do painel** Vídeo do usuário (Cyberpunk, XeMFG 4x): as linhas *HUD handling* e a dica do UI Composition alternavam a cada quadro com *Waiting for frame status*, porque o painel só tenta a trava da saída e mostrava valores padrão quando ela estava ocupada. Corrigido mostrando o último estado lido da mesma saída (`4a8f03e`). Confirmado no jogo; matriz 186/186.
+- **2026-10-26 · release 1.5.7** Blocos 4 e 5 (sem o 4.3 e o 5.4), mais a correção do flicker. Versão 1.5.7, notas em `docs/releases/1.5.7.md`.
 
