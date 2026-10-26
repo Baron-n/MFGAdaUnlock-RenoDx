@@ -10,13 +10,17 @@ namespace mfgunlock::xemfg::native {
 // shows them; they are dropped or queued, and motion becomes uneven.
 inline constexpr uint32_t kDisplayCapMarginPermille=30; // 3%
 
-// Minimum source frame interval in microseconds, or 0 when the refresh or the
-// multiplier is unknown (no cap).
+// Minimum interval between presented frames in microseconds, or 0 when the
+// refresh or the multiplier is unknown (no cap). XeLL bound to XeFG applies
+// its minimum interval to every presented frame, generated ones included
+// (Plague Tale field capture: an interval of refresh/multiplier held the
+// output, not the game, at that rate), so the game then runs at the refresh
+// over the multiplier.
 inline constexpr uint32_t DisplayCapIntervalUs(uint32_t refreshMilliHz,uint32_t multiplier,
     uint32_t marginPermille=kDisplayCapMarginPermille) {
   if(refreshMilliHz<10000 || refreshMilliHz>1000000 || multiplier<2 || multiplier>6 || marginPermille>=1000) return 0;
-  // interval = 1e6 us / (refresh * (1 - margin) / multiplier), rounded up.
-  const uint64_t numerator=uint64_t(1000000)*1000*1000*multiplier;
+  // interval = 1e6 us / (refresh * (1 - margin)), rounded up.
+  const uint64_t numerator=uint64_t(1000000)*1000*1000;
   const uint64_t denominator=uint64_t(refreshMilliHz)*(1000-marginPermille);
   return uint32_t((numerator+denominator-1)/denominator);
 }

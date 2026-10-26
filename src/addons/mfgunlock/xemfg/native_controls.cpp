@@ -199,7 +199,8 @@ void DrawControls(PanelPage page) {
     const auto refreshHz=status.displayRefreshMilliHz/1000;
     const std::string capState=!xellOutput?"Not available with the Reflex output":!value.displayCap?"Off":
         !status.displayCapIntervalUs?"Waiting for the display refresh":
-        "Game up to "+std::to_string(1000000/status.displayCapIntervalUs)+" FPS ("+std::to_string(refreshHz)+" Hz display)";
+        "Up to "+std::to_string(1000000/status.displayCapIntervalUs)+" FPS shown, game up to "
+        +std::to_string(1000000/status.displayCapIntervalUs/(std::max)(State().multiplier.load(),1u))+" FPS ("+std::to_string(refreshHz)+" Hz display)";
     ui::Readout("##xe_display_cap_state","Frame rate limit",capState.c_str(),capHelp,value.displayCap && status.displayCapIntervalUs?ui::Accent:ui::Muted);
     // Warn, never enable it automatically (the user decides).
     if(xellOutput && !value.displayCap && State().requested.load() && (!sync || sync==UINT32_MAX)
