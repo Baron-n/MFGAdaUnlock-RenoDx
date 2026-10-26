@@ -47,12 +47,20 @@ EXPORT sl::Result slGetFeatureRequirements(sl::Feature,sl::FeatureRequirements&)
 EXPORT uint32_t FixtureSupportQueries() { return supportQueries; }
 EXPORT uint32_t FixtureQueriesAfterShutdown() { return queriesAfterShutdown; }
 EXPORT uintptr_t FixtureLateQueryCaller() { return lateQueryCaller; }
+// The DLSS-G backend fixture (plan 6.1) reads what reached the provider:
+// the generated-frame count of the last options and the state's advertised maximum.
+static std::atomic<uint32_t> lastGenerated{UINT32_MAX},lastOptionsVersion{},stateMax{1};
 static __declspec(noinline) sl::Result Options(const sl::ViewportHandle&,const sl::DLSSGOptions& o) {
-  ++calls; fgMode=uint32_t(o.mode); return sl::Result::eOk;
+  ++calls; fgMode=uint32_t(o.mode); lastGenerated=o.numFramesToGenerate; lastOptionsVersion=uint32_t(o.structVersion); return sl::Result::eOk;
 }
 static __declspec(noinline) sl::Result State(const sl::ViewportHandle&,sl::DLSSGState& s,const sl::DLSSGOptions*) {
-  ++calls; s.numFramesActuallyPresented=1; s.status=sl::DLSSGStatus(fgStatus.load()); return sl::Result::eOk;
+  ++calls; s.numFramesActuallyPresented=1; s.status=sl::DLSSGStatus(fgStatus.load());
+  if(s.structVersion>=sl::kStructVersion2) s.numFramesToGenerateMax=stateMax;
+  return sl::Result::eOk;
 }
+EXPORT uint32_t FixtureLastGenerated() { return lastGenerated; }
+EXPORT uint32_t FixtureLastOptionsVersion() { return lastOptionsVersion; }
+EXPORT void FixtureStateMax(uint32_t value) { stateMax=value; }
 static __declspec(noinline) sl::Result Reflex(const sl::ReflexOptions& o) {
   ++calls; reflexMode=uint32_t(o.mode); reflexLimit=o.frameLimitUs; return sl::Result::eOk;
 }

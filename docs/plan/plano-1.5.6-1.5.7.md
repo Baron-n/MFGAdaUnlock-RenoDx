@@ -127,7 +127,7 @@ Um PR por item.
 
 | # | Tarefa | Est. | Status |
 |---|---|---|---|
-| 6.1 | Fixture com Streamline falso para o DLSS-G (`SetOptions`, `GetState`, Reflex) | 3 h | pendente |
+| 6.1 | Fixture com Streamline falso para o DLSS-G (`SetOptions`, `GetState`, Reflex) | 3 h | feito |
 | 6.2 | Extrair `provider_patches` (gates, midpoint, thin geometry) do `addon.cpp` | 2 h | pendente |
 | 6.3 | Extrair `streamline_patches` (teto, flip metering) | 1,5 h | pendente |
 | 6.4 | Extrair `discovery` (worker, varreduras) | 1,5 h | pendente |
