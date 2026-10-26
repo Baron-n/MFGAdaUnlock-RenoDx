@@ -133,7 +133,7 @@ Um PR por item.
 | 6.4 | Extrair `discovery` (worker, varreduras) | 1,5 h | feito (`addon_discovery.inl`; as varreduras já estavam em `module_scan.hpp` desde o 5.1) |
 | 6.5 | Extrair `latency_guard` e publicar um snapshot único para a UI | 3 h | feito (`addon_latency.inl`, `LatencyGuardView`) |
 | 6.6 | Extrair o overlay (UI) | 3 h | feito (`addon_overlay.inl`) |
-| 6.7 | Limpezas: detecção de API duplicada, comentário repetido, atribuição redundante, `IsBadReadPtr` | 1 h | pendente |
+| 6.7 | Limpezas: detecção de API duplicada, comentário repetido, atribuição redundante, `IsBadReadPtr` | 1 h | feito (`IsBadReadPtr` já tinha saído no 5.1) |
 
 ## Fora do plano (registrado para não perder)
 

@@ -190,7 +190,6 @@ void PatchFrameCountCeiling(HMODULE mod) {
   g_ceiling_original = profile->sites[0].before[1];
   g_ceiling_cmov_original = profile->sites[0].before[9];
   g_ceiling_compiled = g_ceiling_original;
-  g_ceiling_effective = g_ceiling_compiled;
   g_ceiling_effective = found[1];
   g_ceiling_patched.store(true, std::memory_order_release);
   mfgunlock::framecount::g_advertised_max_generated.store(g_ceiling_effective,

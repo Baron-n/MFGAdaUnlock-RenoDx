@@ -139,11 +139,6 @@ void TryBootstrapVTable() {
 // in the mapped image afterwards is never re-checked, so the signed DLL loads
 // and then behaves like the patched one.
 //
-// The instruction, in DLSSGInstanceManager::PopulateParameters:
-//     81 FD B0 01 00 00     cmp ebp, 0x1b0     ; arch id, 0x1b0 == GB20x
-// Exactly one occurrence in .text of 310.8, which is what makes this safe to
-// find by pattern. 0x1b0 -> 0x190 lets AD10x take the Blackwell path.
-
 // nvngx_dlssg.dll gates multi-frame on the NVAPI arch id in more than one
 // place, and they do different jobs:
 //
@@ -164,12 +159,7 @@ void TryBootstrapVTable() {
 // 0x1b0 is a specific NVAPI arch constant, and any compare against it in this
 // DLL is an arch gate -- but a `mov r32, 0x1b0` is the arch-id lookup table
 // returning Blackwell's own id, which must be left alone. Only `cmp` forms are
-// rewritten.
-//
-// NGX verifies the snippet's Authenticode signature when it LOADS the file --
-// which is why patching the same bytes on disk made frame generation vanish.
-// The mapped image is never re-checked, so the signed DLL loads and then
-// behaves as patched.
+// rewritten. 0x1b0 -> 0x190 lets AD10x take the Blackwell path.
 
 // ------------------------------------------------ locating the DLSS-G snippet
 //

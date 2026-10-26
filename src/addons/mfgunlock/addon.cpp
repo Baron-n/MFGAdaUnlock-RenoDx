@@ -386,6 +386,42 @@ const char* RenderApiName(DetectedRenderApi api) {
   }
 }
 
+// The ReShade device API, as the addon classifies it.
+DetectedRenderApi RenderApiOf(reshade::api::device* device) {
+  switch (device->get_api()) {
+    case reshade::api::device_api::d3d11: return DetectedRenderApi::kD3D11;
+    case reshade::api::device_api::d3d12: return DetectedRenderApi::kD3D12;
+    case reshade::api::device_api::vulkan: return DetectedRenderApi::kVulkan;
+    default: return DetectedRenderApi::kOther;
+  }
+}
+
+// Tells the Dynamic MFG policy which API presents: D3D12, Vulkan, or one of
+// the three it supports at all.
+void NotifyDynamicApi(DetectedRenderApi api) {
+  mfgunlock::framecount::NotifyDynamicD3D12(
+      api == DetectedRenderApi::kD3D12, api == DetectedRenderApi::kVulkan,
+      api == DetectedRenderApi::kD3D11 || api == DetectedRenderApi::kD3D12 ||
+          api == DetectedRenderApi::kVulkan);
+}
+
+// The device API of a new primary swapchain. DXGI diagnostics apply only to
+// D3D11 and D3D12.
+void ObservePrimaryApi(reshade::api::device* device) {
+  const DetectedRenderApi detected = RenderApiOf(device);
+  g_render_api.store(detected, std::memory_order_relaxed);
+  if (detected != DetectedRenderApi::kD3D11 &&
+      detected != DetectedRenderApi::kD3D12)
+    ClearDxgiDiagnostics();
+  NotifyDynamicApi(detected);
+}
+
+bool IsHdrColorSpace(reshade::api::color_space color_space) {
+  return color_space == reshade::api::color_space::scrgb ||
+         color_space == reshade::api::color_space::hdr10_pq ||
+         color_space == reshade::api::color_space::hdr10_hlg;
+}
+
 // Our own image. Both marker scans look for strings that are, necessarily,
 // string literals inside this very DLL -- so without excluding ourselves the
 // scan happily identifies the addon as the DLSS-G plugin and then fails to
@@ -512,30 +548,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
         g_primary_swapchain_area.store(
             static_cast<uint64_t>(desc.texture.width) * desc.texture.height,
             std::memory_order_relaxed);
-        DetectedRenderApi detected = DetectedRenderApi::kOther;
-        switch (device->get_api()) {
-          case reshade::api::device_api::d3d11:
-            detected = DetectedRenderApi::kD3D11;
-            break;
-          case reshade::api::device_api::d3d12:
-            detected = DetectedRenderApi::kD3D12;
-            break;
-          case reshade::api::device_api::vulkan:
-            detected = DetectedRenderApi::kVulkan;
-            break;
-          default:
-            break;
-        }
-        g_render_api.store(detected, std::memory_order_relaxed);
-        if (detected != DetectedRenderApi::kD3D11 &&
-            detected != DetectedRenderApi::kD3D12)
-          ClearDxgiDiagnostics();
-        mfgunlock::framecount::NotifyDynamicD3D12(
-            detected == DetectedRenderApi::kD3D12,
-            detected == DetectedRenderApi::kVulkan,
-            detected == DetectedRenderApi::kD3D11 ||
-                detected == DetectedRenderApi::kD3D12 ||
-                detected == DetectedRenderApi::kVulkan);
+        ObservePrimaryApi(device);
       }
       mfgunlock::framecount::NotifySwapchainTransition();
     }
@@ -554,9 +567,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
               static_cast<uint32_t>(color_space));
         }
       }
-      const bool hdr = color_space == reshade::api::color_space::scrgb ||
-                       color_space == reshade::api::color_space::hdr10_pq ||
-                       color_space == reshade::api::color_space::hdr10_hlg;
+      const bool hdr = IsHdrColorSpace(color_space);
       mfgunlock::framecount::NotifyHdrState(hdr);
     }
   }
@@ -594,35 +605,10 @@ void OnInitSwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
       if (selected == swapchain || selected == nullptr || area > selected_area) {
         g_primary_swapchain_area.store(area, std::memory_order_relaxed);
         g_primary_swapchain.store(swapchain, std::memory_order_release);
-        DetectedRenderApi detected = DetectedRenderApi::kOther;
-        switch (device->get_api()) {
-          case reshade::api::device_api::d3d11:
-            detected = DetectedRenderApi::kD3D11;
-            break;
-          case reshade::api::device_api::d3d12:
-            detected = DetectedRenderApi::kD3D12;
-            break;
-          case reshade::api::device_api::vulkan:
-            detected = DetectedRenderApi::kVulkan;
-            break;
-          default:
-            break;
-        }
-        g_render_api.store(detected, std::memory_order_relaxed);
-        if (detected != DetectedRenderApi::kD3D11 &&
-            detected != DetectedRenderApi::kD3D12)
-          ClearDxgiDiagnostics();
-        mfgunlock::framecount::NotifyDynamicD3D12(
-            detected == DetectedRenderApi::kD3D12,
-            detected == DetectedRenderApi::kVulkan,
-            detected == DetectedRenderApi::kD3D11 ||
-                detected == DetectedRenderApi::kD3D12 ||
-                detected == DetectedRenderApi::kVulkan);
+        ObservePrimaryApi(device);
         const auto color_space = swapchain->get_color_space();
         if (color_space != reshade::api::color_space::unknown) {
-          const bool hdr = color_space == reshade::api::color_space::scrgb ||
-                           color_space == reshade::api::color_space::hdr10_pq ||
-                           color_space == reshade::api::color_space::hdr10_hlg;
+          const bool hdr = IsHdrColorSpace(color_space);
           mfgunlock::framecount::NotifyHdrState(hdr);
         }
         primary_transition = true;
@@ -706,29 +692,11 @@ void RunCreationMaintenance(const char* event) {
 // not start a thread and therefore cannot keep a temporary addon instance alive.
 void OnInitDevice(reshade::api::device* device) {
   if (device != nullptr) {
-    DetectedRenderApi detected = DetectedRenderApi::kOther;
-    switch (device->get_api()) {
-      case reshade::api::device_api::d3d11:
-        detected = DetectedRenderApi::kD3D11;
-        break;
-      case reshade::api::device_api::d3d12:
-        detected = DetectedRenderApi::kD3D12;
-        break;
-      case reshade::api::device_api::vulkan:
-        detected = DetectedRenderApi::kVulkan;
-        break;
-      default:
-        break;
-    }
+    const DetectedRenderApi detected = RenderApiOf(device);
     const bool no_primary =
         g_primary_swapchain.load(std::memory_order_acquire) == nullptr;
     if (no_primary) {
-      mfgunlock::framecount::NotifyDynamicD3D12(
-          detected == DetectedRenderApi::kD3D12,
-          detected == DetectedRenderApi::kVulkan,
-          detected == DetectedRenderApi::kD3D11 ||
-              detected == DetectedRenderApi::kD3D12 ||
-              detected == DetectedRenderApi::kVulkan);
+      NotifyDynamicApi(detected);
     }
 
     const DetectedRenderApi previous = no_primary
