@@ -2934,6 +2934,29 @@ void OnDestroySwapchain(reshade::api::swapchain* swapchain, bool /*resize*/) {
   }
 }
 
+// The synchronous maintenance on device and queue creation, timed (1.5.7).
+// It stays synchronous: the worker starts only at the first Present, and this
+// is one of the chances to commit the gates before NGX queries the provider.
+// The first passes report how long the game's thread waited for it.
+void RunCreationMaintenance(const char* event) {
+  static std::atomic<unsigned int> reported{0};
+  LARGE_INTEGER start{}, end{}, frequency{};
+  QueryPerformanceCounter(&start);
+  RunProviderMaintenance();
+  TryPatchFrameCountCeiling();
+  if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
+  mfgunlock::framecount::TryInstall();
+  mfgunlock::loadhook::TryInstall();
+  QueryPerformanceCounter(&end);
+  QueryPerformanceFrequency(&frequency);
+  if (reported.fetch_add(1, std::memory_order_relaxed) < 6 && frequency.QuadPart > 0) {
+    std::stringstream s;
+    s << "mfgunlock: provider maintenance on " << event << " took " << std::fixed << std::setprecision(2)
+      << double(end.QuadPart - start.QuadPart) * 1000.0 / double(frequency.QuadPart) << " ms.";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+}
+
 // These remain immediate, finite retries during graphics-device initialization. They do
 // not start a thread and therefore cannot keep a temporary addon instance alive.
 void OnInitDevice(reshade::api::device* device) {
@@ -2978,19 +3001,11 @@ void OnInitDevice(reshade::api::device* device) {
     }
   }
 
-  RunProviderMaintenance();
-  TryPatchFrameCountCeiling();
-  if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-  mfgunlock::framecount::TryInstall();
-  mfgunlock::loadhook::TryInstall();
+  RunCreationMaintenance("device creation");
 }
 
 void OnInitCommandQueue(reshade::api::command_queue* /*queue*/) {
-  RunProviderMaintenance();
-  TryPatchFrameCountCeiling();
-  if (g_force_flip_meter_off.load(std::memory_order_relaxed)) TryPatchFlipMetering();
-  mfgunlock::framecount::TryInstall();
-  mfgunlock::loadhook::TryInstall();
+  RunCreationMaintenance("command queue creation");
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
   if (g_render_api.load(std::memory_order_relaxed) ==
       DetectedRenderApi::kD3D12)
