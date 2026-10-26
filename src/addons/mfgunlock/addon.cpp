@@ -1530,6 +1530,7 @@ void OnPresentStartDiscovery(reshade::api::command_queue* /*queue*/,
   }
   UpdateReflexPacingLab(swapchain);
   UpdateLatencyGuard(swapchain);
+  mfgunlock::framecount::PublishLatencyGuardView();
   UpdateVramDiagnostics(swapchain);
   StartDiscoveryWorker();
 #if !defined(MFGUNLOCK_LOCAL_LOW_OVERHEAD)
@@ -2744,6 +2745,8 @@ void DrawLatencyGuardControl() {
           true, std::memory_order_release);
       mfgunlock::framecount::g_latency_guard_epoch.fetch_add(
           1, std::memory_order_acq_rel);
+      // Show the reset at once, without waiting for the next Present.
+      mfgunlock::framecount::PublishLatencyGuardView();
       reshade::set_config_value(nullptr, kConfigSection, "LatencyGuardMode",
                                 mode);
     }
@@ -4658,6 +4661,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::Separator();
     DrawLatencyGuardControl();
     if(ImGui::CollapsingHeader("Latency details")) {
+    const auto latency_view = mfgunlock::framecount::LatencyGuardSnapshot();
     const auto latency_guard_mode =
         static_cast<mfgunlock::pacing::LatencyGuardMode>(
             mfgunlock::framecount::g_latency_guard_mode.load(
@@ -4675,8 +4679,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     ImGui::Spacing();
     ImGui::TextDisabled("CURRENT LATENCY STATUS");
     const bool guard_sample_seen =
-        mfgunlock::framecount::g_latency_guard_sample_seen.load(
-            std::memory_order_acquire);
+        latency_view.sample_seen;
     if (!guard_sample_seen) {
       ImGui::TextDisabled("Waiting for the first bounded NVAPI sample.");
     } else if (ImGui::BeginTable("##latency_guard_status", 2,
@@ -4689,8 +4692,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       StatusSectionRow("INTEGRATION");
       const auto marker_health =
           static_cast<mfgunlock::pacing::MarkerHealth>(
-              mfgunlock::framecount::g_latency_guard_marker_health.load(
-                  std::memory_order_relaxed));
+              latency_view.marker_health);
       StatusRow("Reflex integration", MarkerHealthText(marker_health),
                 marker_health == mfgunlock::pacing::MarkerHealth::kHealthy
                     ? kUiPositive
@@ -4701,14 +4703,11 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                        ? kUiMuted
                        : kUiWarning));
       const uint32_t timing_issues =
-          mfgunlock::framecount::g_latency_guard_timing_issue_mask.load(
-              std::memory_order_relaxed);
+          latency_view.timing_issue_mask;
       const bool source_timing_confident =
-          mfgunlock::framecount::g_latency_guard_timing_confident.load(
-              std::memory_order_relaxed);
+          latency_view.timing_confident;
       const bool queue_timing_confident =
-          mfgunlock::framecount::g_latency_guard_queue_timing_confident.load(
-              std::memory_order_relaxed);
+          latency_view.queue_timing_confident;
       StatusRow("Source timing validation",
                 TimingValidationText(timing_issues),
                 source_timing_confident ? kUiPositive : kUiWarning);
@@ -4722,44 +4721,31 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                     ? kUiPositive
                     : (source_timing_confident ? kUiWarning : kUiMuted));
       const unsigned int refresh =
-          mfgunlock::framecount::g_latency_guard_display_refresh_fps.load(
-              std::memory_order_relaxed);
+          latency_view.display_refresh_fps;
       const unsigned int live_multiplier =
-          mfgunlock::framecount::g_latency_guard_live_multiplier.load(
-              std::memory_order_relaxed);
+          latency_view.live_multiplier;
       const unsigned int source_cap =
-          mfgunlock::framecount::g_latency_guard_recommended_source_cap_fps.load(
-              std::memory_order_relaxed);
+          latency_view.recommended_source_cap_fps;
       const unsigned int active_source_cap =
-          mfgunlock::framecount::g_latency_guard_active_source_cap_fps.load(
-              std::memory_order_relaxed);
+          latency_view.active_source_cap_fps;
       const unsigned int source_fps =
-          mfgunlock::framecount::g_latency_guard_estimated_source_fps.load(
-              std::memory_order_relaxed);
+          latency_view.estimated_source_fps;
       const unsigned int projected_output =
-          mfgunlock::framecount::g_latency_guard_projected_output_fps.load(
-              std::memory_order_relaxed);
+          latency_view.projected_output_fps;
       const unsigned int queue_wait =
-          mfgunlock::framecount::g_latency_guard_queue_wait_us.load(
-              std::memory_order_relaxed);
+          latency_view.queue_wait_us;
       const unsigned int queue_p95 =
-          mfgunlock::framecount::g_latency_guard_queue_p95_us.load(
-              std::memory_order_relaxed);
+          latency_view.queue_p95_us;
       const unsigned int input_to_gpu =
-          mfgunlock::framecount::g_latency_guard_input_to_gpu_end_us.load(
-              std::memory_order_relaxed);
+          latency_view.input_to_gpu_end_us;
       const unsigned int gpu_active =
-          mfgunlock::framecount::g_latency_guard_gpu_active_us.load(
-              std::memory_order_relaxed);
+          latency_view.gpu_active_us;
       const unsigned int pipeline =
-          mfgunlock::framecount::g_latency_guard_pipeline_latency_us.load(
-              std::memory_order_relaxed);
+          latency_view.pipeline_latency_us;
       const unsigned int pipeline_p95 =
-          mfgunlock::framecount::g_latency_guard_pipeline_p95_us.load(
-              std::memory_order_relaxed);
+          latency_view.pipeline_p95_us;
       const unsigned int ai_frame_time =
-          mfgunlock::framecount::g_latency_guard_ai_frame_time_us.load(
-              std::memory_order_relaxed);
+          latency_view.ai_frame_time_us;
       const std::string refresh_text =
           refresh == 0 ? "Not detected" : std::to_string(refresh) + " Hz";
       const std::string multiplier_text =
@@ -4809,19 +4795,16 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       StatusRow("Display refresh", refresh_text.c_str(), kUiMuted);
       StatusRow("Active FG multiplier", multiplier_text.c_str(), kUiMuted);
       const bool iflip_known =
-          mfgunlock::framecount::g_latency_guard_iflip_known.load(
-              std::memory_order_relaxed);
+          latency_view.iflip_known;
       const bool iflip_active =
-          mfgunlock::framecount::g_latency_guard_iflip_active.load(
-              std::memory_order_relaxed);
+          latency_view.iflip_active;
       StatusRow("Independent flip",
                 !iflip_known ? "Not reported"
                              : (iflip_active ? "Active" : "Inactive"),
                 !iflip_known || iflip_active ? kUiMuted : kUiWarning);
       StatusRow("Rendered/source FPS", source_text.c_str(), kUiMuted);
       StatusRow("Estimated displayed FPS", projected_text.c_str(),
-                mfgunlock::framecount::g_latency_guard_oversubscribed.load(
-                    std::memory_order_relaxed)
+                latency_view.oversubscribed
                     ? kUiWarning
                     : kUiMuted);
       const uint32_t observed_source_interval = source_fps == 0
@@ -4842,8 +4825,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       StatusRow("DLSS-G workload", ai_text.c_str(), kUiMuted);
       const auto bottleneck =
           static_cast<mfgunlock::pacing::LatencyBottleneck>(
-              mfgunlock::framecount::g_latency_guard_bottleneck.load(
-                  std::memory_order_relaxed));
+              latency_view.bottleneck);
       StatusRow("Dominant observed stage",
                 LatencyBottleneckText(bottleneck),
                 bottleneck == mfgunlock::pacing::LatencyBottleneck::kBalanced
@@ -4852,8 +4834,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                                mfgunlock::pacing::LatencyBottleneck::kInsufficientData
                            ? kUiMuted : kUiWarning));
       const unsigned int sample_cost =
-          mfgunlock::framecount::g_latency_guard_sample_cost_us.load(
-              std::memory_order_relaxed);
+          latency_view.sample_cost_us;
       const std::string sample_cost_text =
           sample_cost == 0 ? "Below timer resolution"
                            : std::to_string(sample_cost) + " us every 500 ms";
@@ -4868,28 +4849,22 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
               mfgunlock::framecount::internal::ReflexTargetSource::
                   kUserSourceCap);
       const unsigned int multiplier_override =
-          mfgunlock::framecount::g_latency_guard_multiplier_override.load(
-              std::memory_order_acquire);
+          latency_view.multiplier_override;
       const bool multiplier_accepted =
-          mfgunlock::framecount::g_latency_guard_multiplier_trial_accepted.load(
-              std::memory_order_relaxed);
+          latency_view.multiplier_trial_accepted;
       const auto multiplier_phase =
           static_cast<mfgunlock::latency::MultiplierTrialPhase>(
-              mfgunlock::framecount::g_latency_guard_multiplier_trial_phase.load(
-                  std::memory_order_relaxed));
+              latency_view.multiplier_trial_phase);
       const auto multiplier_reason =
           static_cast<mfgunlock::latency::ResponsiveTrialReason>(
-              mfgunlock::framecount::g_latency_guard_multiplier_trial_reason.load(
-                  std::memory_order_relaxed));
+              latency_view.multiplier_trial_reason);
       const unsigned int saved_multiplier =
           mfgunlock::framecount::g_force_multiplier.load(
               std::memory_order_relaxed);
       const unsigned int approved_multiplier =
-          mfgunlock::framecount::g_latency_guard_multiplier_approved.load(
-              std::memory_order_relaxed);
+          latency_view.multiplier_approved;
       const unsigned int candidate_multiplier =
-          mfgunlock::framecount::g_latency_guard_multiplier_candidate.load(
-              std::memory_order_relaxed);
+          latency_view.multiplier_candidate;
       StatusSectionRow("GUARD DECISION");
       const char* action =
           explicit_source_cap
@@ -4920,8 +4895,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
               mfgunlock::latency::MultiplierTrialPhase::kIdle) {
         const auto blocker =
             static_cast<mfgunlock::latency::ResponsiveTrialBlocker>(
-                mfgunlock::framecount::g_latency_guard_trial_blocker.load(
-                    std::memory_order_relaxed));
+                latency_view.trial_blocker);
         StatusRow("Responsive eligibility",
                   ResponsiveTrialBlockerText(blocker),
                   blocker ==
@@ -4957,27 +4931,21 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                     kUiWarning);
         }
         const unsigned int baseline_samples =
-            mfgunlock::framecount::g_latency_guard_multiplier_baseline_samples.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_baseline_samples;
         const unsigned int trial_samples =
-            mfgunlock::framecount::g_latency_guard_multiplier_trial_samples.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_trial_samples;
         const std::string window_text =
             "baseline " + std::to_string(baseline_samples) +
             "/8; current " + std::to_string(trial_samples) + "/8";
         StatusRow("Measurement windows", window_text.c_str(), kUiMuted);
         const unsigned int baseline_pipeline =
-            mfgunlock::framecount::g_latency_guard_multiplier_baseline_pipeline_us.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_baseline_pipeline_us;
         const unsigned int baseline_p95 =
-            mfgunlock::framecount::g_latency_guard_multiplier_baseline_p95_us.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_baseline_p95_us;
         const unsigned int trial_pipeline =
-            mfgunlock::framecount::g_latency_guard_multiplier_trial_pipeline_us.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_trial_pipeline_us;
         const unsigned int trial_p95 =
-            mfgunlock::framecount::g_latency_guard_multiplier_trial_p95_us.load(
-                std::memory_order_relaxed);
+            latency_view.multiplier_trial_p95_us;
         if (baseline_pipeline != 0 && trial_pipeline != 0) {
           const std::string comparison =
               std::to_string(baseline_pipeline / 1000.0f).substr(0, 5) +
@@ -5797,6 +5765,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     const auto source_cap_origin =
         static_cast<mfgunlock::pacing::SourceCapConfigOrigin>(
             g_source_cap_config_origin.load(std::memory_order_relaxed));
+    const auto latency_view = mfgunlock::framecount::LatencyGuardSnapshot();
     std::ostringstream report;
     report << "MFG Unlock Diagnostics\n"
            << "Renderer: " << RenderApiName(render_api) << '\n'
@@ -5851,9 +5820,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                   std::memory_order_relaxed)
            << '\n'
            << "Timestamp units (0 unknown / 1 us / 2 QPC): "
-           << mfgunlock::framecount::g_latency_guard_units.load(std::memory_order_relaxed) << '\n'
+           << latency_view.units << '\n'
            << "Fresh completed frame count: "
-           << mfgunlock::framecount::g_latency_guard_new_frames.load(std::memory_order_relaxed) << '\n'
+           << latency_view.new_frames << '\n'
            << "Adaptive Quality Suite: "
            << (g_adaptive_quality.load(std::memory_order_relaxed)
                    ? mfgunlock::adaptivequality::ProfileName(adaptive_profile)
@@ -6029,126 +5998,97 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                    : "Off")) << '\n'
            << "Reflex marker health: "
            << MarkerHealthText(static_cast<mfgunlock::pacing::MarkerHealth>(
-                  mfgunlock::framecount::g_latency_guard_marker_health.load(
-                      std::memory_order_relaxed)))
+                  latency_view.marker_health))
            << '\n'
            << "Source timing validation: "
            << TimingValidationText(
-                  mfgunlock::framecount::g_latency_guard_timing_issue_mask.load(
-                      std::memory_order_relaxed))
+                  latency_view.timing_issue_mask)
            << "; queue timing "
-           << (mfgunlock::framecount::g_latency_guard_queue_timing_confident.load(
-                   std::memory_order_relaxed) ? "verified" : "unverified")
+           << (latency_view.queue_timing_confident ? "verified" : "unverified")
            << '\n'
            << "Estimated rendered/source FPS: "
-           << mfgunlock::framecount::g_latency_guard_estimated_source_fps.load(
-                  std::memory_order_relaxed)
+           << latency_view.estimated_source_fps
            << '\n'
            << "Estimated output FPS (not measured): "
-           << mfgunlock::framecount::g_latency_guard_projected_output_fps.load(
-                  std::memory_order_relaxed)
+           << latency_view.projected_output_fps
            << '\n'
            << "Simulation marker FPS: "
-           << mfgunlock::framecount::g_latency_guard_simulation_fps.load(
-                  std::memory_order_relaxed)
+           << latency_view.simulation_fps
            << '\n'
            << "Median render-queue wait (us): "
-           << mfgunlock::framecount::g_latency_guard_queue_wait_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.queue_wait_us
            << '\n'
            << "P95 render-queue wait (us): "
-           << mfgunlock::framecount::g_latency_guard_queue_p95_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.queue_p95_us
            << '\n'
            << "Estimated marker-to-GPU pipeline median/p95 (us; not end-to-end): "
-           << mfgunlock::framecount::g_latency_guard_pipeline_latency_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.pipeline_latency_us
            << '/'
-           << mfgunlock::framecount::g_latency_guard_pipeline_p95_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.pipeline_p95_us
            << '\n'
            << "Median input-to-GPU latency (us): "
-           << mfgunlock::framecount::g_latency_guard_input_to_gpu_end_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.input_to_gpu_end_us
            << '\n'
            << "Median GPU active work (us): "
-           << mfgunlock::framecount::g_latency_guard_gpu_active_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.gpu_active_us
            << '\n'
            << "Dominant observed latency stage: "
            << LatencyBottleneckText(
                   static_cast<mfgunlock::pacing::LatencyBottleneck>(
-                      mfgunlock::framecount::g_latency_guard_bottleneck.load(
-                          std::memory_order_relaxed)))
+                      latency_view.bottleneck))
            << '\n'
            << "Independent flip: "
-           << (!mfgunlock::framecount::g_latency_guard_iflip_known.load(
-                       std::memory_order_relaxed)
+           << (!latency_view.iflip_known
                    ? "Not reported"
-                   : (mfgunlock::framecount::g_latency_guard_iflip_active.load(
-                              std::memory_order_relaxed)
+                   : (latency_view.iflip_active
                           ? "Active" : "Inactive"))
            << '\n'
            << "Latency monitor sample cost (us): "
-           << mfgunlock::framecount::g_latency_guard_sample_cost_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.sample_cost_us
            << '\n'
            << "Automatic multiplier trial: "
-           << mfgunlock::framecount::g_latency_guard_multiplier_override.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_override
            << "x (0 = inactive; saved selection unchanged)\n"
            << "Responsive multiplier phase: "
            << MultiplierTrialPhaseText(
                   static_cast<mfgunlock::latency::MultiplierTrialPhase>(
-                      mfgunlock::framecount::g_latency_guard_multiplier_trial_phase.load(
-                          std::memory_order_relaxed)))
+                      latency_view.multiplier_trial_phase))
            << '\n'
            << "Responsive trial reason: "
            << ResponsiveTrialReasonText(
                   static_cast<mfgunlock::latency::ResponsiveTrialReason>(
-                      mfgunlock::framecount::g_latency_guard_multiplier_trial_reason.load(
-                          std::memory_order_relaxed)))
+                      latency_view.multiplier_trial_reason))
            << '\n'
            << "Responsive trial eligibility: "
            << ResponsiveTrialBlockerText(
                   static_cast<mfgunlock::latency::ResponsiveTrialBlocker>(
-                      mfgunlock::framecount::g_latency_guard_trial_blocker.load(
-                          std::memory_order_relaxed)))
+                      latency_view.trial_blocker))
            << '\n'
            << "Responsive multiplier saved/approved/candidate: "
            << mfgunlock::framecount::g_force_multiplier.load(
                   std::memory_order_relaxed)
            << 'x' << '/'
-           << mfgunlock::framecount::g_latency_guard_multiplier_approved.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_approved
            << 'x' << '/'
-           << mfgunlock::framecount::g_latency_guard_multiplier_candidate.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_candidate
            << "x\n"
            << "Responsive baseline/trial samples: "
-           << mfgunlock::framecount::g_latency_guard_multiplier_baseline_samples.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_baseline_samples
            << "/8; "
-           << mfgunlock::framecount::g_latency_guard_multiplier_trial_samples.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_trial_samples
            << "/8\n"
            << "Responsive baseline pipeline median/p95 (us): "
-           << mfgunlock::framecount::g_latency_guard_multiplier_baseline_pipeline_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_baseline_pipeline_us
            << '/'
-           << mfgunlock::framecount::g_latency_guard_multiplier_baseline_p95_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_baseline_p95_us
            << '\n'
            << "Responsive latest trial pipeline median/p95 (us): "
-           << mfgunlock::framecount::g_latency_guard_multiplier_trial_pipeline_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_trial_pipeline_us
            << '/'
-           << mfgunlock::framecount::g_latency_guard_multiplier_trial_p95_us.load(
-                  std::memory_order_relaxed)
+           << latency_view.multiplier_trial_p95_us
            << '\n'
            << "Automatic queue-trim cap: "
-           << mfgunlock::framecount::g_latency_guard_active_source_cap_fps.load(
-                  std::memory_order_relaxed)
+           << latency_view.active_source_cap_fps
            << '\n'
            << "DXGI frame-latency policy: "
            << (render_api == DetectedRenderApi::kVulkan

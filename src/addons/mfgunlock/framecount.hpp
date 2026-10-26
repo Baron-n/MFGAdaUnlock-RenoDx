@@ -248,6 +248,87 @@ inline std::atomic<unsigned int> g_latency_guard_clear_samples{0};
 inline std::atomic<unsigned int> g_latency_guard_candidate_cap_fps{0};
 inline std::atomic_bool g_latency_guard_refresh_pending{false};
 inline std::atomic<unsigned long long> g_latency_guard_ui_heartbeat_ms{0};
+
+// Plan 6.5: one coherent copy of the Latency Guard results for the panel and
+// the diagnostics report. The Present thread publishes it after each guard
+// update; the UI copies it once per draw instead of reading the separate
+// atomics above while the Present thread may be updating them, which could
+// show values from two different samples side by side. The mode is a user
+// setting and stays read from g_latency_guard_mode.
+struct LatencyGuardView {
+  bool sample_seen{}, iflip_known{}, iflip_active{}, oversubscribed{};
+  bool timing_confident{}, queue_timing_confident{}, multiplier_trial_accepted{};
+  unsigned int units{}, new_frames{}, display_refresh_fps{}, live_multiplier{};
+  unsigned int recommended_source_cap_fps{}, active_source_cap_fps{};
+  unsigned int estimated_source_fps{}, simulation_fps{}, projected_output_fps{};
+  unsigned int marker_health{}, timing_issue_mask{}, bottleneck{};
+  unsigned int queue_wait_us{}, queue_p95_us{}, gpu_active_us{};
+  unsigned int pipeline_latency_us{}, pipeline_p95_us{}, input_to_gpu_end_us{};
+  unsigned int ai_frame_time_us{}, sample_cost_us{};
+  unsigned int multiplier_override{}, multiplier_trial_phase{};
+  unsigned int multiplier_trial_reason{}, trial_blocker{};
+  unsigned int multiplier_approved{}, multiplier_candidate{};
+  unsigned int multiplier_baseline_samples{}, multiplier_trial_samples{};
+  unsigned int multiplier_baseline_pipeline_us{}, multiplier_baseline_p95_us{};
+  unsigned int multiplier_trial_pipeline_us{}, multiplier_trial_p95_us{};
+};
+inline SRWLOCK g_latency_guard_view_lock = SRWLOCK_INIT;
+inline LatencyGuardView g_latency_guard_view{};
+
+inline void PublishLatencyGuardView() {
+  constexpr auto r = std::memory_order_acquire;
+  LatencyGuardView v;
+  v.sample_seen = g_latency_guard_sample_seen.load(r);
+  v.iflip_known = g_latency_guard_iflip_known.load(r);
+  v.iflip_active = g_latency_guard_iflip_active.load(r);
+  v.oversubscribed = g_latency_guard_oversubscribed.load(r);
+  v.timing_confident = g_latency_guard_timing_confident.load(r);
+  v.queue_timing_confident = g_latency_guard_queue_timing_confident.load(r);
+  v.multiplier_trial_accepted = g_latency_guard_multiplier_trial_accepted.load(r);
+  v.units = g_latency_guard_units.load(r);
+  v.new_frames = g_latency_guard_new_frames.load(r);
+  v.display_refresh_fps = g_latency_guard_display_refresh_fps.load(r);
+  v.live_multiplier = g_latency_guard_live_multiplier.load(r);
+  v.recommended_source_cap_fps = g_latency_guard_recommended_source_cap_fps.load(r);
+  v.active_source_cap_fps = g_latency_guard_active_source_cap_fps.load(r);
+  v.estimated_source_fps = g_latency_guard_estimated_source_fps.load(r);
+  v.simulation_fps = g_latency_guard_simulation_fps.load(r);
+  v.projected_output_fps = g_latency_guard_projected_output_fps.load(r);
+  v.marker_health = g_latency_guard_marker_health.load(r);
+  v.timing_issue_mask = g_latency_guard_timing_issue_mask.load(r);
+  v.bottleneck = g_latency_guard_bottleneck.load(r);
+  v.queue_wait_us = g_latency_guard_queue_wait_us.load(r);
+  v.queue_p95_us = g_latency_guard_queue_p95_us.load(r);
+  v.gpu_active_us = g_latency_guard_gpu_active_us.load(r);
+  v.pipeline_latency_us = g_latency_guard_pipeline_latency_us.load(r);
+  v.pipeline_p95_us = g_latency_guard_pipeline_p95_us.load(r);
+  v.input_to_gpu_end_us = g_latency_guard_input_to_gpu_end_us.load(r);
+  v.ai_frame_time_us = g_latency_guard_ai_frame_time_us.load(r);
+  v.sample_cost_us = g_latency_guard_sample_cost_us.load(r);
+  v.multiplier_override = g_latency_guard_multiplier_override.load(r);
+  v.multiplier_trial_phase = g_latency_guard_multiplier_trial_phase.load(r);
+  v.multiplier_trial_reason = g_latency_guard_multiplier_trial_reason.load(r);
+  v.trial_blocker = g_latency_guard_trial_blocker.load(r);
+  v.multiplier_approved = g_latency_guard_multiplier_approved.load(r);
+  v.multiplier_candidate = g_latency_guard_multiplier_candidate.load(r);
+  v.multiplier_baseline_samples = g_latency_guard_multiplier_baseline_samples.load(r);
+  v.multiplier_trial_samples = g_latency_guard_multiplier_trial_samples.load(r);
+  v.multiplier_baseline_pipeline_us = g_latency_guard_multiplier_baseline_pipeline_us.load(r);
+  v.multiplier_baseline_p95_us = g_latency_guard_multiplier_baseline_p95_us.load(r);
+  v.multiplier_trial_pipeline_us = g_latency_guard_multiplier_trial_pipeline_us.load(r);
+  v.multiplier_trial_p95_us = g_latency_guard_multiplier_trial_p95_us.load(r);
+  AcquireSRWLockExclusive(&g_latency_guard_view_lock);
+  g_latency_guard_view = v;
+  ReleaseSRWLockExclusive(&g_latency_guard_view_lock);
+}
+
+inline LatencyGuardView LatencyGuardSnapshot() {
+  AcquireSRWLockShared(&g_latency_guard_view_lock);
+  const LatencyGuardView v = g_latency_guard_view;
+  ReleaseSRWLockShared(&g_latency_guard_view_lock);
+  return v;
+}
+
 // Policy source: 0 = native/no addon policy, 1 = explicit user output cap,
 // 2 = Latency Guard queue trim.
 inline std::atomic<unsigned int> g_reflex_limit_source{0};
