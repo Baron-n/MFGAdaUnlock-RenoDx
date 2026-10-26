@@ -131,7 +131,7 @@ Um PR por item.
 | 6.2 | Extrair `provider_patches` (gates, midpoint, thin geometry) do `addon.cpp` | 2 h | feito (`addon_provider.inl`) |
 | 6.3 | Extrair `streamline_patches` (teto, flip metering) | 1,5 h | feito (`addon_streamline.inl`) |
 | 6.4 | Extrair `discovery` (worker, varreduras) | 1,5 h | feito (`addon_discovery.inl`; as varreduras já estavam em `module_scan.hpp` desde o 5.1) |
-| 6.5 | Extrair `latency_guard` e publicar um snapshot único para a UI | 3 h | pendente |
+| 6.5 | Extrair `latency_guard` e publicar um snapshot único para a UI | 3 h | feito (`addon_latency.inl`, `LatencyGuardView`) |
 | 6.6 | Extrair o overlay (UI) | 3 h | pendente |
 | 6.7 | Limpezas: detecção de API duplicada, comentário repetido, atribuição redundante, `IsBadReadPtr` | 1 h | pendente |
 
