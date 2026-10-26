@@ -81,6 +81,37 @@ int main() {
   newer.structVersion = 4;
   CHECK(!Override(newer, K, out));
 
+  // Ray Reconstruction (plan B.6): D and E; presets exist only in version 3.
+  using sl::DLSSDPreset;
+  constexpr uint32_t E = static_cast<uint32_t>(DLSSDPreset::ePresetE);
+  CHECK(IsSelectableRr(0) && IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetD)) && IsSelectableRr(E));
+  CHECK(!IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetF)) && !IsSelectableRr(K));
+  sl::DLSSDOptions rr;
+  rr.mode = sl::DLSSMode::eBalanced;
+  rr.outputWidth = 2560;
+  rr.balancedPreset = DLSSDPreset::ePresetD;
+  rr.normalRoughnessMode = sl::DLSSDNormalRoughnessMode::ePacked;
+  CHECK(GamePresetRr(rr) == DLSSDPreset::ePresetD);
+  sl::DLSSDOptions rrOut;
+  CHECK(OverrideRr(rr, E, rrOut));
+  CHECK(rrOut.dlaaPreset == DLSSDPreset::ePresetE && rrOut.qualityPreset == DLSSDPreset::ePresetE &&
+        rrOut.balancedPreset == DLSSDPreset::ePresetE && rrOut.performancePreset == DLSSDPreset::ePresetE &&
+        rrOut.ultraPerformancePreset == DLSSDPreset::ePresetE && rrOut.ultraQualityPreset == DLSSDPreset::ePresetE);
+  CHECK(rrOut.mode == rr.mode && rrOut.outputWidth == 2560 &&
+        rrOut.normalRoughnessMode == sl::DLSSDNormalRoughnessMode::ePacked);
+  CHECK(rr.balancedPreset == DLSSDPreset::ePresetD);
+  for (uint32_t version : {sl::kStructVersion1, sl::kStructVersion2, sl::kStructVersion4}) {
+    sl::DLSSDOptions other = rr;
+    other.structVersion = version;
+    CHECK(!OverrideRr(other, E, rrOut));
+  }
+  sl::DLSSDOptions v2 = rr;
+  v2.structVersion = sl::kStructVersion2;
+  CHECK(GamePresetRr(v2) == DLSSDPreset::eDefault);
+  sl::DLSSDOptions rrOff = rr;
+  rrOff.mode = sl::DLSSMode::eOff;
+  CHECK(!OverrideRr(rrOff, E, rrOut) && !OverrideRr(rr, 0, rrOut));
+
   std::cout << "dlss_preset_tests passed\n";
   return 0;
 }

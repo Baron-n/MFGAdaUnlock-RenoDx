@@ -20,6 +20,7 @@
 
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h>
 
 namespace mfgunlock::dlsspreset {
 
@@ -85,6 +86,48 @@ inline std::atomic<uint32_t> g_status{static_cast<uint32_t>(Status::kNotSeen)};
 inline std::atomic<uint32_t> g_mode{0};
 inline std::atomic<uint32_t> g_game_preset{0};
 inline std::atomic<uint32_t> g_applied_preset{0};
+// DLSS Ray Reconstruction (plan B.6). Its presets were added in version 3 of
+// DLSSDOptions, and sl.dlss_d compares them (and recreates the feature) only
+// for a version-3 caller; versions 1 and 2 have no preset to change. The
+// selectable presets are D (default transformer) and E (latest transformer);
+// the others revert to the default.
+inline bool IsSelectableRr(uint32_t preset) {
+  return preset == 0 || preset == static_cast<uint32_t>(sl::DLSSDPreset::ePresetD) ||
+         preset == static_cast<uint32_t>(sl::DLSSDPreset::ePresetE);
+}
+
+inline sl::DLSSDPreset GamePresetRr(const sl::DLSSDOptions& options) {
+  if (options.structVersion < sl::kStructVersion3) return sl::DLSSDPreset::eDefault;
+  switch (options.mode) {
+    case sl::DLSSMode::eMaxPerformance: return options.performancePreset;
+    case sl::DLSSMode::eBalanced: return options.balancedPreset;
+    case sl::DLSSMode::eMaxQuality: return options.qualityPreset;
+    case sl::DLSSMode::eUltraPerformance: return options.ultraPerformancePreset;
+    case sl::DLSSMode::eUltraQuality: return options.ultraQualityPreset;
+    case sl::DLSSMode::eDLAA: return options.dlaaPreset;
+    default: return sl::DLSSDPreset::eDefault;
+  }
+}
+
+// As Override, for a version-3 DLSSDOptions only.
+inline bool OverrideRr(const sl::DLSSDOptions& in, uint32_t preset, sl::DLSSDOptions& out) {
+  if (preset == 0 || !IsSelectableRr(preset) || in.mode == sl::DLSSMode::eOff ||
+      in.structVersion != sl::kStructVersion3)
+    return false;
+  std::memcpy(static_cast<void*>(&out), &in, sizeof(out));
+  const auto value = static_cast<sl::DLSSDPreset>(preset);
+  out.dlaaPreset = out.qualityPreset = out.balancedPreset = out.performancePreset =
+      out.ultraPerformancePreset = out.ultraQualityPreset = value;
+  return true;
+}
+
+inline std::atomic<uint32_t> g_rr_selected{0};
+inline std::atomic<bool> g_rr_wrapped{false};
+inline std::atomic<uint32_t> g_rr_status{static_cast<uint32_t>(Status::kNotSeen)};
+inline std::atomic<uint32_t> g_rr_version{0};
+inline std::atomic<uint32_t> g_rr_game_preset{0};
+inline std::atomic<uint32_t> g_rr_applied_preset{0};
+
 // Games that create DLSS through NGX themselves (plan B.3): a feature
 // creation was seen, and the preset given to the last one (0 = the game's).
 inline std::atomic<bool> g_ngx_seen{false};

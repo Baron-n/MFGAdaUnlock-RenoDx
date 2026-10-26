@@ -11,6 +11,7 @@
 #include <wrl/client.h>
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h>
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <nvsdk_ngx.h>
@@ -179,6 +180,23 @@ int main() {
     sl::DLSSOptions srNewer=sr; srNewer.structVersion=4;
     Require(dlssOptions(viewport,srNewer)==sl::Result::eOk && dlssPreset(1)==uint32_t(sl::DLSSPreset::ePresetJ) && dlssVersion()==4,
         "an unknown DLSSOptions ABI was changed");
+
+    // 1.6 (plan B.6): DLSS Ray Reconstruction preset E selected (ReShade.ini).
+    auto rrOptions=reinterpret_cast<PFun_slDLSSDSetOptions*>(resolve(sl::kFeatureDLSS_RR,"slDLSSDSetOptions"));
+    Require(Owner(reinterpret_cast<void*>(rrOptions))==addon,"slDLSSDSetOptions was not wrapped by the DLSS-G backend");
+    const auto rrPreset=Import<uint32_t(*)(uint32_t)>(fixture,"FixtureRrPreset");
+    const auto rrVersion=Import<uint32_t(*)()>(fixture,"FixtureRrVersion");
+    const auto rrAll=[&](sl::DLSSDPreset p) { for(uint32_t slot=0;slot<6;++slot) if(rrPreset(slot)!=uint32_t(p)) return false; return true; };
+    sl::DLSSDOptions rr; rr.mode=sl::DLSSMode::eMaxQuality; rr.outputWidth=2560; rr.outputHeight=1440;
+    rr.qualityPreset=sl::DLSSDPreset::ePresetD;
+    Require(rrOptions(viewport,rr)==sl::Result::eOk && rrAll(sl::DLSSDPreset::ePresetE) && rrVersion()==sl::kStructVersion3,
+        "the selected Ray Reconstruction preset E did not reach every mode");
+    Require(rr.qualityPreset==sl::DLSSDPreset::ePresetD,"the game's Ray Reconstruction options were written");
+    // A version-2 structure has no presets: forwarded unchanged.
+    sl::DLSSDOptions rrV2=rr; rrV2.structVersion=sl::kStructVersion2;
+    Require(rrOptions(viewport,rrV2)==sl::Result::eOk && rrVersion()==sl::kStructVersion2 && rrPreset(1)==uint32_t(sl::DLSSDPreset::ePresetD),
+        "a version-2 Ray Reconstruction structure was changed");
+    std::cout<<"Ray Reconstruction quality preset game=D -> provider=E"<<std::endl;
 
     // Reflex without a configured cap: the game's options reach Streamline unchanged.
     sl::ReflexOptions reflex; reflex.mode=sl::ReflexMode::eLowLatency; reflex.frameLimitUs=16666;

@@ -2558,6 +2558,60 @@ inline sl::Result HookedDlssSetOptions(const sl::ViewportHandle& viewport,
   return result;
 }
 
+// 1.6 (plan B.6): the DLSS Ray Reconstruction preset selected in the panel.
+using DlssdSetOptionsFn = sl::Result (*)(const sl::ViewportHandle&, const sl::DLSSDOptions&);
+inline std::atomic<DlssdSetOptionsFn> g_real_dlssd_set_options{nullptr};
+
+inline sl::Result HookedDlssdSetOptions(const sl::ViewportHandle& viewport,
+                                        const sl::DLSSDOptions& options) {
+  const auto real = g_real_dlssd_set_options.load(std::memory_order_acquire);
+  if (real == nullptr) return sl::Result::eErrorNotInitialized;
+  using dlsspreset::Status;
+  const uint32_t selected = dlsspreset::g_rr_selected.load(std::memory_order_relaxed);
+  dlsspreset::g_rr_version.store(static_cast<uint32_t>(options.structVersion), std::memory_order_relaxed);
+  dlsspreset::g_rr_game_preset.store(static_cast<uint32_t>(dlsspreset::GamePresetRr(options)),
+                                     std::memory_order_relaxed);
+  sl::DLSSDOptions forwarded;
+  if (!g_addon_enabled.load(std::memory_order_relaxed) ||
+      !dlsspreset::OverrideRr(options, selected, forwarded)) {
+    // Versions 1 and 2 have no presets; a newer version is not known here.
+    const bool unchangeable = selected != 0 && options.mode != sl::DLSSMode::eOff &&
+                              options.structVersion != sl::kStructVersion3;
+    if (unchangeable &&
+        dlsspreset::g_rr_status.exchange(static_cast<uint32_t>(Status::kUnknownAbi)) !=
+            static_cast<uint32_t>(Status::kUnknownAbi)) {
+      std::stringstream s;
+      s << "mfgunlock: DLSSDOptions version " << static_cast<uint32_t>(options.structVersion)
+        << " has no Ray Reconstruction preset this build can change; forwarding the game's options unchanged.";
+      reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    } else if (!unchangeable) {
+      dlsspreset::g_rr_status.store(static_cast<uint32_t>(Status::kGame), std::memory_order_relaxed);
+      dlsspreset::g_rr_applied_preset.store(0, std::memory_order_relaxed);
+    }
+    return real(viewport, options);
+  }
+  const sl::Result result = real(viewport, forwarded);
+  if (result != sl::Result::eOk) {
+    if (dlsspreset::g_rr_status.exchange(static_cast<uint32_t>(Status::kRejected)) !=
+        static_cast<uint32_t>(Status::kRejected)) {
+      std::stringstream s;
+      s << "mfgunlock: slDLSSDSetOptions refused Ray Reconstruction preset " << selected
+        << " (sl::Result " << static_cast<unsigned int>(result) << "); forwarding the game's options.";
+      reshade::log::message(reshade::log::level::warning, s.str().c_str());
+    }
+    return real(viewport, options);
+  }
+  dlsspreset::g_rr_status.store(static_cast<uint32_t>(Status::kApplied), std::memory_order_relaxed);
+  if (dlsspreset::g_rr_applied_preset.exchange(selected, std::memory_order_relaxed) != selected) {
+    std::stringstream s;
+    s << "mfgunlock: DLSS Ray Reconstruction preset " << selected << " applied (game preset "
+      << static_cast<uint32_t>(dlsspreset::GamePresetRr(options))
+      << " for its mode); Streamline recreates the Ray Reconstruction feature.";
+    reshade::log::message(reshade::log::level::info, s.str().c_str());
+  }
+  return result;
+}
+
 inline sl::Result HookedGetFeatureFunction(sl::Feature feature, const char* function_name,
                                            void*& function) {
   const sl::Result result = g_real_get_feature_function(feature, function_name, function);
@@ -2570,6 +2624,17 @@ inline sl::Result HookedGetFeatureFunction(sl::Feature feature, const char* func
     if (!dlsspreset::g_wrapped.exchange(true, std::memory_order_relaxed)) {
       reshade::log::message(reshade::log::level::info,
           "mfgunlock: wrapped slDLSSSetOptions; the DLSS Super Resolution preset selector is live.");
+    }
+    return result;
+  }
+  if (feature == sl::kFeatureDLSS_RR && std::strcmp(function_name, "slDLSSDSetOptions") == 0 &&
+      function != reinterpret_cast<void*>(&HookedDlssdSetOptions)) {
+    g_real_dlssd_set_options.store(reinterpret_cast<DlssdSetOptionsFn>(function),
+                                   std::memory_order_release);
+    function = reinterpret_cast<void*>(&HookedDlssdSetOptions);
+    if (!dlsspreset::g_rr_wrapped.exchange(true, std::memory_order_relaxed)) {
+      reshade::log::message(reshade::log::level::info,
+          "mfgunlock: wrapped slDLSSDSetOptions; the DLSS Ray Reconstruction preset selector is live.");
     }
     return result;
   }

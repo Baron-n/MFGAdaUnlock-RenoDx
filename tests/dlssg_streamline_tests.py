@@ -22,7 +22,7 @@ for src,name in {args.addon:'renodx-mfgunlock-native.addon64',args.exe:args.exe.
     shutil.copy2(src,d/name)
 (d/'MFGAdaUnlock.ini').write_text('[Backend]\nSelected=DLSSG\n',encoding='ascii')
 (d/'ReShade.ini').write_text('[GENERAL]\nNoDebugInfo=1\n[OVERLAY]\nTutorialProgress=4\n'
-    '[RenoDX.MFGUnlock]\nEnabled=1\nForceMultiplier=4\nDlssSuperResolutionPreset=11\n',encoding='ascii')
+    '[RenoDX.MFGUnlock]\nEnabled=1\nForceMultiplier=4\nDlssSuperResolutionPreset=11\nDlssRayReconstructionPreset=5\n',encoding='ascii')
 ctypes.windll.kernel32.SetErrorMode(3)
 result=subprocess.run([str(d/args.exe.name)],cwd=d,capture_output=True,text=True,timeout=120,creationflags=0x08000000)
 log=(d/'ReShade.log').read_text(encoding='utf-8',errors='replace') if (d/'ReShade.log').exists() else ''

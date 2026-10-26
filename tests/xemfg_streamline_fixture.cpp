@@ -2,6 +2,7 @@
 // Streamline ABI fixture only. Rendering and XeFG/XeLL use the real D3D12 SDK.
 #include <sl.h>
 #include <sl_dlss.h>
+#include <sl_dlss_d.h>
 #include <sl_dlss_g.h>
 #include <sl_reflex.h>
 #include <sl_pcl.h>
@@ -72,6 +73,17 @@ EXPORT uint32_t FixtureDlssMode() { return dlssMode; }
 EXPORT uint32_t FixtureDlssWidth() { return dlssWidth; }
 EXPORT uint32_t FixtureDlssVersion() { return dlssVersion; }
 EXPORT uint32_t FixtureDlssPreset(uint32_t slot) { return slot<6?dlssPresets[slot].load():UINT32_MAX; }
+// 1.6 (plan B.6): the DLSS Ray Reconstruction options that reached the provider.
+static std::atomic<uint32_t> rrMode{UINT32_MAX},rrVersion{},rrPresets[6]{};
+static __declspec(noinline) sl::Result DlssdOptions(const sl::ViewportHandle&,const sl::DLSSDOptions& o) {
+  ++calls; rrMode=uint32_t(o.mode); rrVersion=uint32_t(o.structVersion);
+  const sl::DLSSDPreset presets[]={o.dlaaPreset,o.qualityPreset,o.balancedPreset,o.performancePreset,o.ultraPerformancePreset,o.ultraQualityPreset};
+  for(int i=0;i<6;++i) rrPresets[i]=uint32_t(presets[i]);
+  return sl::Result::eOk;
+}
+EXPORT uint32_t FixtureRrMode() { return rrMode; }
+EXPORT uint32_t FixtureRrVersion() { return rrVersion; }
+EXPORT uint32_t FixtureRrPreset(uint32_t slot) { return slot<6?rrPresets[slot].load():UINT32_MAX; }
 EXPORT uint32_t FixtureLastGenerated() { return lastGenerated; }
 EXPORT uint32_t FixtureLastOptionsVersion() { return lastOptionsVersion; }
 EXPORT void FixtureStateMax(uint32_t value) { stateMax=value; }
@@ -104,6 +116,7 @@ EXPORT sl::Result slGetFeatureFunction(sl::Feature,const char* name,void*& fn) {
   ++calls;
   if(unsupportedDlssg && !strncmp(name,"slDLSSG",7)) { fn=nullptr; return sl::Result::eErrorFeatureMissing; }
   if(!strcmp(name,"slDLSSSetOptions")) fn=reinterpret_cast<void*>(&DlssOptions);
+  else if(!strcmp(name,"slDLSSDSetOptions")) fn=reinterpret_cast<void*>(&DlssdOptions);
   else if(!strcmp(name,"slDLSSGSetOptions")) fn=reinterpret_cast<void*>(&Options);
   else if(!strcmp(name,"slDLSSGGetState")) fn=reinterpret_cast<void*>(&State);
   else if(!strcmp(name,"slReflexSetOptions")) fn=reinterpret_cast<void*>(&Reflex);

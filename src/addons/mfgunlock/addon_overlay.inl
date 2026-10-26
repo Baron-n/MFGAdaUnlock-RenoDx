@@ -3320,6 +3320,46 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
                                   static_cast<int>(kValues[index]));
       }
     }
+    // 1.6 (plan B.6): DLSS Ray Reconstruction preset, applied during play.
+    {
+      namespace preset = mfgunlock::dlsspreset;
+      constexpr const char* kPresets[] = {"Game default", "Preset D", "Preset E"};
+      constexpr uint32_t kValues[] = {0, static_cast<uint32_t>(sl::DLSSDPreset::ePresetD),
+          static_cast<uint32_t>(sl::DLSSDPreset::ePresetE)};
+      const uint32_t selected = preset::g_rr_selected.load(std::memory_order_relaxed);
+      int index = 0;
+      for (int i = 0; i < static_cast<int>(std::size(kValues)); ++i)
+        if (kValues[i] == selected) index = i;
+      const auto status = static_cast<preset::Status>(preset::g_rr_status.load(std::memory_order_relaxed));
+      const bool driver_override =
+          (nvapi_status.ngx.feedback_ray_reconstruction & mfgunlock::nvapistatus::kNgxOverridePreset) != 0;
+      const uint32_t game_preset = preset::g_rr_game_preset.load(std::memory_order_relaxed);
+      std::string summary;
+      if (!preset::g_rr_wrapped.load(std::memory_order_relaxed))
+        summary = "Waiting for the game's Ray Reconstruction options (games with DLSS Ray Reconstruction only).";
+      else if (status == preset::Status::kUnknownAbi)
+        summary = "This game's Ray Reconstruction options have no preset that can be changed; its own is kept.";
+      else if (status == preset::Status::kRejected)
+        summary = "Streamline refused the preset; the game's preset is kept.";
+      else if (status == preset::Status::kApplied)
+        summary = std::string("Applied: ") + kPresets[index] + ".";
+      else
+        summary = game_preset ? "The game's preset (" + std::string(1, static_cast<char>('A' + game_preset - 1)) + ")."
+                              : "The game's preset (DLSS default).";
+      if (driver_override) summary += " An NVIDIA App override is active and takes precedence.";
+      ImGui::TableNextRow();
+      ImGui::TableNextColumn();
+      SettingLabel(
+          "DLSS Ray Reconstruction preset", summary.c_str(),
+          "Replaces the game's DLSS Ray Reconstruction preset while you play. D is NVIDIA's default transformer model; E is the latest transformer model. Streamline rebuilds Ray Reconstruction when the preset changes, so the image resets for one frame. Only games that pass Ray Reconstruction presets to Streamline (options version 3) can be changed. A preset set in the NVIDIA App overrides this one.");
+      ImGui::TableNextColumn();
+      ImGui::SetNextItemWidth(-1.0f);
+      if (ImGui::Combo("##dlss_rr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {
+        preset::g_rr_selected.store(kValues[index], std::memory_order_relaxed);
+        reshade::set_config_value(nullptr, kConfigSection, "DlssRayReconstructionPreset",
+                                  static_cast<int>(kValues[index]));
+      }
+    }
 
     constexpr const char* kHdrModes[] = {
         "Native (Most Games)", "Force UI Composition (Advanced)",

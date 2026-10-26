@@ -981,6 +981,10 @@ void LoadConfig() {
   if (reshade::get_config_value(nullptr, kConfigSection, "DlssSuperResolutionPreset", value) &&
       value >= 0 && mfgunlock::dlsspreset::IsSelectable(static_cast<uint32_t>(value)))
     mfgunlock::dlsspreset::g_selected.store(static_cast<uint32_t>(value), std::memory_order_relaxed);
+  // 1.6 (plan B.6): 0 = the game's presets, else an sl::DLSSDPreset value (D, E).
+  if (reshade::get_config_value(nullptr, kConfigSection, "DlssRayReconstructionPreset", value) &&
+      value >= 0 && mfgunlock::dlsspreset::IsSelectableRr(static_cast<uint32_t>(value)))
+    mfgunlock::dlsspreset::g_rr_selected.store(static_cast<uint32_t>(value), std::memory_order_relaxed);
   legacy_fixed_output_cap_present = reshade::get_config_value(
       nullptr, kConfigSection, "FixedOutputFpsCap",
       legacy_fixed_output_cap);
