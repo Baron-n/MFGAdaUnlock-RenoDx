@@ -17,8 +17,8 @@ borderless quando o jogo pede fullscreen exclusivo na saída XeMFG.
 | 5 | Alt+Enter do DXGI bloqueado com a opção ligada | 45 min | feito |
 | 6 | Painel: opção, estado e aviso quando o jogo usa fullscreen exclusivo | 45 min | feito |
 | 7 | Conformidade: transição, primeiro frame e criação em fullscreen, com e sem a opção | 1,5 h | feito |
-| 8 | **[você]** Metro em fullscreen exclusivo com a opção; outro jogo sem a opção | 20 min | pendente |
-| R | Gate, notas, `FILEVERSION` (parado em 1,5,2,0), merge, tag e release | 1 h | pendente |
+| 8 | **[você]** Metro em fullscreen exclusivo com a opção; outro jogo sem a opção | 20 min | feito (Metro e Cyberpunk, 2026-10-26) |
+| R | Gate, notas, `FILEVERSION` (parado em 1,5,2,0), merge, tag e release | 1 h | feito (2026-10-26) |
 
 ## Registro
 
@@ -32,3 +32,8 @@ borderless quando o jogo pede fullscreen exclusivo na saída XeMFG.
   para em fullscreen e retoma em janela) e `exclusive-borderless`, `-first`, `-create` (com a opção:
   o jogo vê fullscreen, a janela cobre o monitor, a geração continua, a janela volta ao sair e o
   Alt+Enter é bloqueado). Os casos com a opção não trocam o modo do monitor.
+- **2026-10-26 · campo** Metro (fullscreen exclusivo, DLSS-SR, RenoDX HDR): com a opção ligada, o pedido de
+  fullscreen foi atendido como borderless e a geração ativou. Alt+Tab/Alt+Enter não testados em campo
+  (cobertos pelo caso automático). Cyberpunk (borderless, opção desligada): sem mudança.
+- **2026-10-26 · release 1.5.8** Gate 192/192 (3 skipped de proveniência). `FILEVERSION` 1,5,8,0 e teste
+  `xemfg_version_resource` para manter a versão numérica igual à de texto.

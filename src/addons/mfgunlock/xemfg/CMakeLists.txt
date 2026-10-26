@@ -13,6 +13,8 @@ foreach(required IN ITEMS embedded_xess_programs.generated.h embedded_xess_progr
 endforeach()
 configure_file(notices.rc.in "${CMAKE_CURRENT_BINARY_DIR}/notices.rc" @ONLY)
 configure_file(native_notices.rc.in "${CMAKE_CURRENT_BINARY_DIR}/native_notices.rc" @ONLY)
+add_test(NAME xemfg_version_resource COMMAND "${CMAKE_COMMAND}" -DRC=${CMAKE_CURRENT_SOURCE_DIR}/native_notices.rc.in
+  -P "${CMAKE_SOURCE_DIR}/version_resource_check.cmake")
 set(XEMFG_MODEL_SOURCES backend.cpp
   vendor/host_unlock.cpp vendor/runtime_payload.cpp vendor/sdk_pacing.cpp vendor/cuda/cuda_route.cpp
   vendor/third_party/minhook/src/buffer.c vendor/third_party/minhook/src/hook.c
