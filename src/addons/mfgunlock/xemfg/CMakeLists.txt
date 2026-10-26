@@ -263,7 +263,10 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
   set(XEMFG_CONFORMANCE reflex-v2 reflex-next constants-v3 tag-next backbuffer-subrect
     menu-viewport-first late-interposer sl1-interposer sleep-gap constant-sleep-token late-interposer-hooked
     unsupported-dlssg learned-depth scrgb-output native-game-xefg ffx-adapter dlss-sr-adapter dlss-sr-default-off duplicate-tags reserved-state hud-srgb hud-typeless display-cap scrgb-hudless game-xefg-probe ffx-with-streamline
-    ffx-with-reflex ffx-with-dlssg)
+    ffx-with-reflex ffx-with-dlssg
+    # 1.5.8: exclusive fullscreen on a DLSS-SR output (Metro Exodus report),
+    # kept by the game and served as borderless.
+    exclusive-transition exclusive-first exclusive-borderless exclusive-borderless-first exclusive-borderless-create)
   set(XEMFG_BACKLOG)
   foreach(case IN LISTS XEMFG_CONFORMANCE)
     set(fixture $<TARGET_FILE:xemfg_streamline_fixture>)
@@ -275,7 +278,7 @@ if(XEMFG_OFFLINE_RESHADE AND XEMFG_OFFLINE_FG AND XEMFG_OFFLINE_LL)
     if(case MATCHES "^ffx-")
       set(extra --ffx-fixture $<TARGET_FILE:xemfg_ffx_fixture>)
     endif()
-    if(case STREQUAL "dlss-sr-adapter" OR case STREQUAL "dlss-sr-default-off")
+    if(case STREQUAL "dlss-sr-adapter" OR case STREQUAL "dlss-sr-default-off" OR case MATCHES "^exclusive-")
       # No Streamline in this process: a dedicated NGX game executable.
       set(extra --ngx-fixture $<TARGET_FILE:xemfg_ngx_fixture>)
       set(executable $<TARGET_FILE:xemfg_ngx_smoke>)
