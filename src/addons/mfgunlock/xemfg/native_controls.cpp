@@ -126,14 +126,27 @@ ControlStatus ControlsSnapshot() {
   auto output=Active();
   void* pacingHandle{};
   if(output) {
+    // The panel must not wait for a presenting thread, so it only tries the
+    // lock. When it is busy (often at 4x and above), the last values read
+    // from this output are shown instead of defaults; defaults made the HUD
+    // and pacing lines, and the rows below them, flicker (1.5.7).
+    struct LastRead {
+      uint64_t output{}; void* pacing{};
+      bool available{},applied{},known{}; int result{}; uint64_t updates{};
+    };
+    static std::mutex lastLock; static LastRead last;
     std::unique_lock guard(output->io,std::try_to_lock);
-    if(guard.owns_lock()) {
-      pacingHandle=output->fg;
-      result.uiCompositionAvailable=output->uiCompositionAvailable;
-      result.uiCompositionApplied=output->uiCompositionApplied;
-      result.uiCompositionKnown=output->uiCompositionKnown;
-      result.uiCompositionResult=output->uiCompositionResult;
-      result.uiCompositionUpdates=output->uiCompositionUpdates;
+    std::lock_guard lastGuard(lastLock);
+    if(guard.owns_lock())
+      last={output->diagnosticOutput,output->fg,output->uiCompositionAvailable,output->uiCompositionApplied,
+          output->uiCompositionKnown,output->uiCompositionResult,output->uiCompositionUpdates};
+    if(last.output==output->diagnosticOutput) {
+      pacingHandle=last.pacing;
+      result.uiCompositionAvailable=last.available;
+      result.uiCompositionApplied=last.applied;
+      result.uiCompositionKnown=last.known;
+      result.uiCompositionResult=last.result;
+      result.uiCompositionUpdates=last.updates;
     }
   }
   if(output && output->window) result.window=output->window->Snapshot();
