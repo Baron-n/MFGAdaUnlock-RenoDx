@@ -242,6 +242,13 @@ add_test(NAME module_scan_tests COMMAND module_scan_tests)
 add_library(loader_notification_probe_dll SHARED loader_notification_probe_dll.cpp)
 add_executable(loader_notification_probe loader_notification_probe.cpp)
 add_test(NAME loader_notification_probe COMMAND loader_notification_probe $<TARGET_FILE:loader_notification_probe_dll>)
+# Plan 5.4: loadhook's notification reports a provider loaded through LdrLoadDll.
+add_executable(loader_notification_dlssg_tests loader_notification_dlssg_tests.cpp)
+target_compile_definitions(loader_notification_dlssg_tests PRIVATE NOMINMAX)
+target_include_directories(loader_notification_dlssg_tests SYSTEM PRIVATE
+  $<TARGET_PROPERTY:mfgunlock_addon_compile,INCLUDE_DIRECTORIES>)
+target_link_libraries(loader_notification_dlssg_tests PRIVATE ${MFGUNLOCK_NATIVE_LIBRARIES})
+add_test(NAME loader_notification_dlssg COMMAND loader_notification_dlssg_tests $<TARGET_FILE:loader_notification_probe_dll>)
 add_executable(runtime_version_tests runtime_version_tests.cpp)
 add_test(NAME runtime_version_tests COMMAND runtime_version_tests)
 add_executable(validation_status_tests validation_status_tests.cpp)

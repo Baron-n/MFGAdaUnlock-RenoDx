@@ -35,6 +35,7 @@
 
 #include <atomic>
 #include <array>
+#include <cstring>
 #include <cwctype>
 #include <vector>
 
@@ -56,6 +57,13 @@ inline void (*g_on_interposer_loaded)() = nullptr;
 inline std::atomic_bool g_hooked{false};
 inline std::atomic_bool g_installing{false};
 inline std::atomic<unsigned int> g_catches{0};
+// 1.5.7: the loader notification sees every mapped module, also one loaded
+// through ntdll!LdrLoadDll directly (past the kernel32 hooks), and before its
+// DllMain (plan 5.3, loader_notification_probe). Runs UNDER THE LOADER LOCK:
+// the callback must not enumerate modules or take ReShade's log lock.
+inline void (*g_on_dlssg_mapped)(HMODULE) = nullptr;
+inline std::atomic_bool g_notification_registered{false};
+inline std::atomic<unsigned int> g_notification_catches{0};
 
 namespace internal {
 
@@ -119,6 +127,26 @@ inline void Notify(HMODULE module, const wchar_t* path) {
   }
 }
 
+struct UnicodeString { USHORT Length, MaximumLength; PWSTR Buffer; };
+struct NotificationData { ULONG Flags; const UnicodeString* FullDllName; const UnicodeString* BaseDllName; PVOID DllBase; ULONG SizeOfImage; };
+using NotificationCallback = VOID(CALLBACK*)(ULONG, const NotificationData*, PVOID);
+using RegisterNotification = LONG(NTAPI*)(ULONG, NotificationCallback, PVOID, PVOID*);
+using UnregisterNotification = LONG(NTAPI*)(PVOID);
+inline PVOID g_notification_cookie = nullptr;
+
+inline VOID CALLBACK LoaderNotification(ULONG reason, const NotificationData* data, PVOID) {
+  constexpr ULONG kLoaded = 1;
+  if (reason != kLoaded || data == nullptr || data->DllBase == nullptr || data->FullDllName == nullptr ||
+      data->FullDllName->Buffer == nullptr || g_on_dlssg_mapped == nullptr) return;
+  // The name is not terminated; copy it to the stack (no heap in this path).
+  std::array<wchar_t, 1024> path{};
+  const size_t length = (std::min)(size_t(data->FullDllName->Length / sizeof(wchar_t)), path.size() - 1);
+  std::memcpy(path.data(), data->FullDllName->Buffer, length * sizeof(wchar_t));
+  if (!NameContains(path.data(), kNeedle) && !NameContains(path.data(), kOtaNeedle)) return;
+  g_notification_catches.fetch_add(1, std::memory_order_relaxed);
+  g_on_dlssg_mapped(static_cast<HMODULE>(data->DllBase));
+}
+
 using LoadLibraryExWFn = HMODULE(WINAPI*)(LPCWSTR, HANDLE, DWORD);
 using LoadLibraryWFn = HMODULE(WINAPI*)(LPCWSTR);
 
@@ -150,7 +178,19 @@ inline const std::vector<hook::HookItem> kHooks = {
 
 }  // namespace internal
 
+inline void TryRegisterNotification() {
+  if (g_on_dlssg_mapped == nullptr || g_notification_registered.exchange(true, std::memory_order_acq_rel)) return;
+  const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+  const auto reg = ntdll == nullptr ? nullptr : reinterpret_cast<internal::RegisterNotification>(
+      reinterpret_cast<void*>(GetProcAddress(ntdll, "LdrRegisterDllNotification")));
+  if (reg == nullptr || reg(0, &internal::LoaderNotification, nullptr, &internal::g_notification_cookie) < 0) {
+    internal::g_notification_cookie = nullptr;
+    g_notification_registered.store(false, std::memory_order_release);
+  }
+}
+
 inline void TryInstall() {
+  TryRegisterNotification();
   if (g_hooked.load(std::memory_order_acquire)) return;
   if (g_on_dlssg_loaded == nullptr) return;
   bool expected = false;
@@ -172,6 +212,17 @@ inline void TryInstall() {
 }
 
 inline void Uninstall() {
+  // Unregistering takes the loader lock, so no callback is running into this
+  // module once it returns; explicit addon unload must not leave it behind.
+  if (g_notification_registered.load(std::memory_order_acquire) && internal::g_notification_cookie != nullptr) {
+    const HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    const auto unreg = ntdll == nullptr ? nullptr : reinterpret_cast<internal::UnregisterNotification>(
+        reinterpret_cast<void*>(GetProcAddress(ntdll, "LdrUnregisterDllNotification")));
+    if (unreg != nullptr && unreg(internal::g_notification_cookie) >= 0) {
+      internal::g_notification_cookie = nullptr;
+      g_notification_registered.store(false, std::memory_order_release);
+    }
+  }
   if (!g_hooked.load(std::memory_order_acquire)) return;
   if (!hook::Uninstall(internal::kHooks)) return;
   g_hooked.store(false, std::memory_order_release);
