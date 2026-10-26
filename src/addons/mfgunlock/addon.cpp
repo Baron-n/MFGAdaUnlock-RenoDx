@@ -138,6 +138,7 @@
 #include "./nvapi_status.hpp"
 #include "./ngx_hook.hpp"
 #include "./ngx_param_vtable.hpp"
+#include "./module_scan.hpp"
 #include "./cuda_temporal.hpp"
 #include "./quality_build_policy.hpp"
 #include "./pacing_policy.hpp"
@@ -630,24 +631,21 @@ SRWLOCK g_provider_maintenance_lock = SRWLOCK_INIT;
 std::atomic_bool g_provider_rescan_requested{false};
 
 bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
-  auto* base = reinterpret_cast<unsigned char*>(mod);
-  const auto* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-  if (IsBadReadPtr(base, sizeof(IMAGE_DOS_HEADER)) != 0) return false;
-  if (dos->e_magic != IMAGE_DOS_SIGNATURE) return false;
-  const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-  if (nt->Signature != IMAGE_NT_SIGNATURE) return false;
-  if (nt->OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR64_MAGIC) return false;
+  return mfgunlock::modulescan::ImageContains(mod, needle, needle_len);
+}
 
-  const auto* section = IMAGE_FIRST_SECTION(nt);
-  for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++section) {
-    if ((section->Characteristics & IMAGE_SCN_MEM_READ) == 0) continue;
-    unsigned char* start = base + section->VirtualAddress;
-    const size_t size = section->Misc.VirtualSize;
-    if (size < needle_len) continue;
-    for (size_t off = 0; off + needle_len <= size; ++off) {
-      if (std::memcmp(start + off, needle, needle_len) == 0) return true;
-    }
-  }
+// Modules searched for a marker that do not contain it. A module that does
+// contain it is retried, since its session may fail only transiently. Updated
+// under g_streamline_maintenance_lock.
+mfgunlock::modulescan::SearchedImages g_ceiling_searched, g_flip_searched;
+
+// True when the module has not been searched before and contains the marker.
+bool UnsearchedModuleContains(mfgunlock::modulescan::SearchedImages& searched, HMODULE mod,
+                              const char* needle, size_t needle_len) {
+  mfgunlock::modulescan::ImageIdentity identity;
+  if (!mfgunlock::modulescan::ReadIdentity(mod, identity) || searched.Contains(identity)) return false;
+  if (ModuleContains(mod, needle, needle_len)) return true;
+  searched.Add(identity);
   return false;
 }
 
@@ -1513,7 +1511,8 @@ void TryPatchFrameCountCeiling() {
         if (Module32FirstW(snap, &me)) {
           do {
             if (me.hModule == g_self_module ||
-                !ModuleContains(me.hModule, kFlipMarker, sizeof(kFlipMarker) - 1)) {
+                !UnsearchedModuleContains(g_ceiling_searched, me.hModule, kFlipMarker,
+                                          sizeof(kFlipMarker) - 1)) {
               continue;
             }
             PatchFrameCountCeiling(me.hModule);
@@ -1572,6 +1571,10 @@ void TryPatchFlipMeteringUnlocked() {
   if (Module32FirstW(snap, &me)) {
     do {
       if (me.hModule == g_self_module) continue;
+      // Only the DLSS-G plugin carries the marker. Profiles validate a module
+      // by hashing its whole code, so unrelated modules never reach them.
+      if (!UnsearchedModuleContains(g_flip_searched, me.hModule, kFlipMarker, sizeof(kFlipMarker) - 1))
+        continue;
       if (TryPatchFlipMeteringInModule(me.hModule)) break;
     } while (Module32NextW(snap, &me));
   }
