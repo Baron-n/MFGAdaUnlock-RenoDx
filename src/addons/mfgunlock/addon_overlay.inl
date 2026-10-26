@@ -3323,9 +3323,9 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
     // 1.6 (plan B.6): DLSS Ray Reconstruction preset, applied during play.
     {
       namespace preset = mfgunlock::dlsspreset;
-      constexpr const char* kPresets[] = {"Game default", "Preset D", "Preset E"};
+      constexpr const char* kPresets[] = {"Game default", "Preset D", "Preset E", "Preset F (DLSS 4.5)"};
       constexpr uint32_t kValues[] = {0, static_cast<uint32_t>(sl::DLSSDPreset::ePresetD),
-          static_cast<uint32_t>(sl::DLSSDPreset::ePresetE)};
+          static_cast<uint32_t>(sl::DLSSDPreset::ePresetE), static_cast<uint32_t>(sl::DLSSDPreset::ePresetF)};
       const uint32_t selected = preset::g_rr_selected.load(std::memory_order_relaxed);
       int index = 0;
       for (int i = 0; i < static_cast<int>(std::size(kValues)); ++i)
@@ -3351,7 +3351,7 @@ void OnRegisterOverlay(reshade::api::effect_runtime* runtime) {
       ImGui::TableNextColumn();
       SettingLabel(
           "DLSS Ray Reconstruction preset", summary.c_str(),
-          "Replaces the game's DLSS Ray Reconstruction preset while you play. D is NVIDIA's default transformer model; E is the latest transformer model. Streamline rebuilds Ray Reconstruction when the preset changes, so the image resets for one frame. Only games that pass Ray Reconstruction presets to Streamline (options version 3) can be changed. A preset set in the NVIDIA App overrides this one.");
+          "Replaces the game's DLSS Ray Reconstruction preset while you play. D is NVIDIA's default transformer model and E a later transformer model; F is the DLSS 4.5 model and needs a recent Ray Reconstruction runtime (an older one uses its default instead). Streamline rebuilds Ray Reconstruction when the preset changes, so the image resets for one frame. Only games that pass Ray Reconstruction presets to Streamline (options version 3) can be changed. A preset set in the NVIDIA App overrides this one.");
       ImGui::TableNextColumn();
       ImGui::SetNextItemWidth(-1.0f);
       if (ImGui::Combo("##dlss_rr_preset", &index, kPresets, static_cast<int>(std::size(kPresets)))) {

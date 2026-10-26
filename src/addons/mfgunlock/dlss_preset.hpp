@@ -89,11 +89,13 @@ inline std::atomic<uint32_t> g_applied_preset{0};
 // DLSS Ray Reconstruction (plan B.6). Its presets were added in version 3 of
 // DLSSDOptions, and sl.dlss_d compares them (and recreates the feature) only
 // for a version-3 caller; versions 1 and 2 have no preset to change. The
-// selectable presets are D (default transformer) and E (latest transformer);
-// the others revert to the default.
+// selectable presets are D (default transformer), E (transformer) and F (the
+// DLSS 4.5 model, offered by the NVIDIA App; Streamline 2.14 headers still
+// list F as reverting to the default, which is what an older Ray
+// Reconstruction runtime does with it).
 inline bool IsSelectableRr(uint32_t preset) {
-  return preset == 0 || preset == static_cast<uint32_t>(sl::DLSSDPreset::ePresetD) ||
-         preset == static_cast<uint32_t>(sl::DLSSDPreset::ePresetE);
+  return preset == 0 || (preset >= static_cast<uint32_t>(sl::DLSSDPreset::ePresetD) &&
+                         preset <= static_cast<uint32_t>(sl::DLSSDPreset::ePresetF));
 }
 
 inline sl::DLSSDPreset GamePresetRr(const sl::DLSSDOptions& options) {

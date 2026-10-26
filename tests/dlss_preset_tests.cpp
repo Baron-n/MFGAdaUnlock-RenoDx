@@ -81,11 +81,12 @@ int main() {
   newer.structVersion = 4;
   CHECK(!Override(newer, K, out));
 
-  // Ray Reconstruction (plan B.6): D and E; presets exist only in version 3.
+  // Ray Reconstruction (plan B.6): D, E and F (DLSS 4.5); presets exist only in version 3.
   using sl::DLSSDPreset;
   constexpr uint32_t E = static_cast<uint32_t>(DLSSDPreset::ePresetE);
-  CHECK(IsSelectableRr(0) && IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetD)) && IsSelectableRr(E));
-  CHECK(!IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetF)) && !IsSelectableRr(K));
+  CHECK(IsSelectableRr(0) && IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetD)) && IsSelectableRr(E) &&
+        IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetF)));
+  CHECK(!IsSelectableRr(static_cast<uint32_t>(DLSSDPreset::ePresetG)) && !IsSelectableRr(K));
   sl::DLSSDOptions rr;
   rr.mode = sl::DLSSMode::eBalanced;
   rr.outputWidth = 2560;
