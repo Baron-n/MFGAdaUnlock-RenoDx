@@ -634,32 +634,6 @@ bool ModuleContains(HMODULE mod, const char* needle, size_t needle_len) {
   return mfgunlock::modulescan::ImageContains(mod, needle, needle_len);
 }
 
-// 1.5.7: lines logged while the loader notification runs (under the loader
-// lock) are queued; ReShade's log takes its own lock, which must not be taken
-// there. The next caller outside the loader lock writes them.
-thread_local bool t_in_loader_notification = false;
-SRWLOCK g_deferred_log_lock = SRWLOCK_INIT;
-std::vector<std::pair<reshade::log::level, std::string>> g_deferred_log;
-
-void Log(reshade::log::level level, const char* text) {
-  if (!t_in_loader_notification) {
-    reshade::log::message(level, text);
-    return;
-  }
-  AcquireSRWLockExclusive(&g_deferred_log_lock);
-  if (g_deferred_log.size() < 64) g_deferred_log.emplace_back(level, text);
-  ReleaseSRWLockExclusive(&g_deferred_log_lock);
-}
-
-void FlushDeferredLog() {
-  if (t_in_loader_notification) return;
-  std::vector<std::pair<reshade::log::level, std::string>> lines;
-  AcquireSRWLockExclusive(&g_deferred_log_lock);
-  lines.swap(g_deferred_log);
-  ReleaseSRWLockExclusive(&g_deferred_log_lock);
-  for (const auto& line : lines) reshade::log::message(line.first, line.second.c_str());
-}
-
 // Modules searched for a marker that do not contain it. A module that does
 // contain it is retried, since its session may fail only transiently. Updated
 // under g_streamline_maintenance_lock.
@@ -773,7 +747,7 @@ void PatchArchGatesInModule(HMODULE mod) {
       !mfgunlock::binarypatch::Apply(mod, transaction.writes)) {
     if (mfgunlock::pointerredirect::Pending(transaction.writes)) g_gate_transactions.push_back(std::move(transaction));
     g_gate_rejected_modules.push_back(mod);
-    Log(reshade::log::level::warning,
+    reshade::log::message(reshade::log::level::warning,
         "mfgunlock: architecture gate refused: executable identity, instruction preflight or transaction failed.");
     return;
   }
@@ -787,7 +761,7 @@ void PatchArchGatesInModule(HMODULE mod) {
       << "; PE timestamp=0x" << session->identity.timestamp << std::dec
       << "; image bytes=" << session->identity.image_size
       << "; candidate identity does not prove active feature selection.";
-  Log(reshade::log::level::info, identity_log.str().c_str());
+  reshade::log::message(reshade::log::level::info, identity_log.str().c_str());
 }
 
 void TryPatchDlssgArchGate() {
@@ -1246,30 +1220,7 @@ void TryPatchMidpoint() {
 // serialize vector updates and patch bookkeeping. A loader callback must not
 // wait here: if maintenance is already in progress it requests another pass
 // and returns, avoiding a lock-order inversion with the Windows loader lock.
-// 1.5.7: the provider as the loader maps it, before its DllMain and before
-// NGX can query it (loadhook g_on_dlssg_mapped, under the loader lock). Only
-// the architecture gates are committed here; the kernel patches follow in
-// ProcessLoadedDlssgModule once LoadLibrary returns, or in the next pass.
-void ProcessMappedDlssgModule(HMODULE mod) {
-  if (!g_enabled.load(std::memory_order_relaxed)) return;
-  if (!TryAcquireSRWLockExclusive(&g_provider_maintenance_lock)) {
-    g_provider_rescan_requested.store(true, std::memory_order_release);
-    return;
-  }
-  t_in_loader_notification = true;
-  const bool before = std::find(g_gate_modules.begin(), g_gate_modules.end(), mod) != g_gate_modules.end();
-  RememberDlssgModule(mod);
-  PatchArchGatesInModule(mod);
-  if (!before && std::find(g_gate_modules.begin(), g_gate_modules.end(), mod) != g_gate_modules.end())
-    Log(reshade::log::level::info,
-        "mfgunlock: architecture gates committed from the loader notification, before the provider's DllMain.");
-  t_in_loader_notification = false;
-  ReleaseSRWLockExclusive(&g_provider_maintenance_lock);
-  g_provider_rescan_requested.store(true, std::memory_order_release);
-}
-
 void ProcessLoadedDlssgModule(HMODULE mod) {
-  FlushDeferredLog();
   if (!TryAcquireSRWLockExclusive(&g_provider_maintenance_lock)) {
     g_provider_rescan_requested.store(true, std::memory_order_release);
     return;
@@ -1287,7 +1238,6 @@ void ProcessLoadedDlssgModule(HMODULE mod) {
 }
 
 void RunProviderMaintenance() {
-  FlushDeferredLog();
   std::vector<HMODULE> version_candidates;
   AcquireSRWLockExclusive(&g_provider_maintenance_lock);
   DiscoverDlssgModules();
@@ -8112,7 +8062,6 @@ BOOL APIENTRY DllMain(HMODULE h_module, DWORD fdw_reason, LPVOID lpv_reserved) {
       mfgunlock::loadhook::g_on_interposer_loaded = []() { mfgunlock::framecount::TryInstall(); };
       mfgunlock::loadhook::g_on_dlssg_loaded = ProcessLoadedDlssgModule;
       mfgunlock::loadhook::g_on_dlssg_plugin_loaded = ProcessLoadedStreamlineDlssgPlugin;
-      mfgunlock::loadhook::g_on_dlssg_mapped = ProcessMappedDlssgModule;
       mfgunlock::loadhook::TryInstall();
       RunProviderMaintenance();
       TryPatchFrameCountCeiling();
