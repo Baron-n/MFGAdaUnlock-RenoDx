@@ -105,11 +105,11 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 5.1 | Busca de marcador com cache de módulos inspecionados e busca rápida | teste unitário da busca; contagem de varreduras por módulo = 1 | 1 h | pendente |
-| 5.2 | `OnInitDevice`/`OnInitCommandQueue` só sinalizam o worker | teste: nenhuma varredura na thread chamadora | 1 h | pendente |
-| 5.3 | Sonda: `LdrRegisterDllNotification` dispara antes do DllMain de uma DLL de teste? | resultado registrado; decide o 5.4 | 45 min | pendente |
-| 5.4 | Detecção por notificação (patch dentro do callback, sem varredura), mantendo o hook de `LoadLibrary` como reserva | teste com DLL carregada por `LdrLoadDll` direto | 1,5 h | pendente |
-| 5.5 | **[você]** DLSS-G em 2 jogos (ex.: Cyberpunk, Alan Wake 2): MFG liberado de primeira, startup sem travadas | log mostra o patch antes do primeiro `SetOptions` | 30 min | pendente |
+| 5.1 | Busca de marcador com cache de módulos inspecionados e busca rápida | teste unitário da busca; contagem de varreduras por módulo = 1 | 1 h | feito (`5c125c7`) |
+| 5.2 | `OnInitDevice`/`OnInitCommandQueue` só sinalizam o worker | teste: nenhuma varredura na thread chamadora | 1 h | feito com mudança: continua síncrona e passa a ser medida (`dd79354`; ver registro) |
+| 5.3 | Sonda: `LdrRegisterDllNotification` dispara antes do DllMain de uma DLL de teste? | resultado registrado; decide o 5.4 | 45 min | feito (`9eae117`) |
+| 5.4 | Detecção por notificação (patch dentro do callback, sem varredura), mantendo o hook de `LoadLibrary` como reserva | teste com DLL carregada por `LdrLoadDll` direto | 1,5 h | feito (`e4c7c06`) |
+| 5.5 | **[você]** DLSS-G em 2 jogos (ex.: Cyberpunk, Alan Wake 2): MFG liberado de primeira, startup sem travadas | log mostra o patch antes do primeiro `SetOptions` | 30 min | em andamento |
 
 ### Release 1.5.7
 
@@ -178,4 +178,10 @@ Um PR por item.
 - **2026-10-25 · 4.1/4.9, KCD2 (3x, adaptador DLSS-SR)** Desligado: jogo 80,8 FPS, 251 exibidos, p95/p50 1,45, 21 picos, latência 24,3/32,8 ms. Ligado: jogo 73,4 FPS, 231 exibidos, p95/p50 1,50, 29 picos, latência 22,5/31,0 ms. Regularidade medida igual ou um pouco pior (rota DLSS-SR já irregular; mundo aberto varia entre capturas), latência melhor; o usuário sentiu melhora. O aviso apareceu.
 - **2026-10-25 · 4.8, Cyberpunk (4x)** HUD-less `R8G8B8A8_TYPELESS` convertido (`copied: true`, caminho volátil na lista do produtor); UI Composition aplicado com ele (`enabled: 1`, resultado 0); FG a 4x sem erros. O usuário preferiu sem o UI Composition (com ele o HUD fica na taxa real, não interpolado), o que confirma o padrão desligado.
 - **2026-10-25 · bloco 4 concluído** Candidato `0caf3dd` instalado no Plague Tale (com `DisplayCap=1`), no KCD2 e no Cyberpunk; backups `*.before-1.5.7.bak`. Gate final do bloco: 184/184 (Alto desempenho). Próximo: bloco 5 (DLSS-G, startup e detecção) e depois a release 1.5.7.
+- **2026-10-25 · bloco 5** Branch `perf/dlssg-startup`, empilhada sobre a do bloco 4 (vão juntos na 1.5.7).
+- **2026-10-25 · 5.1** (`5c125c7`) `module_scan.hpp`: busca Boyer-Moore-Horspool nas seções legíveis e registro das imagens já buscadas (endereço + timestamp + tamanho). O teto do plugin e o flip metering legado pulam módulos já buscados sem o marcador; o flip metering só perfila módulos com o marcador. Achado no caminho: `ProfileFor` revalida hasheando o código inteiro e as sessões têm teto de 64, então o flip metering legado podia nem chegar ao `sl.dlss_g` em jogos com muitos módulos. Matriz 185/185.
+- **2026-10-25 · 5.2 mudou** Mover a manutenção de `OnInitDevice`/`OnInitCommandQueue` para o worker quebraria uma regra do código: o worker só começa no primeiro Present (para não prender instâncias temporárias do ReShade), e essa manutenção é uma das chances de aplicar os gates antes da consulta do NGX. Ficou síncrona e passou a registrar quanto tempo levou nas 6 primeiras vezes (`dd79354`), para o campo confirmar que o 5.1 a deixou barata.
+- **2026-10-25 · 5.3** (`9eae117`) `loader_notification_probe`: a notificação dispara para DLL carregada por `LdrLoadDll`, antes do DllMain; patch feito no callback é visto pelo DllMain; relocações já aplicadas; identidade de código (`modulesession::Inspect`) igual no callback e depois da carga.
+- **2026-10-25 · 5.4** (`e4c7c06`) `LdrRegisterDllNotification` no loadhook: o provider é tratado ao ser mapeado (só os gates, sob o loader lock; logs enfileirados porque o log do ReShade tem trava própria). Hooks de `kernel32` mantidos; `Uninstall` desregistra. `loader_notification_dlssg_tests`. Matriz 187/187.
+- **2026-10-25 · 5.5** Candidato `dd79354` instalado no Cyberpunk e no Alan Wake 2 com `[Backend] Selected=DLSSG` temporário; backups `*.before-5.5.bak`.
 
