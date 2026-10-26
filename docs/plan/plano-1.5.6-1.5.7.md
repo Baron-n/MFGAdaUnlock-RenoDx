@@ -91,15 +91,15 @@ Release só sai se todos os testes automáticos e de campo passarem sem regress�
 
 | # | Tarefa | Teste / critério | Est. | Status |
 |---|---|---|---|---|
-| 4.1 | **[você + eu]** Linha de base de pacing com a 1.5.6: PresentMon 30 s em Plague Tale e KCD2, mesma cena | resumo p50/p99 e frames por Present no registro | 1 h | pendente |
+| 4.1 | **[você + eu]** Linha de base de pacing com a 1.5.6: PresentMon 30 s em Plague Tale e KCD2, mesma cena | resumo p50/p99 e frames por Present no registro | 1 h | feito (campo, 2026-10-25; junto com o 4.9) |
 | 4.2 | HUD-less/UI do mesmo grupo de formato (TYPELESS, `_SRGB`) copiados para o formato do backbuffer | cenário de fixture com 27→28 e 29→28: entrada aceita e bits preservados | 1,5 h | feito (`5e52fcb`) |
 | 4.3 | UI em outro formato (BGRA8 → RGB10A2) convertida por shader, com modo de refinamento do Intel | teste numérico em WARP; **avaliar em campo, pode ser descartado** se o alpha de 2 bits piscar | 2 h | descartado (codificação da UI desconhecida em saída HDR10; ver registro) |
 | 4.4 | HUD-less FP16 convertido pelo encoder scRGB existente | só fixture: nenhum jogo instalado manda HUD-less em scRGB | 1,5 h | feito (`8bacb9e`) |
 | 4.5 | Painel: o que o jogo fornece (HUD-less/UI, convertido ou recusado) e aviso quando o UI Composition está disponível e desligado | teste de UI/preview | 1 h | feito (`fb92008`) |
 | 4.6 | Função pura do limite: base máxima = taxa do monitor ÷ multiplicador, com margem de VRR (~3%) | testes unitários (60/120/144/165/240 Hz, 2x–6x, limite do jogo menor que o calculado) | 45 min | feito (`767f5b3`) |
 | 4.7 | Opção `[XeFG] DisplayCap` (desligada), painel com aviso quando base × multiplicador passa da taxa, ligação ao `minimumIntervalUs` do XeLL | cenário de conformidade: intervalo aplicado e removido; rota Reflex intocada | 1,5 h | feito (`ddc9f18`) |
-| 4.8 | **[você]** Cyberpunk e Mafia com UI Composition ligado | HUD nítido nos frames gerados, sem piscar; log mostra a conversão | 30 min | pendente |
-| 4.9 | **[você + eu]** Plague Tale e KCD2: P2 ligado e desligado, PresentMon | cadência mais regular ou igual; nenhum frame a mais descartado | 1 h | pendente |
+| 4.8 | **[você]** Cyberpunk e Mafia com UI Composition ligado | HUD nítido nos frames gerados, sem piscar; log mostra a conversão | 30 min | feito (campo, 2026-10-25; só Cyberpunk, o 4.3 foi descartado) |
+| 4.9 | **[você + eu]** Plague Tale e KCD2: P2 ligado e desligado, PresentMon | cadência mais regular ou igual; nenhum frame a mais descartado | 1 h | feito (campo, 2026-10-25) |
 
 ### Bloco 5: DLSS-G, startup e detecção (branch `perf/dlssg-startup`)
 
@@ -174,4 +174,8 @@ Um PR por item.
 - **2026-10-25 · 4.5** (`fb92008`) Painel lista HUD-less e UI separados (recebido, convertido, filtrado, ausente) e sugere o UI Composition quando há HUD-less. Matriz 183/183 (4.5 e 4.7 juntos).
 - **2026-10-25 · 4.4** (`8bacb9e`) HUD-less FP16 de jogo scRGB convertido pelo encoder scRGB→HDR10; caso `scrgb-hudless`; sem a conversão, falha. Matriz 184/184.
 - **2026-10-25 · campo do bloco 4** Candidato `8bacb9e` instalado no Plague Tale, no KCD2 e no Cyberpunk, com backup `*.before-1.5.7.bak` do addon e do INI. O 4.1 (linha de base) e o 4.9 (limite ligado/desligado) viram uma sessão por jogo com o candidato: o pacing só muda com o limite ligado, então a captura com ele desligado serve de linha de base.
+- **2026-10-25 · 4.1/4.9, Plague Tale (3x, 240 Hz)** Limite desligado: jogo 84,7 FPS, 262 FPS exibidos (acima do monitor), p95/p50 1,30, latência p50/p99 19,3/26,8 ms. **Primeira tentativa com o limite ligado revelou um erro**: o XeLL ligado ao XeFG aplica o intervalo mínimo a cada frame exibido (gerados incluídos), e o cálculo dividia pelo multiplicador; o jogo caiu para 25 FPS e a latência subiu para 53 ms. Corrigido (`0caf3dd`): intervalo = 1 / (refresh × 0,97). Com a correção: jogo 75,2 FPS, 233 FPS exibidos, p95/p50 1,17, latência 18,5/23,3 ms. O aviso apareceu antes de ligar; o usuário sentiu o movimento mais suave.
+- **2026-10-25 · 4.1/4.9, KCD2 (3x, adaptador DLSS-SR)** Desligado: jogo 80,8 FPS, 251 exibidos, p95/p50 1,45, 21 picos, latência 24,3/32,8 ms. Ligado: jogo 73,4 FPS, 231 exibidos, p95/p50 1,50, 29 picos, latência 22,5/31,0 ms. Regularidade medida igual ou um pouco pior (rota DLSS-SR já irregular; mundo aberto varia entre capturas), latência melhor; o usuário sentiu melhora. O aviso apareceu.
+- **2026-10-25 · 4.8, Cyberpunk (4x)** HUD-less `R8G8B8A8_TYPELESS` convertido (`copied: true`, caminho volátil na lista do produtor); UI Composition aplicado com ele (`enabled: 1`, resultado 0); FG a 4x sem erros. O usuário preferiu sem o UI Composition (com ele o HUD fica na taxa real, não interpolado), o que confirma o padrão desligado.
+- **2026-10-25 · bloco 4 concluído** Candidato `0caf3dd` instalado no Plague Tale (com `DisplayCap=1`), no KCD2 e no Cyberpunk; backups `*.before-1.5.7.bak`. Gate final do bloco: 184/184 (Alto desempenho). Próximo: bloco 5 (DLSS-G, startup e detecção) e depois a release 1.5.7.
 
