@@ -189,6 +189,7 @@ through [my Ko-fi](https://ko-fi.com/mavismmg).
 - [Choosing a backend](#choosing-a-backend)
 - [Requirements](#requirements)
 - [Usage](#usage)
+- [Community installer: RenoDX MFG Unlocker](#community-installer-renodx-mfg-unlocker)
 - [XeMFG backend](#xemfg-backend)
   - [Installing XeMFG](#installing-xemfg)
   - [XeMFG settings](#xemfg-settings)
@@ -401,6 +402,34 @@ different packages.
 For NVIDIA Dynamic MFG, replacing only `nvngx_dlssg.dll` is not sufficient.
 The game must load a complete Streamline runtime that implements Dynamic MFG;
 VSync and frame-limiter support for Dynamic MFG was added in Streamline 2.14.1.
+
+## Community installer: RenoDX MFG Unlocker
+
+[RenoDX MFG Unlocker](https://github.com/ExiZz1/RenoDX-MFG-Unlocker) by
+[ExiZz](https://github.com/ExiZz1) is a small Windows app that lists this
+project's published releases and installs the selected
+`renodx-mfgunlock.addon64` next to a game's executable. It finds installed
+Steam games automatically. It is an independent community tool, not part of
+this project, and its source is published on GitHub.
+
+What it does and does not do:
+
+- It downloads the addon only from this repository's GitHub releases.
+- It does **not** install ReShade; install ReShade with addon support first.
+- It does **not** install Intel's XeMFG files; for the XeMFG backend, use
+  **Install / update files** in the addon panel afterwards (see
+  [Installing XeMFG](#installing-xemfg)).
+- It places the addon next to the executable. Games whose RenoDX package uses
+  its own addon folder still need the addon copied there by hand.
+- It replaces an existing `renodx-mfgunlock.addon64` without making a backup.
+  Keep only one MFG Unlock addon installed.
+- Its executable is not digitally signed, so Windows SmartScreen may warn
+  before the first launch.
+
+Version 1.0.0 was reviewed before this section was added: the source and the
+published executable contact only the GitHub API and this repository's
+release downloads, write only the addon file in the chosen game folder, and
+contain no other code than the app and the Microsoft .NET runtime.
 
 ## XeMFG backend
 
