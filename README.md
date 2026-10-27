@@ -296,6 +296,7 @@ artifact on a HUD/UI element, switch back to **Native**.
 | Kingdom Come: Deliverance II | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 | Red Dead Redemption 2 | Working with the DLSS-SR input (user report; the game has no native frame generation): turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 | Elden Ring | Working with the DLSS-SR input and the EldenRingDLSS addon, offline with Easy Anti-Cheat off; turn on **Force game VSync off** in the panel for correct frame pacing (see [Elden Ring](#elden-ring)) |
+| Metro Exodus Enhanced Edition | Working with the DLSS-SR input: turn it on in the panel (see [Enabling the DLSS-SR input](#enabling-the-dlss-sr-input)) |
 
 These games were tested with the XeMFG backend of this fork. This is not a
 claim of universal compatibility. The XeMFG backend needs a game that
